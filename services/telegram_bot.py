@@ -143,6 +143,12 @@ async def process_haber_command(chat_id):
         logger.info(f"  📌 En yeni haber: '{latest_news['title'][:50]}...'")
         summary = await generate_summary(latest_news['title'], latest_news['link'])
 
+        # Handle case where summary is None (Gemini failed)
+        if not summary:
+            logger.warning(f"  ❌ Haber özeti boş, mesaj gönderilemedi")
+            send_telegram_message(chat_id, "⚠️ Haber özeti alınamadı, lütfen daha sonra tekrar deneyin.")
+            return
+
         final_message = (
             f"📌 <b>{html.escape(latest_news['title'])}</b>\n\n"
             f"{html.escape(summary)}\n\n"
