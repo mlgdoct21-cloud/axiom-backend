@@ -140,8 +140,13 @@ async def process_haber_command(chat_id):
             return
 
         latest_news = news_list[0]
-        logger.info(f"  📌 En yeni haber: '{latest_news['title'][:50]}...'")
-        summary = await generate_summary(latest_news['title'], latest_news['link'])
+
+        # Guard against None values from RSS
+        title = latest_news.get('title') or 'Başlık Yok'
+        link = latest_news.get('link') or '#'
+
+        logger.info(f"  📌 En yeni haber: '{title[:50]}...'")
+        summary = await generate_summary(title, link)
 
         # Handle case where summary is None (Gemini failed)
         if not summary:
@@ -151,9 +156,9 @@ async def process_haber_command(chat_id):
 
         source = latest_news.get('source') or 'Bilinmeyen Kaynak'
         final_message = (
-            f"📌 <b>{html.escape(latest_news['title'])}</b>\n\n"
+            f"📌 <b>{html.escape(title)}</b>\n\n"
             f"{html.escape(summary)}\n\n"
-            f"📰 <b>Kaynak:</b> <a href='{latest_news['link']}'>{html.escape(source)}</a>"
+            f"📰 <b>Kaynak:</b> <a href='{link}'>{html.escape(source)}</a>"
         )
         logger.info(f"  ✉️ /haber mesajı gönderiliyor")
         send_telegram_message(chat_id, final_message)

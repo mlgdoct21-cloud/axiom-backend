@@ -130,37 +130,40 @@ async def run_crawler():
             seen_in_batch = set()
 
             for i, haber in enumerate(haberler):
-                link = haber['link']
-                title = haber['title'].lower().strip()
+                # Guard against None values from RSS
+                link = haber.get('link') or '#'
+                haber_title = haber.get('title') or 'Başlık Yok'
+                title = haber_title.lower().strip()
 
                 # 1. Aynı batch içinde daha önce işlendi mi? (link veya title ile)
                 batch_key = (link, title)
                 if batch_key in seen_in_batch:
-                    logger.debug(f"⏭️  BATCH DEDUP: '{haber['title'][:40]}...' zaten batch'te işlendi")
+                    logger.debug(f"⏭️  BATCH DEDUP: '{haber_title[:40]}...' zaten batch'te işlendi")
                     continue
 
                 # 2. DB'de daha önce işlendi mi? (fresh session)
                 if not await duplicate_filtrele(link):
-                    logger.debug(f"⏭️  DB DEDUP: '{haber['title'][:40]}...' zaten DB'de")
+                    logger.debug(f"⏭️  DB DEDUP: '{haber_title[:40]}...' zaten DB'de")
                     continue
 
-                logger.info(f"🆕 YENİ HABER #{i+1}: '{haber['title'][:50]}...'")
+                logger.info(f"🆕 YENİ HABER #{i+1}: '{haber_title[:50]}...'")
                 seen_in_batch.add(batch_key)
 
                 # 3. Gemini analizi
-                analiz = await gemini_gonder(haber['title'], link)
+                analiz = await gemini_gonder(haber_title, link)
 
                 if analiz is None:
                     # Gemini 3 denemede de yanıt vermedi — haberi atla, loglandı
-                    logger.warning(f"Atlandı (Gemini hatası): {haber['title'][:60]}")
+                    logger.warning(f"Atlandı (Gemini hatası): {haber_title[:60]}")
                     continue
 
                 # 4. DB'ye kaydet — IntegrityError = başka process zaten kaydetti, atla
+                haber_source = haber.get('source') or 'Bilinmeyen Kaynak'
                 try:
                     async with AsyncSessionLocal() as session:
                         yeni_haber = NewsItem(
-                            source=haber['source'],
-                            original_title=haber['title'],
+                            source=haber_source,
+                            original_title=haber_title,
                             original_link=link,
                             ai_summary=analiz
                         )
@@ -171,7 +174,7 @@ async def run_crawler():
                     continue
 
                 # 5. Telegram'a ilet (sadece DB kaydı başarılıysa)
-                await telegram_gonder(haber['title'], analiz, haber['source'], link)
+                await telegram_gonder(haber_title, analiz, haber_source, link)
                 await asyncio.sleep(2)
 
             logger.info("Döngü tamamlandı. 5 dakika uyku moduna geçiliyor...")
