@@ -1,0 +1,55 @@
+# Core Framework
+fastapi==0.110.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# Database
+sqlalchemy==2.0.25
+alembic==1.13.1
+psycopg2-binary==2.9.9
+asyncpg==0.29.0
+aiosqlite==0.20.0
+greenlet==3.0.3
+
+# Data Validation
+pydantic==2.5.3
+pydantic-settings==2.2.1
+
+# Configuration
+python-dotenv==1.0.0
+
+# Authentication & Security
+python-jose==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.1.2
+
+# HTTP & APIs
+requests==2.31.0
+httpx==0.26.0
+
+# Telegram
+aiogram==3.4.0
+
+# RSS & News
+feedparser==6.0.10
+
+# Technical Analysis (Phase 2.2) - Install when TradingView API available
+# pandas==2.2.0
+# pandas-ta==0.3.14b0
+# mplfinance==0.12.9
+# numpy==1.26.4
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.3
+pytest-cov==4.1.0
+httpx==0.26.0
+
+# Logging & Monitoring
+python-json-logger==2.0.7
+
+# Development
+black==24.3.0
+flake8==7.0.0
+isort==5.13.2
+mypy==1.8.0
