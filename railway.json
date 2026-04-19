@@ -5,23 +5,6 @@
   },
   "deploy": {
     "numReplicas": 1,
-    "startCommand": "python bot_runner.py",
-    "healthcheckPath": "/health",
-    "healthcheckTimeout": 30,
-    "restartPolicyMaxRetries": 3
-  },
-  "env": {
-    "TELEGRAM_BOT_TOKEN": {
-      "description": "Telegram Bot Token",
-      "value": ""
-    },
-    "GEMINI_API_KEY": {
-      "description": "Google Gemini API Key",
-      "value": ""
-    },
-    "DATABASE_URL": {
-      "description": "Supabase PostgreSQL Connection String",
-      "value": ""
-    }
+    "startCommand": "python bot_runner.py"
   }
 }
