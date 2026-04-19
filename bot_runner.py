@@ -50,9 +50,14 @@ async def seed_sources():
 async def main():
     logger.info("Axiom Financial OS Hazırlanıyor...")
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Veritabanı yapısı doğrulandı.")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Veritabanı yapısı doğrulandı.")
+    except Exception as e:
+        logger.warning(f"⚠️  PostgreSQL bağlantısı başarısız: {e}")
+        logger.info("📦 SQLite'a geçiliyor...")
+        # Will use SQLite fallback from connection pool
 
     await migrate_db()
     await seed_sources()

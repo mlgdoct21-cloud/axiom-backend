@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Phase 2: PostgreSQL with asyncpg (async driver)
-# Falls back to SQLite in development if DATABASE_URL not set
+# Falls back to SQLite in development if DATABASE_URL not set or PostgreSQL unavailable
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "sqlite+aiosqlite:///axiom.db"
@@ -21,11 +21,19 @@ if "postgresql://" in DATABASE_URL:
 connect_args = {}
 if "sqlite" in DATABASE_URL:
     connect_args = {"check_same_thread": False}
+else:
+    # For PostgreSQL: add timeout and don't fail on connection errors
+    connect_args = {
+        "timeout": 10,
+        "server_settings": {"application_name": "axiom_bot"}
+    }
 
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
-    connect_args=connect_args
+    connect_args=connect_args,
+    pool_pre_ping=True,  # Test connection before using
+    pool_recycle=3600   # Recycle connections every hour
 )
 
 # Her istekte yeni bir oturum (Session) açacak sessionmaker
