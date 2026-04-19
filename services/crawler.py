@@ -83,6 +83,10 @@ async def gemini_gonder(title, link):
 
 async def telegram_gonder(title, summary, source, link):
     """4. Adım: Özetlerin tag'e uyan kullanıcılara iletilmesi."""
+    # Guard against None values from failed API calls
+    summary = summary or "⚠️ Özet alınamadı"
+    source = source or "Bilinmeyen Kaynak"
+
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User))
         users = result.scalars().all()

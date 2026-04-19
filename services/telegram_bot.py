@@ -149,10 +149,11 @@ async def process_haber_command(chat_id):
             send_telegram_message(chat_id, "⚠️ Haber özeti alınamadı, lütfen daha sonra tekrar deneyin.")
             return
 
+        source = latest_news.get('source') or 'Bilinmeyen Kaynak'
         final_message = (
             f"📌 <b>{html.escape(latest_news['title'])}</b>\n\n"
             f"{html.escape(summary)}\n\n"
-            f"📰 <b>Kaynak:</b> <a href='{latest_news['link']}'>{html.escape(latest_news['source'])}</a>"
+            f"📰 <b>Kaynak:</b> <a href='{latest_news['link']}'>{html.escape(source)}</a>"
         )
         logger.info(f"  ✉️ /haber mesajı gönderiliyor")
         send_telegram_message(chat_id, final_message)
