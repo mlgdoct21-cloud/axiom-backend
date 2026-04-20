@@ -37,6 +37,25 @@ def send_telegram_message(chat_id, text):
     except Exception as e:
         logger.error(f"Baglanti Hatasi: {e}")
 
+def send_telegram_message_get_id(chat_id, text) -> int | None:
+    """HTML formatında mesaj gönderir, message_id döner (edit için)."""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
+    }
+    try:
+        r = requests.post(url, json=payload, timeout=15)
+        if r.status_code == 200:
+            return r.json().get("result", {}).get("message_id")
+        else:
+            logger.warning(f"Mesaj Gonderim Hatasi: {r.text}")
+    except Exception as e:
+        logger.error(f"Baglanti Hatasi: {e}")
+    return None
+
 def send_message_with_keyboard(chat_id, text, keyboard):
     """Inline keyboard ekli mesaj gönderir."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -77,14 +96,17 @@ def edit_message_text(chat_id, message_id, text):
     """Mevcut mesajın metnini günceller (klavyeyi kaldırır)."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageText"
     try:
-        requests.post(url, json={
+        r = requests.post(url, json={
             "chat_id": chat_id,
             "message_id": message_id,
             "text": text,
-            "parse_mode": "HTML"
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True
         }, timeout=15)
-    except Exception:
-        pass
+        if r.status_code != 200:
+            logger.warning(f"Edit mesaj hatası: {r.text}")
+    except Exception as e:
+        logger.error(f"Edit mesaj bağlantı hatası: {e}")
 
 # ── Tag keyboard ───────────────────────────────────────────────────────────────
 
@@ -132,11 +154,17 @@ async def process_start_command(chat_id, user_id, username):
 async def process_haber_command(chat_id):
     """Anlık haber talebini karşılar."""
     logger.info(f"📰 /haber KOMUTU: User {chat_id}")
-    send_telegram_message(chat_id, "⚡ Piyasalar analiz ediliyor...\n\n⏳ 30 saniye içinde güncel haberler geliyor.")
+    # Send loading message and keep its ID so we can edit it in-place
+    loading_msg_id = await asyncio.to_thread(
+        send_telegram_message_get_id,
+        chat_id,
+        "⚡ <b>Piyasalar analiz ediliyor...</b>\n\n⏳ Güncel haberler yükleniyor."
+    )
     try:
         news_list = await fetch_all_feeds()
         if not news_list:
-            send_telegram_message(chat_id, "⚠️ Yeni bir veri akışı bulunamadı.")
+            if loading_msg_id:
+                edit_message_text(chat_id, loading_msg_id, "⚠️ Yeni bir veri akışı bulunamadı.")
             return
 
         latest_news = news_list[0]
@@ -144,6 +172,7 @@ async def process_haber_command(chat_id):
         # Guard against None values from RSS
         title = latest_news.get('title') or 'Başlık Yok'
         link = latest_news.get('link') or '#'
+        source = latest_news.get('source') or 'Bilinmeyen Kaynak'
 
         logger.info(f"  📌 En yeni haber: '{title[:50]}...'")
         summary = await generate_summary(title, link)
@@ -151,20 +180,28 @@ async def process_haber_command(chat_id):
         # Handle case where summary is None (Gemini failed)
         if not summary:
             logger.warning(f"  ❌ Haber özeti boş, mesaj gönderilemedi")
-            send_telegram_message(chat_id, "⚠️ Haber özeti alınamadı, lütfen daha sonra tekrar deneyin.")
+            if loading_msg_id:
+                edit_message_text(chat_id, loading_msg_id, "⚠️ Haber özeti alınamadı, lütfen daha sonra tekrar deneyin.")
             return
 
-        source = latest_news.get('source') or 'Bilinmeyen Kaynak'
+        # html.escape the href URL to handle & in query params (e.g. Yahoo Finance URLs)
+        safe_link = html.escape(link, quote=True)
         final_message = (
             f"📌 <b>{html.escape(title)}</b>\n\n"
-            f"{html.escape(summary)}\n\n"
-            f"📰 <b>Kaynak:</b> <a href='{link}'>{html.escape(source)}</a>"
+            f"{summary}\n\n"
+            f"📰 <b>Kaynak:</b> <a href='{safe_link}'>{html.escape(source)}</a>"
         )
         logger.info(f"  ✉️ /haber mesajı gönderiliyor")
-        send_telegram_message(chat_id, final_message)
+        if loading_msg_id:
+            edit_message_text(chat_id, loading_msg_id, final_message)
+        else:
+            send_telegram_message(chat_id, final_message)
     except Exception as e:
         logger.error(f"  ❌ /haber hatası: {str(e)}")
-        send_telegram_message(chat_id, f"❌ Hata: {str(e)}")
+        if loading_msg_id:
+            edit_message_text(chat_id, loading_msg_id, f"❌ Hata: {str(e)}")
+        else:
+            send_telegram_message(chat_id, f"❌ Hata: {str(e)}")
 
 async def process_takip_command(chat_id, user_id, keyword: str):
     """Kullanıcının custom takip listesine yeni kelime ekler."""
