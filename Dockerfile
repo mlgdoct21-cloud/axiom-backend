@@ -1,6 +1,9 @@
 # Build stage
 FROM python:3.9-slim
 
+# Cache buster - change this to force full rebuild
+ARG CACHE_BUST=20260420v2
+
 # Set working directory
 WORKDIR /app
 
