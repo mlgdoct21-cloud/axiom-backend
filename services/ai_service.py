@@ -34,7 +34,7 @@ def generate_summary_sync(news_title: str, news_link: str) -> str:
     if not GEMINI_API_KEY or "buraya" in GEMINI_API_KEY:
         return "⚠️ Hata: Lütfen .env dosyasına geçerli bir GEMINI_API_KEY girin."
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 
     payload = {
         "contents": [
