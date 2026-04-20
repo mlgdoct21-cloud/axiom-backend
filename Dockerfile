@@ -18,8 +18,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Expose port
-EXPOSE 8000
-
-# Run application (Telegram Bot + Crawler)
+# Run application (Telegram Bot + Crawler - no HTTP port needed)
 CMD ["python", "bot_runner.py"]
