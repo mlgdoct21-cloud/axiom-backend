@@ -34,7 +34,12 @@ def generate_summary_sync(news_title: str, news_link: str) -> str:
     if not GEMINI_API_KEY or "buraya" in GEMINI_API_KEY:
         return "⚠️ Hata: Lütfen .env dosyasına geçerli bir GEMINI_API_KEY girin."
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={GEMINI_API_KEY}"
+    # Primary: gemini-2.5-flash-lite (fast, stable, free tier)
+    # Fallback: gemini-2.5-flash (slightly slower but also stable)
+    MODELS = [
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-flash",
+    ]
 
     payload = {
         "contents": [
@@ -55,13 +60,15 @@ def generate_summary_sync(news_title: str, news_link: str) -> str:
     headers = {"Content-Type": "application/json"}
 
     for attempt in range(3):
+        model = MODELS[min(attempt, len(MODELS) - 1)]
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            response = requests.post(url, json=payload, headers=headers, timeout=12)
 
-            if response.status_code == 503:
-                logger.warning(f"Gemini 503 Service Unavailable (deneme {attempt+1}/3), 10s bekleniyor...")
+            if response.status_code in (503, 429):
+                logger.warning(f"Gemini {response.status_code} ({model}, deneme {attempt+1}/3), 3s bekleniyor...")
                 if attempt < 2:
-                    time.sleep(15)
+                    time.sleep(3)
                 continue
 
             response.raise_for_status()
@@ -70,13 +77,14 @@ def generate_summary_sync(news_title: str, news_link: str) -> str:
             if "candidates" in data and len(data["candidates"]) > 0:
                 text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
                 if text:
+                    logger.info(f"Gemini yanıtı alındı ({model}, deneme {attempt+1})")
                     return text
 
-            logger.warning(f"Boş yanıt (deneme {attempt+1}/3)")
+            logger.warning(f"Boş yanıt ({model}, deneme {attempt+1}/3)")
         except Exception as e:
-            logger.error(f"Gemini Hatası (deneme {attempt+1}/3): {str(e)}")
+            logger.error(f"Gemini Hatası ({model}, deneme {attempt+1}/3): {str(e)}")
             if attempt < 2:
-                time.sleep(15)
+                time.sleep(3)
 
     logger.error("3 denemede de yanıt alınamadı, haber atlanıyor.")
     return None
