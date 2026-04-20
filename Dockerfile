@@ -4,6 +4,9 @@ FROM python:3.9-slim
 # Set working directory
 WORKDIR /app
 
+# Ensure Python output is sent straight to logs without buffering
+ENV PYTHONUNBUFFERED=1
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
