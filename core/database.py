@@ -26,9 +26,10 @@ connect_args = {}
 if "sqlite" in DATABASE_URL:
     connect_args = {"check_same_thread": False}
 else:
-    # For asyncpg: only valid connect_args (no "timeout" - that's a connection param not connect_arg)
+    # asyncpg bağlantı ayarları
     connect_args = {
-        "server_settings": {"application_name": "axiom_bot"}
+        "server_settings": {"application_name": "axiom_bot"},
+        "statement_cache_size": 0,  # PgBouncer/Session Pooler uyumluluğu için ZORUNLU
     }
 
 engine = create_async_engine(
