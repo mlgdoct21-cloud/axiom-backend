@@ -1,6 +1,7 @@
-FROM python:3.11-slim
+FROM python:3.9-slim
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
-RUN pip install --no-cache-dir fastapi uvicorn[standard] sqlalchemy asyncpg aiosqlite python-dotenv requests feedparser aiogram passlib[bcrypt] python-jose python-multipart email-validator pydantic==2.5.3 pydantic-settings
+RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+RUN chmod +x start.sh
+CMD ["sh", "start.sh"]
