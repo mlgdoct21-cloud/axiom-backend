@@ -9,12 +9,14 @@ from core.database import engine
 import models  # Import models so SQLAlchemy knows about them
 from routers.v1 import router as v1_router
 from services.telegram_bot import start_telegram_bot
+from services.crawler import run_crawler
 from core.logger import get_logger
 
 logger = get_logger("main")
 
-# Reference to bot task
+# References to background tasks
 bot_task = None
+crawler_task = None
 
 
 async def bot_supervisor():
@@ -30,13 +32,23 @@ async def bot_supervisor():
             logger.error(f"Bot tamamen coktu: {e}. 10 saniye icinde yeniden baslatiliyor...")
             await asyncio.sleep(10)
 
+async def crawler_supervisor():
+    """Crawler çökmesi durumunda tekrar başlatılmasını sağlar."""
+    while True:
+        try:
+            logger.info("Crawler supervisor baslatiliyor...")
+            await run_crawler()
+        except asyncio.CancelledError:
+            logger.info("Crawler supervisor iptal edildi.")
+            break
+        except Exception as e:
+            logger.error(f"Crawler tamamen coktu: {e}. 30 saniye icinde yeniden baslatiliyor...")
+            await asyncio.sleep(30)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global bot_task
+    global bot_task, crawler_task
     logger.info("Application startup")
-
-    # Note: Database tables should be created by Alembic migrations
-    # Not here - this ensures production consistency
 
     # Start Telegram bot in background within a supervisor
     try:
@@ -45,16 +57,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to start bot supervisor: {e}")
 
+    # Start RSS crawler + broadcaster in background
+    try:
+        crawler_task = asyncio.create_task(crawler_supervisor())
+        logger.info("Crawler supervisor started")
+    except Exception as e:
+        logger.error(f"Failed to start crawler supervisor: {e}")
+
     yield
 
     logger.info("Application shutdown")
-    # Cancel bot task on shutdown
-    if bot_task:
-        bot_task.cancel()
-        try:
-            await bot_task
-        except asyncio.CancelledError:
-            logger.info("Bot task cancelled")
+    for task in [bot_task, crawler_task]:
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
     await engine.dispose()
 

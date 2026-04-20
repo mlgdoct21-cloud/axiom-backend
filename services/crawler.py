@@ -98,10 +98,11 @@ async def telegram_gonder(title, summary, source, link):
     emoji = "⚠️" if any(word in title.lower() for word in ["risk", "uyarı", "dikkat", "tehdit"]) else emoji
     emoji = "🚀" if any(word in title.lower() for word in ["yüksel", "rally", "pump", "artış", "kazanç"]) else emoji
 
+    safe_link = html.escape(link, quote=True)
     message = (
         f"{emoji} <b>{html.escape(title)}</b>\n\n"
-        f"{html.escape(summary)}\n\n"
-        f"🔗 <a href='{link}'>Detaylı Analiz →</a> • <b>{html.escape(source)}</b>"
+        f"{summary}\n\n"
+        f"🔗 <a href='{safe_link}'>Detaylı Analiz →</a> • <b>{html.escape(source)}</b>"
     )
 
     broadcast_count = 0
@@ -177,8 +178,8 @@ async def run_crawler():
                 await telegram_gonder(haber_title, analiz, haber_source, link)
                 await asyncio.sleep(2)
 
-            logger.info("Döngü tamamlandı. 5 dakika uyku moduna geçiliyor...")
-            await asyncio.sleep(300)  # 5 minutes for testing, change to 1800 (30 min) for production
+            logger.info("Döngü tamamlandı. 30 dakika uyku moduna geçiliyor...")
+            await asyncio.sleep(1800)  # 30 minutes between crawl cycles
 
         except Exception as e:
             logger.error(f"Crawler Kritik Hatası: {e}", exc_info=True)
