@@ -4,7 +4,6 @@
     "builder": "nixpacks"
   },
   "deploy": {
-    "numReplicas": 1,
-    "startCommand": "sh start.sh"
+    "numReplicas": 1
   }
 }
