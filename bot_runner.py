@@ -74,22 +74,19 @@ async def main():
 
 if __name__ == "__main__":
     """
-    Self-healing bot runner with automatic recovery from failures.
-    Restarts the system every 5 seconds if it crashes.
+    Bot runner - run once, no retry loop (for debugging)
     """
-    while True:
-        try:
-            logger.info("=" * 60)
-            logger.info("🚀 AXIOM OS BAŞLANIYOR (Self-Healing Mode Active)...")
-            logger.info("=" * 60)
-            asyncio.run(main())
-        except KeyboardInterrupt:
-            logger.info("=" * 60)
-            logger.info("🛑 Axiom OS Güvenli Şekilde Kapatıldı (User Interrupt).")
-            logger.info("=" * 60)
-            sys.exit(0)
-        except Exception as e:
-            logger.error(f"❌ KRITIK HATA: {e}", exc_info=True)
-            logger.warning("⏳ 5 saniye içinde yeniden başlanıyor...")
-            import time
-            time.sleep(5)
+    print("STARTING BOT...")  # Direct print to stdout
+    logger.info("=" * 60)
+    logger.info("🚀 AXIOM OS BAŞLANIYOR...")
+    logger.info("=" * 60)
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("=" * 60)
+        logger.info("🛑 Axiom OS Kapatıldı.")
+        logger.info("=" * 60)
+        sys.exit(0)
+    except Exception as e:
+        logger.error(f"❌ HATA: {e}", exc_info=True)
+        sys.exit(1)
