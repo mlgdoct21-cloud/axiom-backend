@@ -5,6 +5,6 @@
   },
   "deploy": {
     "numReplicas": 1,
-    "startCommand": "python main.py"
+    "startCommand": "python bot_runner.py"
   }
 }
