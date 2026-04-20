@@ -1,5 +1,7 @@
 import asyncio
 import sys
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from sqlalchemy.future import select
 from core.database import engine, Base, AsyncSessionLocal
 from core.logger import get_logger
@@ -8,6 +10,21 @@ from services.crawler import run_crawler
 import models
 
 logger = get_logger("bot_runner")
+
+# Simple HTTP health check for Railway
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"OK")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # Suppress logging
 
 DEFAULT_SOURCES = [
     {"name": "Investing.com",        "url": "https://www.investing.com/rss/news.rss"},
@@ -74,9 +91,16 @@ async def main():
 
 if __name__ == "__main__":
     """
-    Bot runner - run once, no retry loop (for debugging)
+    Bot runner with health check server for Railway
     """
     print("STARTING BOT...")  # Direct print to stdout
+
+    # Start HTTP health check server in background thread (for Railway)
+    health_server = HTTPServer(("0.0.0.0", 8000), HealthCheckHandler)
+    health_thread = threading.Thread(target=health_server.serve_forever, daemon=True)
+    health_thread.start()
+    logger.info("✅ Health check server started on port 8000")
+
     logger.info("=" * 60)
     logger.info("🚀 AXIOM OS BAŞLANIYOR...")
     logger.info("=" * 60)

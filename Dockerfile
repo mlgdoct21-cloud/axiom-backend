@@ -21,5 +21,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Run application (Telegram Bot + Crawler - no HTTP port needed)
+# Expose health check port
+EXPOSE 8000
+
+# Run application (Telegram Bot + Crawler + Health Check HTTP server)
 CMD ["python", "bot_runner.py"]
