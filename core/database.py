@@ -13,18 +13,21 @@ DATABASE_URL = os.getenv(
     "sqlite+aiosqlite:///axiom.db"
 )
 
-# Convert sync PostgreSQL URL to async if needed
-if "postgresql://" in DATABASE_URL:
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
+# Convert PostgreSQL URL to async asyncpg format
+# Railway uses "postgres://" prefix, Heroku uses "postgres://" too
+# SQLAlchemy needs "postgresql+asyncpg://"
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = "postgresql+asyncpg://" + DATABASE_URL[len("postgres://"):]
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = "postgresql+asyncpg://" + DATABASE_URL[len("postgresql://"):]
 
 # Engine configuration
 connect_args = {}
 if "sqlite" in DATABASE_URL:
     connect_args = {"check_same_thread": False}
 else:
-    # For PostgreSQL: add timeout and don't fail on connection errors
+    # For asyncpg: only valid connect_args (no "timeout" - that's a connection param not connect_arg)
     connect_args = {
-        "timeout": 10,
         "server_settings": {"application_name": "axiom_bot"}
     }
 
