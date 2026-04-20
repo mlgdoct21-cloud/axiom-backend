@@ -3,6 +3,7 @@ import time
 import html
 import requests
 import asyncio
+from typing import Optional
 from dotenv import load_dotenv
 
 from core.database import AsyncSessionLocal
@@ -37,7 +38,7 @@ def send_telegram_message(chat_id, text):
     except Exception as e:
         logger.error(f"Baglanti Hatasi: {e}")
 
-def send_telegram_message_get_id(chat_id, text) -> int | None:
+def send_telegram_message_get_id(chat_id, text) -> Optional[int]:
     """HTML formatında mesaj gönderir, message_id döner (edit için)."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
@@ -130,13 +131,18 @@ def build_tag_keyboard(user_tags_str: str) -> dict:
 
 async def process_start_command(chat_id, user_id, username):
     """Kullanıcıyı veritabanına kaydeder ve hoş geldin mesajı atar."""
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.telegram_id == str(user_id)))
-        user = result.scalars().first()
-        if not user:
-            user = User(telegram_id=str(user_id), username=username)
-            session.add(user)
-            await session.commit()
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(User).where(User.telegram_id == str(user_id)))
+            user = result.scalars().first()
+            if not user:
+                user = User(telegram_id=str(user_id), username=username)
+                session.add(user)
+                await session.commit()
+    except Exception as e:
+        logger.error(f"DB hatası (/start) user={user_id}: {e}")
+        send_telegram_message(chat_id, "⚠️ Veritabanı bağlantısı kurulamadı. Lütfen daha sonra tekrar /start yazın.")
+        return
 
     welcome_msg = (
         "🚀 <b>Axiom'a Hoş Geldin</b>\n\n"
@@ -210,29 +216,34 @@ async def process_takip_command(chat_id, user_id, keyword: str):
         send_telegram_message(chat_id, "⚠️ Kullanım: <b>/takip [kelime]</b>\nÖrnek: /takip AAPL")
         return
 
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.telegram_id == str(user_id)))
-        user = result.scalars().first()
-        if not user:
-            send_telegram_message(chat_id, "❌ Önce /start komutunu kullanın.")
-            return
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(User).where(User.telegram_id == str(user_id)))
+            user = result.scalars().first()
+            if not user:
+                send_telegram_message(chat_id, "❌ Önce /start komutunu kullanın.")
+                return
 
-        follows = [k.strip() for k in (user.custom_follows or "").split(",") if k.strip()]
-        if keyword.lower() in [f.lower() for f in follows]:
-            send_telegram_message(chat_id, f"ℹ️ <b>{html.escape(keyword)}</b> zaten takip listenizdde.")
-            return
+            follows = [k.strip() for k in (user.custom_follows or "").split(",") if k.strip()]
+            if keyword.lower() in [f.lower() for f in follows]:
+                send_telegram_message(chat_id, f"ℹ️ <b>{html.escape(keyword)}</b> zaten takip listenizde.")
+                return
 
-        follows.append(keyword)
-        new_follows_str = ",".join(follows)
+            follows.append(keyword)
+            new_follows_str = ",".join(follows)
 
-        # Validate before saving
-        is_valid, error_msg = validate_custom_follows(new_follows_str)
-        if not is_valid:
-            send_telegram_message(chat_id, f"❌ {error_msg}")
-            return
+            # Validate before saving
+            is_valid, error_msg = validate_custom_follows(new_follows_str)
+            if not is_valid:
+                send_telegram_message(chat_id, f"❌ {error_msg}")
+                return
 
-        user.custom_follows = new_follows_str
-        await session.commit()
+            user.custom_follows = new_follows_str
+            await session.commit()
+    except Exception as e:
+        logger.error(f"DB hatası (/takip) user={user_id}: {e}")
+        send_telegram_message(chat_id, "⚠️ Veritabanı bağlantısı kurulamadı. Lütfen tekrar deneyin.")
+        return
 
     send_telegram_message(chat_id, f"✅ <b>{html.escape(keyword)}</b> takip listesine eklendi.\n\n/takiplistem ile tüm takiplerinizi görebilirsiniz.")
 
@@ -243,30 +254,40 @@ async def process_takip_cikar_command(chat_id, user_id, keyword: str):
         send_telegram_message(chat_id, "⚠️ Kullanım: <b>/takipcikar [kelime]</b>\nÖrnek: /takipcikar AAPL")
         return
 
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.telegram_id == str(user_id)))
-        user = result.scalars().first()
-        if not user:
-            send_telegram_message(chat_id, "❌ Önce /start komutunu kullanın.")
-            return
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(User).where(User.telegram_id == str(user_id)))
+            user = result.scalars().first()
+            if not user:
+                send_telegram_message(chat_id, "❌ Önce /start komutunu kullanın.")
+                return
 
-        follows = [k.strip() for k in (user.custom_follows or "").split(",") if k.strip()]
-        new_follows = [f for f in follows if f.lower() != keyword.lower()]
+            follows = [k.strip() for k in (user.custom_follows or "").split(",") if k.strip()]
+            new_follows = [f for f in follows if f.lower() != keyword.lower()]
 
-        if len(new_follows) == len(follows):
-            send_telegram_message(chat_id, f"ℹ️ <b>{html.escape(keyword)}</b> takip listenizde bulunamadı.")
-            return
+            if len(new_follows) == len(follows):
+                send_telegram_message(chat_id, f"ℹ️ <b>{html.escape(keyword)}</b> takip listenizde bulunamadı.")
+                return
 
-        user.custom_follows = ",".join(new_follows)
-        await session.commit()
+            user.custom_follows = ",".join(new_follows)
+            await session.commit()
+    except Exception as e:
+        logger.error(f"DB hatası (/takipcikar) user={user_id}: {e}")
+        send_telegram_message(chat_id, "⚠️ Veritabanı bağlantısı kurulamadı. Lütfen tekrar deneyin.")
+        return
 
     send_telegram_message(chat_id, f"🗑 <b>{html.escape(keyword)}</b> takip listesinden çıkarıldı.")
 
 async def process_takiplistem_command(chat_id, user_id):
     """Kullanıcının takip listesini gösterir."""
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.telegram_id == str(user_id)))
-        user = result.scalars().first()
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(User).where(User.telegram_id == str(user_id)))
+            user = result.scalars().first()
+    except Exception as e:
+        logger.error(f"DB hatası (/takiplistem) user={user_id}: {e}")
+        send_telegram_message(chat_id, "⚠️ Veritabanı bağlantısı kurulamadı. Lütfen tekrar deneyin.")
+        return
 
     if not user:
         send_telegram_message(chat_id, "❌ Önce /start komutunu kullanın.")
@@ -297,10 +318,15 @@ async def process_takiplistem_command(chat_id, user_id):
 
 async def process_tags_command(chat_id, user_id):
     """Kullanıcıya tag seçim klavyesi gönderir."""
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.telegram_id == str(user_id)))
-        user = result.scalars().first()
-        user_tags = user.tags if user else ""
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(User).where(User.telegram_id == str(user_id)))
+            user = result.scalars().first()
+            user_tags = user.tags if user else ""
+    except Exception as e:
+        logger.error(f"DB hatası (/tags) user={user_id}: {e}")
+        send_telegram_message(chat_id, "⚠️ Veritabanı bağlantısı kurulamadı. Lütfen tekrar deneyin.")
+        return
 
     keyboard = build_tag_keyboard(user_tags)
     text = (
@@ -314,45 +340,49 @@ async def process_tags_command(chat_id, user_id):
 
 async def process_tag_callback(callback_query_id, chat_id, message_id, user_id, tag):
     """Tag toggle callback'ini işler."""
-    if tag == "done":
+    try:
+        if tag == "done":
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(select(User).where(User.telegram_id == str(user_id)))
+                user = result.scalars().first()
+                tags_str = user.tags if user else ""
+            tag_list = [t.strip() for t in tags_str.split(",") if t.strip()]
+            tag_display = ", ".join(tag_list) if tag_list else "Tümü (filtre yok)"
+            edit_message_text(chat_id, message_id, f"✅ <b>Tercihleriniz kaydedildi.</b>\n\n🏷 Aktif tag'ler: {html.escape(tag_display)}")
+            answer_callback_query(callback_query_id)
+            return
+
+        # Tag'i toggle et ve DB'ye kaydet
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(User).where(User.telegram_id == str(user_id)))
             user = result.scalars().first()
-            tags_str = user.tags if user else ""
-        tag_list = [t.strip() for t in tags_str.split(",") if t.strip()]
-        tag_display = ", ".join(tag_list) if tag_list else "Tümü (filtre yok)"
-        edit_message_text(chat_id, message_id, f"✅ <b>Tercihleriniz kaydedildi.</b>\n\n🏷 Aktif tag'ler: {html.escape(tag_display)}")
+            if not user:
+                answer_callback_query(callback_query_id)
+                return
+            tags = set(t.strip() for t in user.tags.split(",") if t.strip())
+            if tag in tags:
+                tags.discard(tag)
+            else:
+                tags.add(tag)
+            new_tags_str = ",".join(sorted(tags))
+
+            # Validate before saving
+            is_valid, error_msg = validate_tags(new_tags_str)
+            if not is_valid:
+                logger.warning(f"Invalid tags for user {user_id}: {error_msg}")
+                answer_callback_query(callback_query_id)
+                return
+
+            user.tags = new_tags_str
+            await session.commit()
+            updated_tags = user.tags
+
+        keyboard = build_tag_keyboard(updated_tags)
+        edit_message_reply_markup(chat_id, message_id, keyboard)
         answer_callback_query(callback_query_id)
-        return
-
-    # Tag'i toggle et ve DB'ye kaydet
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.telegram_id == str(user_id)))
-        user = result.scalars().first()
-        if not user:
-            answer_callback_query(callback_query_id)
-            return
-        tags = set(t.strip() for t in user.tags.split(",") if t.strip())
-        if tag in tags:
-            tags.discard(tag)
-        else:
-            tags.add(tag)
-        new_tags_str = ",".join(sorted(tags))
-
-        # Validate before saving
-        is_valid, error_msg = validate_tags(new_tags_str)
-        if not is_valid:
-            logger.warning(f"Invalid tags for user {user_id}: {error_msg}")
-            answer_callback_query(callback_query_id)
-            return
-
-        user.tags = new_tags_str
-        await session.commit()
-        updated_tags = user.tags
-
-    keyboard = build_tag_keyboard(updated_tags)
-    edit_message_reply_markup(chat_id, message_id, keyboard)
-    answer_callback_query(callback_query_id)
+    except Exception as e:
+        logger.error(f"DB hatası (tag_callback) user={user_id}: {e}")
+        answer_callback_query(callback_query_id)
 
 # ── Ana bot döngüsü ────────────────────────────────────────────────────────────
 
@@ -388,41 +418,44 @@ async def start_telegram_bot():
                 data = response.json()
                 for update in data.get("result", []):
                     offset = update["update_id"] + 1
+                    try:
+                        # Normal mesaj komutları
+                        if "message" in update and "text" in update["message"]:
+                            chat_id = update["message"]["chat"]["id"]
+                            user_id = update["message"]["from"]["id"]
+                            username = update["message"]["from"].get("username", "Bilinmeyen")
+                            text = update["message"]["text"]
 
-                    # Normal mesaj komutları
-                    if "message" in update and "text" in update["message"]:
-                        chat_id = update["message"]["chat"]["id"]
-                        user_id = update["message"]["from"]["id"]
-                        username = update["message"]["from"].get("username", "Bilinmeyen")
-                        text = update["message"]["text"]
+                            if text.startswith("/start"):
+                                await process_start_command(chat_id, user_id, username)
+                            elif text.lower().startswith("/haber"):
+                                await process_haber_command(chat_id)
+                            elif text.lower().startswith("/tags"):
+                                await process_tags_command(chat_id, user_id)
+                            elif text.lower().startswith("/takipcikar"):
+                                keyword = text[len("/takipcikar"):].strip()
+                                await process_takip_cikar_command(chat_id, user_id, keyword)
+                            elif text.lower().startswith("/takiplistem"):
+                                await process_takiplistem_command(chat_id, user_id)
+                            elif text.lower().startswith("/takip"):
+                                keyword = text[len("/takip"):].strip()
+                                await process_takip_command(chat_id, user_id, keyword)
 
-                        if text.startswith("/start"):
-                            await process_start_command(chat_id, user_id, username)
-                        elif text.lower().startswith("/haber"):
-                            await process_haber_command(chat_id)
-                        elif text.lower().startswith("/tags"):
-                            await process_tags_command(chat_id, user_id)
-                        elif text.lower().startswith("/takipcikar"):
-                            keyword = text[len("/takipcikar"):].strip()
-                            await process_takip_cikar_command(chat_id, user_id, keyword)
-                        elif text.lower().startswith("/takiplistem"):
-                            await process_takiplistem_command(chat_id, user_id)
-                        elif text.lower().startswith("/takip"):
-                            keyword = text[len("/takip"):].strip()
-                            await process_takip_command(chat_id, user_id, keyword)
+                        # Inline keyboard callback'leri
+                        elif "callback_query" in update:
+                            cq = update["callback_query"]
+                            cq_id = cq["id"]
+                            cq_data = cq.get("data", "")
+                            cq_user_id = cq["from"]["id"]
+                            cq_chat_id = cq["message"]["chat"]["id"]
+                            cq_message_id = cq["message"]["message_id"]
 
-                    # Inline keyboard callback'leri
-                    elif "callback_query" in update:
-                        cq = update["callback_query"]
-                        cq_id = cq["id"]
-                        cq_data = cq.get("data", "")
-                        cq_user_id = cq["from"]["id"]
-                        cq_chat_id = cq["message"]["chat"]["id"]
-                        cq_message_id = cq["message"]["message_id"]
+                            if cq_data.startswith("tag_"):
+                                tag = cq_data[4:]  # "tag_BTC" → "BTC"
+                                await process_tag_callback(cq_id, cq_chat_id, cq_message_id, cq_user_id, tag)
 
-                        if cq_data.startswith("tag_"):
-                            tag = cq_data[4:]  # "tag_BTC" → "BTC"
-                            await process_tag_callback(cq_id, cq_chat_id, cq_message_id, cq_user_id, tag)
+                    except Exception as cmd_err:
+                        logger.error(f"Komut işleme hatası (update_id={update.get('update_id')}): {cmd_err}")
 
             await asyncio.sleep(1)
             

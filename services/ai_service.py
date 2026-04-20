@@ -34,11 +34,11 @@ def generate_summary_sync(news_title: str, news_link: str) -> str:
     if not GEMINI_API_KEY or "buraya" in GEMINI_API_KEY:
         return "⚠️ Hata: Lütfen .env dosyasına geçerli bir GEMINI_API_KEY girin."
 
-    # Primary: gemini-2.5-flash-lite (fast, stable, free tier)
-    # Fallback: gemini-2.5-flash (slightly slower but also stable)
+    # Primary: gemini-2.0-flash (fast, stable — Dashboard'ta çalıştığı doğrulanmış)
+    # Fallback: gemini-2.0-flash-lite (daha hafif alternatif)
     MODELS = [
-        "gemini-2.5-flash-lite",
-        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
     ]
 
     payload = {

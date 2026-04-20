@@ -1,6 +1,7 @@
 import asyncio
 import os
 import html
+import random
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 from core.database import AsyncSessionLocal
@@ -13,6 +14,22 @@ from services.ai_service import generate_summary
 from services.telegram_bot import send_telegram_message
 
 logger = get_logger("crawler")
+
+# ── Dashboard URL (CTA için) ───────────────────────────────────────────────────
+AXIOM_DASHBOARD_URL = os.getenv("AXIOM_DASHBOARD_URL", "https://axiom-dashboard.vercel.app")
+
+# ── Pazarlama / Yönlendirme Mesajları (CTA) ───────────────────────────────────
+CTA_TAG_PROMPTS = [
+    "\n\n💡 <b>AXIOM İpucu:</b> Çok mu fazla haber geliyor? /tags komutuyla sadece ilgilendiğin konuları seç, gerisi sessizce filtrelesin!",
+    "\n\n🎯 <b>Kişiselleştir:</b> /takip AAPL yazarak favori hisselerini takip listene ekle. Sadece seni ilgilendiren haberler gelsin!",
+    "\n\n⚙️ <b>Filtrele:</b> /tags menüsünden BTC, Altın, BIST gibi ilgi alanlarını seç. Gereksiz bildirimlerden kurtul!",
+]
+
+CTA_DASHBOARD_PROMPTS = [
+    f"\n\n🌐 <a href='{AXIOM_DASHBOARD_URL}'>Axiom Dashboard</a>'ta 5 yapay zeka ajanı bu haberin hisseye etkisini analiz etti. İncele!",
+    f"\n\n📊 <a href='{AXIOM_DASHBOARD_URL}'>Axiom Dashboard</a>'a gir, Adli Muhasebeci ve Portföy Yöneticisi raporlarını oku!",
+    f"\n\n🔬 Detaylı teknik ve temel analiz için <a href='{AXIOM_DASHBOARD_URL}'>Axiom Dashboard</a>'ı ziyaret et →",
+]
 
 # Her tag için eşleşme anahtar kelimeleri (başlık içinde aranır)
 TAG_KEYWORDS = {
@@ -56,12 +73,15 @@ def haber_kullaniciya_uygun(title: str, user_tags: str, custom_follows: str = ""
 
 async def get_sources_from_db() -> dict:
     """Aktif kaynakları DB'den çeker. Boşsa varsayılan listeyi döner."""
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Source).where(Source.is_active == True))
-        sources = result.scalars().all()
-    if sources:
-        return {s.name: s.url for s in sources}
-    logger.info("DB'de kaynak bulunamadı, varsayılan kaynaklar kullanılıyor.")
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Source).where(Source.is_active == True))
+            sources = result.scalars().all()
+        if sources:
+            return {s.name: s.url for s in sources}
+        logger.info("DB'de kaynak bulunamadı, varsayılan kaynaklar kullanılıyor.")
+    except Exception as e:
+        logger.error(f"DB kaynak çekme hatası (varsayılanlara dönülüyor): {e}")
     return DEFAULT_RSS_FEEDS
 
 async def rss_cek():
@@ -82,24 +102,33 @@ async def gemini_gonder(title, link):
     return await generate_summary(title, link)
 
 async def telegram_gonder(title, summary, source, link):
-    """4. Adım: Özetlerin tag'e uyan kullanıcılara iletilmesi."""
+    """4. Adım: Özetlerin tag'e uyan kullanıcılara iletilmesi + Akıllı CTA."""
     # Guard against None values from failed API calls
     summary = summary or "⚠️ Özet alınamadı"
     source = source or "Bilinmeyen Kaynak"
 
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User))
-        users = result.scalars().all()
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(User))
+            users = result.scalars().all()
+    except Exception as e:
+        logger.error(f"Kullanıcı listesi DB'den çekilemedi: {e}")
+        return
 
     logger.info(f"📤 BROADCAST BAŞLANIYOR: '{title[:50]}...' ({len(users)} user)")
 
     # Determine emoji based on title content (urgent vs normal)
-    emoji = "⚡" if any(word in title.lower() for word in ["dump", "çöküş", "crash", "sert", "hızlı"]) else "📊"
-    emoji = "⚠️" if any(word in title.lower() for word in ["risk", "uyarı", "dikkat", "tehdit"]) else emoji
-    emoji = "🚀" if any(word in title.lower() for word in ["yüksel", "rally", "pump", "artış", "kazanç"]) else emoji
+    title_lower = title.lower()
+    emoji = "📊"
+    if any(word in title_lower for word in ["dump", "çöküş", "crash", "sert", "hızlı"]):
+        emoji = "⚡"
+    if any(word in title_lower for word in ["risk", "uyarı", "dikkat", "tehdit"]):
+        emoji = "⚠️"
+    if any(word in title_lower for word in ["yüksel", "rally", "pump", "artış", "kazanç"]):
+        emoji = "🚀"
 
     safe_link = html.escape(link, quote=True)
-    message = (
+    base_message = (
         f"{emoji} <b>{html.escape(title)}</b>\n\n"
         f"{summary}\n\n"
         f"🔗 <a href='{safe_link}'>Detaylı Analiz →</a> • <b>{html.escape(source)}</b>"
@@ -109,11 +138,25 @@ async def telegram_gonder(title, summary, source, link):
     for user in users:
         if haber_kullaniciya_uygun(title, user.tags, user.custom_follows or ""):
             broadcast_count += 1
+
+            # ── Akıllı CTA Seçimi ──
+            user_tags = (user.tags or "").strip()
+            user_follows = (user.custom_follows or "").strip()
+            has_preferences = bool(user_tags) or bool(user_follows)
+
+            # Tag'i yoksa → tag/takip komutunu öğretici CTA
+            # Tag'i varsa  → Dashboard'a yönlendirici CTA
+            if not has_preferences:
+                cta = random.choice(CTA_TAG_PROMPTS)
+            else:
+                cta = random.choice(CTA_DASHBOARD_PROMPTS)
+
+            full_message = base_message + cta
+
             logger.info(f"  ✉️ Gönderiliyor → User {user.telegram_id}")
             try:
-                send_telegram_message(user.telegram_id, message)
+                send_telegram_message(user.telegram_id, full_message)
             except Exception as e:
-                # Suppress "chat not found" errors - expected when no users registered
                 if "chat not found" not in str(e).lower():
                     logger.warning(f"{user.telegram_id} kullanıcısına mesaj gönderilemedi: {e}")
 
@@ -178,8 +221,8 @@ async def run_crawler():
                 await telegram_gonder(haber_title, analiz, haber_source, link)
                 await asyncio.sleep(2)
 
-            logger.info("Döngü tamamlandı. 30 dakika uyku moduna geçiliyor...")
-            await asyncio.sleep(1800)  # 30 minutes between crawl cycles
+            logger.info("Döngü tamamlandı. 5 dakika uyku moduna geçiliyor...")
+            await asyncio.sleep(300)  # 5 minutes between crawl cycles
 
         except Exception as e:
             logger.error(f"Crawler Kritik Hatası: {e}", exc_info=True)
