@@ -582,12 +582,17 @@ async def batch_analyze_once() -> int:
     DB'yi güncelle, SSE'ye yayınla, urgent olanları anında Telegram'a at.
     Return: analiz edilen haber sayısı.
     """
-    # 1) Analiz bekleyenleri al
+    # 1) Analiz bekleyenleri al — YENİ haberler ÖNCE (DESC).
+    # Neden: Fast-fetch her saniye yeni FMP/RSS haberleri çekiyor; tempo
+    # batch analizden hızlı olunca kuyruğun arkasındaki eski haberler
+    # kullanıcıya değersiz (5h eski forex manşeti kimseyi ilgilendirmez),
+    # ama ön tarafta yeni breaking haberi anında analiz etmek kritik.
+    # Eski ASC tercihi breaking haberi 1-2 saat geciktiriyordu.
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(NewsItem)
             .where(NewsItem.analyzed == False)  # noqa: E712
-            .order_by(NewsItem.created_at.asc())
+            .order_by(NewsItem.created_at.desc())
             .limit(BATCH_SIZE)
         )
         items = list(result.scalars().all())
