@@ -297,21 +297,30 @@ def _call_gemini_batch(model: str, prompt_text: str, max_tokens: int, timeout_se
                 return {}
 
             import re
+
+            # Önce JSON array `[...]` dene. Yoksa obje `{...}` dene —
+            # bazı modeller (ör. 2.5-flash-lite) responseMimeType=json olsa
+            # bile array yerine `{"items":[...]}` / `{"0":{...}, "1":{...}}`
+            # şeklinde obje döndürebiliyor.
             array_match = re.search(r"\[[\s\S]*\]", text)
-            if not array_match:
-                logger.warning(f"[{model}] No JSON array in response (attempt {attempt+1})")
+            object_match = re.search(r"\{[\s\S]*\}", text)
+
+            if not array_match and not object_match:
+                logger.warning(
+                    f"[{model}] No JSON in response (attempt {attempt+1}): "
+                    f"{text[:200]!r}"
+                )
                 if attempt == 0:
                     time.sleep(2)
                     continue
                 return {}
 
-            raw = array_match.group()
-            # ASCII control chars (except \n \r \t) sil → JSON-safe
+            # Array varsa array'i tercih et, yoksa obje
+            raw = array_match.group() if array_match else object_match.group()
             cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", raw)
             try:
                 parsed = json.loads(cleaned, strict=False)
             except json.JSONDecodeError:
-                # Son çare: string içindeki escape'lenmemiş \n'leri escape et
                 cleaned2 = re.sub(
                     r'("(?:[^"\\]|\\.)*?)(\n)',
                     lambda m: m.group(1) + "\\n",
@@ -319,8 +328,28 @@ def _call_gemini_batch(model: str, prompt_text: str, max_tokens: int, timeout_se
                 )
                 parsed = json.loads(cleaned2, strict=False)
 
+            # Dict döndüyse içindeki array'i ya da values'i çıkar
+            if isinstance(parsed, dict):
+                # 1) Yaygın wrapper field isimleri
+                for key in ("items", "results", "data", "batch", "analyses", "news"):
+                    val = parsed.get(key)
+                    if isinstance(val, list):
+                        parsed = val
+                        break
+                else:
+                    # 2) Key'ler "0","1","2" gibi numerik/id → values al
+                    values = list(parsed.values())
+                    if values and all(isinstance(v, dict) for v in values):
+                        parsed = values
+                    else:
+                        logger.warning(
+                            f"[{model}] Obje yapısı anlaşılamadı (keys={list(parsed.keys())[:5]}): "
+                            f"{text[:300]!r}"
+                        )
+                        return {}
+
             if not isinstance(parsed, list):
-                logger.warning(f"[{model}] Parsed non-list")
+                logger.warning(f"[{model}] Parsed non-list: {type(parsed).__name__}")
                 return {}
 
             result: dict = {}
