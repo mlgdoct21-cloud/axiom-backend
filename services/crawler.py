@@ -73,6 +73,11 @@ DIGEST_INTERVAL_SEC = int(os.getenv("AXIOM_DIGEST_SEC", "180"))  # 3 dk
 # Gemini overloaded döner) ~500-700 haber/saat.
 BATCH_SIZE = int(os.getenv("AXIOM_BATCH_SIZE", "15"))
 FMP_FALLBACK_THRESHOLD = int(os.getenv("AXIOM_FMP_FALLBACK_MIN", "5"))  # FMP bundan az dönerse RSS ekle
+# SSE canlı akış tazelik penceresi: bu yaştan eski analizler dashboard'a
+# anlık olarak itilmez (DB'de kalır, feed endpoint reload'unda erişilir).
+# batch_analyze backlog'u işlerken 20-30 dk eski item'lar SSE'ye düşüp
+# dashboard'da "sıra bozukluğu" yaratıyordu. 0 = gate kapalı (tümünü yayınla).
+SSE_MAX_AGE_MIN = int(os.getenv("AXIOM_SSE_MAX_AGE_MIN", "10"))
 
 # Urgent keywords — acil broadcast tetikleyicileri (başlıkta aranır, lowercase)
 URGENT_KEYWORDS = [
@@ -665,21 +670,36 @@ async def batch_analyze_once() -> int:
             updated += 1
 
             # 5a) SSE'ye yayınla — dashboard anında görsün
-            try:
-                await news_bus.publish("news", {
-                    "id": item.id,
-                    "title": item.original_title,
-                    "link": item.original_link,
-                    "source": item.source,
-                    "symbol": item.symbol,
-                    "is_urgent": item.is_urgent,
-                    "telegram_hook": tg_hook,
-                    "dashboard_summary": dash,
-                    "axiom_analysis": axiom,
-                    "created_at": item.created_at.isoformat() if item.created_at else None,
-                })
-            except Exception as e:
-                logger.warning(f"SSE publish hatası #{item.id}: {e}")
+            # TAZELIK GATE: batch analyze DESC'de 15 item alıyor, ama yeni
+            # haber tempo'su her zaman 15'i doldurmuyor → backlog'dan eski
+            # item'lar SSE'ye düşüp dashboard'da yaş karışıklığı yaratıyor.
+            # Sadece SSE_MAX_AGE_MIN içinde created_at'a sahip item'ları yayınla.
+            is_fresh = True
+            if SSE_MAX_AGE_MIN > 0 and item.created_at:
+                age_min = (datetime.now(timezone.utc) - item.created_at).total_seconds() / 60
+                is_fresh = age_min <= SSE_MAX_AGE_MIN
+
+            if is_fresh:
+                try:
+                    await news_bus.publish("news", {
+                        "id": item.id,
+                        "title": item.original_title,
+                        "link": item.original_link,
+                        "source": item.source,
+                        "symbol": item.symbol,
+                        "is_urgent": item.is_urgent,
+                        "telegram_hook": tg_hook,
+                        "dashboard_summary": dash,
+                        "axiom_analysis": axiom,
+                        "created_at": item.created_at.isoformat() if item.created_at else None,
+                    })
+                except Exception as e:
+                    logger.warning(f"SSE publish hatası #{item.id}: {e}")
+            else:
+                logger.debug(
+                    f"  📭 SSE atlandı #{item.id} (yaş {age_min:.1f}dk > "
+                    f"{SSE_MAX_AGE_MIN}dk gate); DB'de mevcut, feed reload'da görünür"
+                )
 
             # 5b) Broadcast routing
             if item.is_urgent:
