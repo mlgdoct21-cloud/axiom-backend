@@ -30,12 +30,16 @@ FMP_BASE_URL = "https://financialmodelingprep.com/stable"
 # (endpoint_path, default_limit, category_label)
 # Category, crawler ve dashboard tarafında hangi endpoint'ten geldiğini
 # ayırt etmek için kaynak etiketine eklenir: "Benzinga · FMP/stock"
+#
+# NOT: 'news/press-releases-latest' endpoint'i FMP'nin daha üst plan (Premium+)
+# gerektiriyor — mevcut abonelikte HTTP 402 dönüyor. Listeden çıkarıldı;
+# plan upgrade edilirse geri eklenebilir. press release içeriğinin büyük
+# kısmı zaten stock-latest ve general-latest'te görünüyor.
 FMP_ENDPOINTS = [
-    ("news/stock-latest",           250, "stock"),
-    ("news/press-releases-latest",  100, "press"),
-    ("news/general-latest",         100, "general"),
-    ("news/crypto-latest",          100, "crypto"),
-    ("news/forex-latest",            50, "forex"),
+    ("news/stock-latest",    250, "stock"),
+    ("news/general-latest",  100, "general"),
+    ("news/crypto-latest",   100, "crypto"),
+    ("news/forex-latest",     50, "forex"),
 ]
 
 
