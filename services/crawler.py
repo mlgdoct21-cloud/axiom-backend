@@ -41,7 +41,7 @@ import re
 import hashlib
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Any
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
@@ -65,9 +65,13 @@ logger = get_logger("crawler")
 # digest ise sadece non-urgent için kısa bekletme yapar (kullanıcı yenilemek
 # zorunda kalmasın; ama urgent'lar anında, normaller de 3 dk içinde gitsin).
 FAST_FETCH_INTERVAL_SEC = int(os.getenv("AXIOM_FAST_FETCH_SEC", "30"))  # 30 sn
-BATCH_ANALYZE_INTERVAL_SEC = int(os.getenv("AXIOM_BATCH_ANALYZE_SEC", "90"))  # 1.5 dk
+BATCH_ANALYZE_INTERVAL_SEC = int(os.getenv("AXIOM_BATCH_ANALYZE_SEC", "60"))  # 1 dk
 DIGEST_INTERVAL_SEC = int(os.getenv("AXIOM_DIGEST_SEC", "180"))  # 3 dk
-BATCH_SIZE = int(os.getenv("AXIOM_BATCH_SIZE", "8"))  # Gemini çağrı başına haber adedi (429'u düşürür)
+# Gemini çağrı başına haber adedi. 15 haber ~4-5K token prompt + 4-8K token yanıt.
+# Daha büyük batch = daha az API çağrısı = daha az quota tüketimi.
+# 60s interval × 15 haber = 900 haber/saat teorik. Pratik (bazı cycle'lar
+# Gemini overloaded döner) ~500-700 haber/saat.
+BATCH_SIZE = int(os.getenv("AXIOM_BATCH_SIZE", "15"))
 FMP_FALLBACK_THRESHOLD = int(os.getenv("AXIOM_FMP_FALLBACK_MIN", "5"))  # FMP bundan az dönerse RSS ekle
 
 # Urgent keywords — acil broadcast tetikleyicileri (başlıkta aranır, lowercase)
@@ -524,14 +528,34 @@ async def fast_fetch_once() -> int:
 
 
 async def fast_fetch_loop() -> None:
-    """60 saniyede bir FMP+RSS fetch çalıştırır. Çöktüğünde supervisor restart eder."""
+    """
+    FAST_FETCH_INTERVAL_SEC saniyede bir FMP+RSS fetch çalıştırır.
+    pipeline_health güncellenir; ardışık hatalarda exp. backoff.
+    """
     logger.info(f"🟢 FAST FETCH LOOP başlatıldı (her {FAST_FETCH_INTERVAL_SEC}s)")
+    import time as _t
+
     while True:
+        ph = pipeline_health["fast_fetch"]
         try:
-            await fast_fetch_once()
+            count = await fast_fetch_once()
+            ph["last_run_ts"] = _t.time()
+            ph["last_new_count"] = count
+            ph["total_runs"] += 1
+            ph["consecutive_errors"] = 0
+            sleep_sec = FAST_FETCH_INTERVAL_SEC
         except Exception as e:
-            logger.error(f"fast_fetch_once çöktü: {e}", exc_info=True)
-        await asyncio.sleep(FAST_FETCH_INTERVAL_SEC)
+            ph["total_errors"] += 1
+            ph["consecutive_errors"] += 1
+            logger.error(
+                f"fast_fetch_once çöktü (consecutive: {ph['consecutive_errors']}): {e}",
+                exc_info=True,
+            )
+            if ph["consecutive_errors"] >= 5:
+                sleep_sec = min(FAST_FETCH_INTERVAL_SEC * 3, 180)
+            else:
+                sleep_sec = FAST_FETCH_INTERVAL_SEC
+        await asyncio.sleep(sleep_sec)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -688,14 +712,76 @@ async def batch_analyze_once() -> int:
     return updated
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# PIPELINE HEALTH METRICS — /api/v1/health endpoint tarafından okunur
+# ─────────────────────────────────────────────────────────────────────────────
+pipeline_health: Dict[str, Any] = {
+    "fast_fetch": {
+        "last_run_ts": 0.0,
+        "last_new_count": 0,
+        "total_runs": 0,
+        "total_errors": 0,
+        "consecutive_errors": 0,
+    },
+    "batch_analyze": {
+        "last_run_ts": 0.0,
+        "last_analyzed_count": 0,
+        "total_analyzed": 0,
+        "total_errors": 0,
+        "consecutive_errors": 0,
+    },
+    "digest": {
+        "last_run_ts": 0.0,
+        "last_sent_count": 0,
+        "total_runs": 0,
+    },
+}
+
+
 async def batch_analyze_loop() -> None:
-    logger.info(f"🟢 BATCH ANALYZE LOOP başlatıldı (her {BATCH_ANALYZE_INTERVAL_SEC}s, {BATCH_SIZE} haber/cycle)")
+    """
+    batch_analyze_once'u sonsuz döngüde çalıştırır.
+
+    Dayanıklılık:
+      - Her cycle kendi try/except'i içinde. Exception loop'u durdurmaz.
+      - Consecutive error tracking: ardışık N hata sonrası exponential backoff
+        (60s → 120s → 240s max) — DB down / Gemini down gibi durumlarda.
+      - pipeline_health global dict güncellenir (monitoring için).
+    """
+    logger.info(
+        f"🟢 BATCH ANALYZE LOOP başlatıldı (her {BATCH_ANALYZE_INTERVAL_SEC}s, "
+        f"{BATCH_SIZE} haber/cycle)"
+    )
+    ph = pipeline_health["batch_analyze"]
+
+    import time as _t
+
     while True:
         try:
-            await batch_analyze_once()
+            count = await batch_analyze_once()
+            ph["last_run_ts"] = _t.time()
+            ph["last_analyzed_count"] = count
+            ph["total_analyzed"] += count
+            ph["consecutive_errors"] = 0  # başarı → counter sıfırla
+            sleep_sec = BATCH_ANALYZE_INTERVAL_SEC
         except Exception as e:
-            logger.error(f"batch_analyze_once çöktü: {e}", exc_info=True)
-        await asyncio.sleep(BATCH_ANALYZE_INTERVAL_SEC)
+            ph["total_errors"] += 1
+            ph["consecutive_errors"] += 1
+            logger.error(
+                f"batch_analyze_once çöktü (consecutive: {ph['consecutive_errors']}): {e}",
+                exc_info=True,
+            )
+            # Exponential backoff on consecutive failures — DB down / Gemini down
+            # gibi durumlarda spam log ve gereksiz yük önlenir.
+            # 1-3: normal interval, 4-6: 2x, 7+: 4x max
+            if ph["consecutive_errors"] >= 7:
+                sleep_sec = min(BATCH_ANALYZE_INTERVAL_SEC * 4, 240)
+            elif ph["consecutive_errors"] >= 4:
+                sleep_sec = BATCH_ANALYZE_INTERVAL_SEC * 2
+            else:
+                sleep_sec = BATCH_ANALYZE_INTERVAL_SEC
+
+        await asyncio.sleep(sleep_sec)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

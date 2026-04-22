@@ -192,83 +192,136 @@ def _build_batch_payload(items: list) -> str:
     return "\n\n---\n\n".join(lines)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CIRCUIT BREAKER — per-model quota cooldown
+# ─────────────────────────────────────────────────────────────────────────────
+# Gemini free-tier günlük RPD (Requests Per Day) limiti dolunca model "exhausted"
+# durumuna düşer ve o günün geri kalanında sürekli 429 döner. Her cycle'da onu
+# tekrar denersek 30+ saniye boşa beklemiş oluruz. Circuit breaker: bir model
+# 429/RESOURCE_EXHAUSTED dönerse `_MODEL_COOLDOWN_SEC` süresince o modeli atla.
+_MODEL_COOLDOWN_SEC = int(os.getenv("AXIOM_MODEL_COOLDOWN_SEC", "900"))  # 15 dk
+_model_cooldown_until: dict = {}  # {model_name: unix_ts_resume_at}
+
+
+def _is_model_cool(model: str) -> bool:
+    """True if model is NOT in cooldown (safe to call)."""
+    until = _model_cooldown_until.get(model, 0)
+    return time.time() >= until
+
+
+def _trip_breaker(model: str, reason: str = "429") -> None:
+    """Model'i cooldown'a al. O modele bu süre boyunca istek atılmaz."""
+    resume_at = time.time() + _MODEL_COOLDOWN_SEC
+    _model_cooldown_until[model] = resume_at
+    logger.warning(
+        f"🔴 Circuit breaker TRIPPED: '{model}' ({reason}) — "
+        f"{_MODEL_COOLDOWN_SEC}s cooldown (resume @ {time.strftime('%H:%M:%S', time.localtime(resume_at))})"
+    )
+
+
+def _reset_breaker(model: str) -> None:
+    if model in _model_cooldown_until:
+        _model_cooldown_until.pop(model, None)
+        logger.info(f"🟢 Circuit breaker RESET: '{model}' — başarılı çağrı.")
+
+
 def _call_gemini_batch(model: str, prompt_text: str, max_tokens: int, timeout_sec: int) -> dict:
     """
-    Tek bir Gemini modeli için batch çağrı. Retry / backoff içerir.
-    Return: {id: {telegram_hook, dashboard_summary, axiom_analysis}} veya boş dict.
-    429 yerken `__rate_limited__` keyini True set eder — caller fallback'e geçsin.
+    Tek bir Gemini modeli için batch çağrı.
+
+    Rate-limit stratejisi (production-grade):
+      - İlk 429 → anında breaker trip et, boş dict dön. Caller fallback'e geçsin.
+      - Burada retry yok — çünkü 429 kota bitmesi demektir, saniyeler içinde çözülmez.
+      - 503 (overloaded) → 1 retry, kısa bekleme (geçici sorun).
+      - JSON parse / network hatası → 1 retry.
+
+    Return:
+      - {"__rate_limited__": True} eğer 429 alındıysa.
+      - {id: {telegram_hook, dashboard_summary, axiom_analysis}, ...} başarıda.
+      - {} geçici hata/parse sorunu (caller next cycle'da tekrar dener).
     """
+    # Circuit breaker kontrolü — cooldown'daki modeli hiç arama
+    if not _is_model_cool(model):
+        remaining = int(_model_cooldown_until[model] - time.time())
+        logger.debug(f"[{model}] Cooldown'da, {remaining}s sonra açılacak.")
+        return {"__rate_limited__": True}
+
     payload = {
         "contents": [{"parts": [{"text": prompt_text}]}],
         "generationConfig": {
             "temperature": 0.3,
             "maxOutputTokens": max_tokens,
-            "responseMimeType": "application/json",  # JSON output mode
+            "responseMimeType": "application/json",
         },
     }
 
     headers = {"Content-Type": "application/json"}
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
 
-    rate_limit_count = 0
-    for attempt in range(3):
+    # Toplam 2 attempt (503/geçici hata için). 429 ANINDA circuit breaker'a gider.
+    for attempt in range(2):
         try:
             response = requests.post(url, json=payload, headers=headers, timeout=timeout_sec)
 
             if response.status_code == 429:
-                rate_limit_count += 1
-                wait = [5, 15, 40][attempt]
-                logger.warning(f"[{model} attempt {attempt+1}] HTTP 429 - {wait}s bekle")
-                time.sleep(wait)
-                continue
+                # Kota bitmesi — retry boşuna. Breaker trip + fallback'e yönlendir.
+                _trip_breaker(model, reason="HTTP 429 quota exhausted")
+                return {"__rate_limited__": True}
+
             if response.status_code == 503:
-                wait = [3, 8, 20][attempt]
-                logger.warning(f"[{model} attempt {attempt+1}] HTTP 503 - {wait}s bekle")
-                time.sleep(wait)
-                continue
+                # Overloaded — kısa bekleme + 1 retry.
+                if attempt == 0:
+                    logger.warning(f"[{model}] HTTP 503 overloaded — 5s retry")
+                    time.sleep(5)
+                    continue
+                logger.warning(f"[{model}] HTTP 503 2 deneme de başarısız, skip.")
+                return {}
 
             response.raise_for_status()
             data = response.json()
 
             candidates = data.get("candidates", [])
             if not candidates:
-                logger.warning(f"[{model} attempt {attempt+1}] No candidates")
-                time.sleep(2)
-                continue
+                logger.warning(f"[{model}] No candidates (attempt {attempt+1})")
+                if attempt == 0:
+                    time.sleep(2)
+                    continue
+                return {}
 
             text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
             if not text:
-                logger.warning(f"[{model} attempt {attempt+1}] Empty text")
-                time.sleep(2)
-                continue
+                logger.warning(f"[{model}] Empty text (attempt {attempt+1})")
+                if attempt == 0:
+                    time.sleep(2)
+                    continue
+                return {}
 
             import re
             array_match = re.search(r"\[[\s\S]*\]", text)
             if not array_match:
-                logger.warning(f"[{model} attempt {attempt+1}] No JSON array found")
-                time.sleep(2)
-                continue
+                logger.warning(f"[{model}] No JSON array in response (attempt {attempt+1})")
+                if attempt == 0:
+                    time.sleep(2)
+                    continue
+                return {}
 
-            # strict=False → string değerlerin içindeki \n, \t gibi escape'lenmemiş
-            # control karakterlerini tolere et (Gemini bazen sarmalanmış text'te
-            # ham \n bırakıyor). Ayrıca ham kontrol karakterlerini de temizle.
             raw = array_match.group()
-            # ASCII control chars (except \n \r \t) silinsin → JSON-safe
+            # ASCII control chars (except \n \r \t) sil → JSON-safe
             cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", raw)
             try:
                 parsed = json.loads(cleaned, strict=False)
             except json.JSONDecodeError:
-                # Son çare: string değerlerin içinde kalan ham \n → \\n escape et
+                # Son çare: string içindeki escape'lenmemiş \n'leri escape et
                 cleaned2 = re.sub(
                     r'("(?:[^"\\]|\\.)*?)(\n)',
                     lambda m: m.group(1) + "\\n",
                     cleaned,
                 )
                 parsed = json.loads(cleaned2, strict=False)
+
             if not isinstance(parsed, list):
-                logger.warning(f"[{model} attempt {attempt+1}] Parsed non-list")
-                time.sleep(2)
-                continue
+                logger.warning(f"[{model}] Parsed non-list")
+                return {}
 
             result: dict = {}
             for obj in parsed:
@@ -284,32 +337,73 @@ def _call_gemini_batch(model: str, prompt_text: str, max_tokens: int, timeout_se
                 }
 
             logger.info(f"✅ [{model}] Batch: {len(result)} obje")
+            _reset_breaker(model)  # başarı → cooldown varsa temizle
             return result
 
         except json.JSONDecodeError as e:
-            logger.error(f"[{model} attempt {attempt+1}] JSON parse: {e}")
-            time.sleep(2)
+            logger.error(f"[{model}] JSON parse (attempt {attempt+1}): {e}")
+            if attempt == 0:
+                time.sleep(2)
+                continue
+            return {}
+        except requests.Timeout:
+            logger.warning(f"[{model}] Timeout (attempt {attempt+1})")
+            if attempt == 0:
+                continue
+            return {}
         except Exception as e:
-            logger.error(f"[{model} attempt {attempt+1}] {e}")
-            time.sleep(3)
+            logger.error(f"[{model}] Unexpected error (attempt {attempt+1}): {e}")
+            if attempt == 0:
+                time.sleep(3)
+                continue
+            return {}
 
-    # 3 deneme de 429 ise caller'a sinyal
-    return {"__rate_limited__": True} if rate_limit_count >= 2 else {}
+    return {}
 
 
-# Primary & fallback model — primary 429 çakılırsa lite model devreye girer.
-# gemini-2.0-flash kaliteli ama sıkı quota. gemini-2.5-flash-lite daha bol quota.
-_PRIMARY_MODEL = os.getenv("AXIOM_GEMINI_PRIMARY", "gemini-2.0-flash")
-_FALLBACK_MODEL = os.getenv("AXIOM_GEMINI_FALLBACK", "gemini-2.5-flash-lite")
+# Primary & fallback models — ENV-override destekli.
+#
+# DEFAULT STRATEJİ (production):
+#   - PRIMARY = gemini-2.5-flash-lite (free-tier 10k RPD, 30 RPM — yüksek throughput)
+#   - FALLBACK = gemini-2.0-flash (free-tier 1500 RPD, 15 RPM — daha kaliteli
+#     ama sınırlı; primary cooldown'dayken backup görevi görür)
+#
+# Neden swap edildi:
+#   Eski default 2.0-flash primary idi, 1500 RPD hızla tükeniyordu (pipeline
+#   ~1000-3000 haber/gün üretiyor). Her cycle'da 429 alıp 40s bekliyorduk.
+#   2.5-flash-lite primary yapıldı çünkü 6-7x daha bol quota + yeterince kaliteli.
+_PRIMARY_MODEL = os.getenv("AXIOM_GEMINI_PRIMARY", "gemini-2.5-flash-lite")
+_FALLBACK_MODEL = os.getenv("AXIOM_GEMINI_FALLBACK", "gemini-2.0-flash")
+
+
+def get_model_status() -> dict:
+    """Monitoring endpoint için: hangi model cooldown'da?"""
+    now = time.time()
+    return {
+        "primary_model": _PRIMARY_MODEL,
+        "fallback_model": _FALLBACK_MODEL,
+        "cooldowns": {
+            model: {
+                "until_ts": until,
+                "remaining_sec": max(0, int(until - now)),
+                "cooling_down": until > now,
+            }
+            for model, until in _model_cooldown_until.items()
+        },
+    }
 
 
 def generate_batch_summaries_sync(items: list) -> dict:
     """
-    Birden çok haberi tek Gemini çağrısında analiz eder. Primary model 429 yerse
-    otomatik fallback model'e geçer.
+    Birden çok haberi tek Gemini çağrısında analiz eder.
+
+    Akış:
+      1) Primary model dene. Başarı → dön.
+      2) Primary rate-limited (breaker trip) → fallback dene.
+      3) Fallback da rate-limited → boş dön (caller next cycle'da tekrar dener).
 
     Args:
-        items: [{'id': int, 'title': str, 'link': str, 'context': dict|None}, ...]
+        items: [{'id': int, 'title': str, 'link': str, 'body': str, 'context': dict|None}, ...]
 
     Returns:
         {id: {telegram_hook, dashboard_summary, axiom_analysis}, ...}
@@ -327,13 +421,19 @@ def generate_batch_summaries_sync(items: list) -> dict:
     # 1) Primary model
     result = _call_gemini_batch(_PRIMARY_MODEL, prompt_text, max_tokens=8192, timeout_sec=45)
 
-    # Rate-limited ise fallback
+    # 2) Primary rate-limited → fallback'e geç (anında, bekleme yok)
     if result.get("__rate_limited__"):
-        logger.warning(f"Primary '{_PRIMARY_MODEL}' rate-limited, fallback '{_FALLBACK_MODEL}' deneniyor...")
+        logger.info(f"Primary '{_PRIMARY_MODEL}' cooldown'da, fallback '{_FALLBACK_MODEL}' deneniyor...")
         result = _call_gemini_batch(_FALLBACK_MODEL, prompt_text, max_tokens=8192, timeout_sec=45)
 
-    # Fallback da sinyal verdiyse temizle
-    result.pop("__rate_limited__", None)
+    # 3) Her iki model de cooldown'daysa temiz dict dön (caller retry cycle'da)
+    if result.get("__rate_limited__"):
+        logger.warning(
+            "⚠️ Her iki Gemini model de cooldown'da. Bu cycle atlanıyor, "
+            "sonraki batch_analyze_loop iteration'da tekrar denenecek."
+        )
+        return {}
+
     return result
 
 
