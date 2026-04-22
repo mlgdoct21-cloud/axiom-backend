@@ -12,6 +12,9 @@ class NewsCreate(BaseModel):
     original_link: str = Field(..., max_length=1000)
     ai_summary: Optional[str] = None
     ai_tags: Optional[str] = Field(None, max_length=500)
+    telegram_hook: Optional[str] = None
+    dashboard_summary: Optional[str] = None
+    axiom_analysis: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -25,6 +28,12 @@ class NewsResponse(BaseModel):
     original_link: str
     ai_summary: Optional[str]
     ai_tags: Optional[str]
+    telegram_hook: Optional[str]
+    dashboard_summary: Optional[str]
+    axiom_analysis: Optional[str]
+    symbol: Optional[str] = None
+    analyzed: Optional[bool] = None
+    is_urgent: Optional[bool] = None
     created_at: datetime
 
     class Config:

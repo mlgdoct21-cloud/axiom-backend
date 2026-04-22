@@ -11,6 +11,7 @@ from routers.v1 import router as v1_router
 from services.telegram_bot import start_telegram_bot
 from services.crawler import run_crawler
 from core.logger import get_logger
+from core.schema_guard import ensure_schema
 
 logger = get_logger("main")
 
@@ -49,6 +50,13 @@ async def crawler_supervisor():
 async def lifespan(app: FastAPI):
     global bot_task, crawler_task
     logger.info("Application startup")
+
+    # Schema guard — idempotent ALTER TABLE to ensure pipeline columns exist.
+    # Must run BEFORE crawler/bot so they can write to new columns without errors.
+    try:
+        await ensure_schema()
+    except Exception as e:
+        logger.warning(f"Schema guard startup hatası (uygulama yine de başlıyor): {e}")
 
     # Start Telegram bot in background within a supervisor
     try:

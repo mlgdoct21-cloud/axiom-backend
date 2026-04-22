@@ -181,11 +181,23 @@ async def process_haber_command(chat_id):
         source = latest_news.get('source') or 'Bilinmeyen Kaynak'
 
         logger.info(f"  📌 En yeni haber: '{title[:50]}...'")
-        summary = await generate_summary(title, link)
+        analiz = await generate_summary(title, link)
 
-        # Handle case where summary is None (Gemini failed)
-        if not summary:
+        # Handle case where summary is None (Gemini failed) or not a dict
+        if not analiz or not isinstance(analiz, dict):
             logger.warning(f"  ❌ Haber özeti boş, mesaj gönderilemedi")
+            if loading_msg_id:
+                edit_message_text(chat_id, loading_msg_id, "⚠️ Haber özeti alınamadı, lütfen daha sonra tekrar deneyin.")
+            return
+
+        # 3-tier JSON'dan telegram_hook'u çıkar (bot için kısa versiyon)
+        telegram_hook = analiz.get("telegram_hook", "").strip()
+        if not telegram_hook:
+            # Fallback: dashboard_summary veya axiom_analysis
+            telegram_hook = analiz.get("dashboard_summary", "").strip() or analiz.get("axiom_analysis", "").strip()
+
+        if not telegram_hook:
+            logger.warning(f"  ❌ AI yanıtı boş, mesaj gönderilemedi")
             if loading_msg_id:
                 edit_message_text(chat_id, loading_msg_id, "⚠️ Haber özeti alınamadı, lütfen daha sonra tekrar deneyin.")
             return
@@ -194,7 +206,7 @@ async def process_haber_command(chat_id):
         safe_link = html.escape(link, quote=True)
         final_message = (
             f"📌 <b>{html.escape(title)}</b>\n\n"
-            f"{summary}\n\n"
+            f"{telegram_hook}\n\n"
             f"📰 <b>Kaynak:</b> <a href='{safe_link}'>{html.escape(source)}</a>"
         )
         logger.info(f"  ✉️ /haber mesajı gönderiliyor")
