@@ -298,26 +298,64 @@ def _call_gemini_batch(model: str, prompt_text: str, max_tokens: int, timeout_se
 
             import re
 
-            # Önce JSON array `[...]` dene. Yoksa obje `{...}` dene —
-            # bazı modeller (ör. 2.5-flash-lite) responseMimeType=json olsa
-            # bile array yerine `{"items":[...]}` / `{"0":{...}, "1":{...}}`
-            # şeklinde obje döndürebiliyor.
+            # Gemini 2.5-flash-lite bazen responseMimeType=json olsa bile
+            # JSON array yerine multiple top-level objects stream'i döndürüyor:
+            #   {id:1, ...}
+            #   {id:2, ...}
+            # Bu yüzden 3 strateji deniyoruz (sırayla):
+            #   1) JSON array [...] — happy path (2.0-flash)
+            #   2) JSON wrapper obje {...} — tek obje veya items/results içeren
+            #   3) Multiple top-level {}{}{} stream — brace depth scanner ile
             array_match = re.search(r"\[[\s\S]*\]", text)
-            object_match = re.search(r"\{[\s\S]*\}", text)
 
-            if not array_match and not object_match:
-                logger.warning(
-                    f"[{model}] No JSON in response (attempt {attempt+1}): "
-                    f"{text[:200]!r}"
-                )
-                if attempt == 0:
-                    time.sleep(2)
-                    continue
-                return {}
+            def _extract_top_level_objects(s: str) -> list:
+                """String-aware iterative brace-depth scanner.
+                Returns every top-level {...} block as its own string."""
+                out, depth, start = [], 0, None
+                in_string, escape = False, False
+                for i, ch in enumerate(s):
+                    if escape:
+                        escape = False
+                        continue
+                    if ch == "\\":
+                        escape = True
+                        continue
+                    if ch == '"':
+                        in_string = not in_string
+                        continue
+                    if in_string:
+                        continue
+                    if ch == "{":
+                        if depth == 0:
+                            start = i
+                        depth += 1
+                    elif ch == "}":
+                        depth -= 1
+                        if depth == 0 and start is not None:
+                            out.append(s[start:i + 1])
+                            start = None
+                return out
 
-            # Array varsa array'i tercih et, yoksa obje
-            raw = array_match.group() if array_match else object_match.group()
-            cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", raw)
+            if array_match:
+                raw_blocks = [array_match.group()]
+            else:
+                blocks = _extract_top_level_objects(text)
+                if not blocks:
+                    logger.warning(
+                        f"[{model}] No JSON in response (attempt {attempt+1}): "
+                        f"{text[:200]!r}"
+                    )
+                    if attempt == 0:
+                        time.sleep(2)
+                        continue
+                    return {}
+                raw_blocks = blocks
+
+            cleaned_blocks = [
+                re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", b) for b in raw_blocks
+            ]
+            # Tek blok (array veya tek obje) vs multi-obje stream
+            cleaned = cleaned_blocks[0] if len(cleaned_blocks) == 1 else None
 
             def _try_parse(s: str):
                 """3 aşamalı permissive JSON parse:
@@ -353,15 +391,33 @@ def _call_gemini_batch(model: str, prompt_text: str, max_tokens: int, timeout_se
                 s3 = re.sub(r",(\s*[\]}])", r"\1", s3)
                 return json.loads(s3, strict=False)
 
-            try:
-                parsed = _try_parse(cleaned)
-            except json.JSONDecodeError as e:
-                # Diagnostic: what did the model actually return?
-                logger.error(
-                    f"[{model}] JSON repair failed (attempt {attempt+1}): {e} | "
-                    f"raw[:500]={cleaned[:500]!r}"
-                )
-                raise
+            if cleaned is not None:
+                # Tek blok yolu (array veya tek obje)
+                try:
+                    parsed = _try_parse(cleaned)
+                except json.JSONDecodeError as e:
+                    logger.error(
+                        f"[{model}] JSON repair failed (attempt {attempt+1}): {e} | "
+                        f"raw[:500]={cleaned[:500]!r}"
+                    )
+                    raise
+            else:
+                # Multi-obje stream: her bloğu ayrı parse et, başarılıları topla.
+                # Bir blok kötü olsa da diğerleri geçerli olabilir — skip it.
+                parsed_list = []
+                for b in cleaned_blocks:
+                    try:
+                        parsed_list.append(_try_parse(b))
+                    except json.JSONDecodeError as e:
+                        logger.warning(
+                            f"[{model}] block skip: {e} | raw[:200]={b[:200]!r}"
+                        )
+                        continue
+                if not parsed_list:
+                    raise json.JSONDecodeError(
+                        "All blocks failed to parse", text[:100], 0
+                    )
+                parsed = parsed_list  # zaten liste — aşağıdaki list-handler ile devam
 
             # Dict döndüyse içindeki array'i ya da values'i çıkar
             if isinstance(parsed, dict):
