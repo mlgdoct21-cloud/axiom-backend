@@ -318,15 +318,50 @@ def _call_gemini_batch(model: str, prompt_text: str, max_tokens: int, timeout_se
             # Array varsa array'i tercih et, yoksa obje
             raw = array_match.group() if array_match else object_match.group()
             cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", raw)
-            try:
-                parsed = json.loads(cleaned, strict=False)
-            except json.JSONDecodeError:
-                cleaned2 = re.sub(
+
+            def _try_parse(s: str):
+                """3 aşamalı permissive JSON parse:
+                1) vanilla json.loads
+                2) escape unterminated newlines inside strings
+                3) quote JS-style unquoted keys (2.5-flash-lite bug)
+                   + convert single→double quotes
+                   + strip trailing commas before ] or }
+                """
+                try:
+                    return json.loads(s, strict=False)
+                except json.JSONDecodeError:
+                    pass
+                # Stage 2: escape raw newlines inside strings
+                s2 = re.sub(
                     r'("(?:[^"\\]|\\.)*?)(\n)',
                     lambda m: m.group(1) + "\\n",
-                    cleaned,
+                    s,
                 )
-                parsed = json.loads(cleaned2, strict=False)
+                try:
+                    return json.loads(s2, strict=False)
+                except json.JSONDecodeError:
+                    pass
+                # Stage 3: JS-style repair
+                #   - unquoted keys:  { id: 1 }  → { "id": 1 }
+                #   - single-quoted strings:  'x' → "x"  (naive but works for simple values)
+                #   - trailing commas:  [1,2,] → [1,2]
+                s3 = re.sub(
+                    r'([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)',
+                    r'\1"\2"\3',
+                    s2,
+                )
+                s3 = re.sub(r",(\s*[\]}])", r"\1", s3)
+                return json.loads(s3, strict=False)
+
+            try:
+                parsed = _try_parse(cleaned)
+            except json.JSONDecodeError as e:
+                # Diagnostic: what did the model actually return?
+                logger.error(
+                    f"[{model}] JSON repair failed (attempt {attempt+1}): {e} | "
+                    f"raw[:500]={cleaned[:500]!r}"
+                )
+                raise
 
             # Dict döndüyse içindeki array'i ya da values'i çıkar
             if isinstance(parsed, dict):
