@@ -784,7 +784,7 @@ async def run_crawler() -> None:
     Üç bağımsız döngüyü paralelde çalıştırır. Herhangi biri çökerse diğerleri
     etkilenmez; main.py'daki supervisor tüm run_crawler()'ı restart eder.
     """
-    logger.info("🚀 Axiom Haber Motoru ayağa kalkıyor (FMP→RSS | Fast+Batch+Digest)")
+    logger.info("🚀 Axiom Haber Motoru v2.1 ayağa kalkıyor (FMP-primary + payload-aware fallback)")
     # Son 48 saatteki başlık hash cache'i → fuzzy dedup için hot start
     await _load_recent_title_hashes()
     await asyncio.gather(
