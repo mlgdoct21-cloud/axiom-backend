@@ -351,17 +351,33 @@ async def fast_fetch_once() -> int:
     seen_title_hashes: set = set()
     dup_title_skipped = 0  # aynı başlık farklı URL → elendi
 
-    # --- FMP (primary) ---
-    # İki ayrı sayaç:
-    #   fmp_fetched  = FMP API'den gelen toplam payload (dedup'tan bağımsız)
-    #   fmp_new      = bu cycle'da DB'ye aday olarak eklenen (duplicate olmayan)
-    # Fallback kararı fmp_new'e göre DEĞİL fmp_fetched'e göre verilir; çünkü FMP
-    # 50 haber çekip hepsi son 48 saatte görülmüşse bu "kaynak sessiz" değil,
-    # "yeni olay yok" demektir. RSS'e düşmek dashboard'ı eski haberle kirletir.
+    # ═══ HİBRİT AKIŞ (v3.0) ═══════════════════════════════════════════════════
+    # Eski sürüm: FMP → sessizse RSS (fallback).
+    # Yeni sürüm: FMP (5 endpoint) + RSS (Türkçe+kripto) **her zaman paralel**.
+    #
+    # Mantık: FMP artık 500+ haberlik rotating pencere (stock/press/general/
+    # crypto/forex) ile çalışıyor, BIST/TR kaynaklarını kapsamıyor. RSS bu kör
+    # noktayı kapatmak için SÜREKLİ çalışır; fallback-only değil.
+    #
+    # AXIOM_DISABLE_RSS=1 → RSS'i tamamen kapatır (saf FMP moduna geçer).
+    # ═══════════════════════════════════════════════════════════════════════════
+    rss_disabled = os.getenv("AXIOM_DISABLE_RSS", "0").strip() in {"1", "true", "yes"}
+
+    # Her iki kaynağı paralel başlat; birisi patlasa bile diğeri ilerlesin
+    fmp_task = asyncio.create_task(fetch_fmp_news(limit=250))
+    if not rss_disabled:
+        sources = await get_sources_from_db()
+        rss_task = asyncio.create_task(fetch_all_feeds(sources))
+    else:
+        rss_task = None
+
+    # --- FMP'yi topla ---
+    # fmp_fetched = toplam payload (5 endpoint'in toplamı)
+    # fmp_new     = bu cycle'da aday kabul edilen (duplicate elenenler hariç)
     fmp_fetched = 0
     fmp_new = 0
     try:
-        fmp_news = await fetch_fmp_news(limit=50)
+        fmp_news = await fmp_task
         fmp_fetched = len(fmp_news)
         for item in fmp_news:
             raw_url = item.get("link", "")
@@ -384,27 +400,11 @@ async def fast_fetch_once() -> int:
     except Exception as e:
         logger.error(f"FMP fetch hatası: {e}")
 
-    # --- RSS (fallback: SADECE FMP tamamen sessizse) ---
-    # Not: Kullanıcı isterse AXIOM_DISABLE_RSS=1 ile RSS'i tamamen kapatabilir.
+    # --- RSS'i topla (paralel, hibrit kapsama) ---
     rss_count = 0
-    rss_disabled = os.getenv("AXIOM_DISABLE_RSS", "0").strip() in {"1", "true", "yes"}
-    need_rss = (fmp_fetched == 0) and not rss_disabled
-    if need_rss:
-        logger.warning(
-            f"⚠️  FMP payload=0 (API sessiz/hatalı) — RSS fallback devreye giriyor. "
-            f"Detay için yukarıda 'FMP HTTP' logu bakılmalı."
-        )
-    else:
-        # FMP sağlıklı döndü (fmp_fetched>0); bu cycle'da dedup tamamladıysa yeni
-        # haber yoksa bile bu normal (FMP yenilenene kadar bekleriz). RSS'e geçmiyoruz.
-        logger.debug(
-            f"FMP sağlıklı (payload={fmp_fetched}, new={fmp_new}); RSS atlandı"
-        )
-
-    if need_rss:
+    if rss_task is not None:
         try:
-            sources = await get_sources_from_db()
-            rss_news = await fetch_all_feeds(sources)
+            rss_news = await rss_task
             for item in rss_news:
                 raw_url = item.get("link", "")
                 url = normalize_url(raw_url)
@@ -426,11 +426,19 @@ async def fast_fetch_once() -> int:
         except Exception as e:
             logger.error(f"RSS fetch hatası: {e}")
 
+    # Sağlık uyarısı: her iki kaynak da 0 döndürüyorsa bir şeyler yanlış
+    if fmp_fetched == 0 and rss_count == 0 and not rss_disabled:
+        logger.warning(
+            "⚠️  HER İKİ KAYNAK SESSİZ: FMP payload=0 VE RSS new=0. "
+            "API key / network / rate-limit problemi olabilir."
+        )
+
     if not all_news:
         if dup_title_skipped:
             logger.info(
                 f"⚡ FAST FETCH: 0 yeni haber "
-                f"(FMP-payload:{fmp_fetched}, title-dup eleme: {dup_title_skipped})"
+                f"(FMP-payload:{fmp_fetched}, RSS-payload:{rss_count}, "
+                f"title-dup eleme: {dup_title_skipped})"
             )
         return 0
 
@@ -784,7 +792,7 @@ async def run_crawler() -> None:
     Üç bağımsız döngüyü paralelde çalıştırır. Herhangi biri çökerse diğerleri
     etkilenmez; main.py'daki supervisor tüm run_crawler()'ı restart eder.
     """
-    logger.info("🚀 Axiom Haber Motoru v2.1 ayağa kalkıyor (FMP-primary + payload-aware fallback)")
+    logger.info("🚀 Axiom Haber Motoru v3.0 ayağa kalkıyor (FMP 5-endpoint paralel + RSS hibrit TR/kripto)")
     # Son 48 saatteki başlık hash cache'i → fuzzy dedup için hot start
     await _load_recent_title_hashes()
     await asyncio.gather(
