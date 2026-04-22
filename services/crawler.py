@@ -476,6 +476,8 @@ async def fast_fetch_once() -> int:
         return 0
 
     # --- DB'ye kaydet (analyzed=False olarak) ---
+    # NOT: Eski haberleri DB'ye YAZIYORUZ (geriye dönük analiz için lazım);
+    # dashboard gösterimindeki yaş filtresi feed endpoint'inde uygulanıyor.
     added = 0
     now = datetime.now(timezone.utc)
     try:

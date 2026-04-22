@@ -1,5 +1,7 @@
 """News API routes - Retrieval and Filtering"""
 
+import os
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,6 +40,7 @@ async def get_news_feed(
     limit: int = 30,
     before_id: Optional[int] = None,
     only_analyzed: bool = False,
+    max_age_h: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -46,23 +49,34 @@ async def get_news_feed(
     - **limit**: Max item count (default 30, max 100)
     - **before_id**: Cursor — bu ID'den eskisini getir (infinite scroll)
     - **only_analyzed**: True ise sadece analizi bitmişler (eski davranış)
+    - **max_age_h**: Yaş kesimi saati (varsayılan AXIOM_FEED_MAX_AGE_H env = 2h).
+      Bu saatten eski haberler gösterilmez. 0 ile tamamen kapatılır
+      (geriye dönük arama/analiz için).
 
-    MİMARİ NOTU (v3.1):
-    Eski sürüm sadece `analyzed=True` haberleri dönüyordu → FMP 282 yeni
-    haber birden atınca batch analyze (8/90s) yetişemiyor, dashboard 3h eski
-    haberlerle donmuş kalıyordu. Şimdi tüm haberler döner; analyzed=False
-    olanlar için dashboard `dashboard_summary` boş gösterir, SSE ile AI
-    özeti gelince yerinde güncellenir. Kullanıcı haber yakaladığını anında
-    görür, AI özeti 1-2 dk içinde düşer.
+    MİMARİ NOTU:
+    - DB'ye tüm haberleri yazıyoruz (geriye dönük analiz için gerekli)
+    - Feed endpoint'te yaş kesimi: dashboard sadece taze (default 2h) haberi
+      göstersin. Eski haberler `?max_age_h=0` ile erişilebilir.
+    - FMP/RSS bazen 5-24h eski haberleri "yeni" gibi döndürüyor (yavaş
+      indexing). Bu yüzden hem created_at (DB'ye eklenme) hem published_at
+      (article'in gerçek yayın zamanı) kontrol edilmeli — burada created_at
+      bazlı filtreliyoruz (DB schema'sında published_at henüz yok).
     """
     if limit > 100:
         limit = 100
+
+    # Age cutoff: env varsayılanı > query param > None (kapalı)
+    default_age_h = int(os.getenv("AXIOM_FEED_MAX_AGE_H", "2"))
+    effective_age_h = max_age_h if max_age_h is not None else default_age_h
 
     stmt = select(NewsItem)
     if only_analyzed:
         stmt = stmt.where(NewsItem.analyzed == True)  # noqa: E712
     if before_id is not None:
         stmt = stmt.where(NewsItem.id < before_id)
+    if effective_age_h > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=effective_age_h)
+        stmt = stmt.where(NewsItem.created_at >= cutoff)
     stmt = stmt.order_by(NewsItem.id.desc()).limit(limit)
 
     try:
