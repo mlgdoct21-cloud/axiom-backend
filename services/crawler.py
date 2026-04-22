@@ -265,12 +265,27 @@ async def _load_recent_title_hashes() -> None:
         logger.warning(f"Recent title cache hydrate hatası: {e}")
 
 
-def haber_kullaniciya_uygun(title: str, user_tags: str, custom_follows: str = "") -> bool:
+def haber_kullaniciya_uygun(
+    title: str,
+    user_tags: str,
+    custom_follows: str = "",
+    body: str = "",
+    symbol: str = "",
+    category: str = "",
+) -> bool:
     """
-    Haber başlığı kullanıcının tag veya takip listesiyle eşleşiyor mu?
+    Haber kullanıcının tag veya takip listesiyle eşleşiyor mu?
 
-    Fuzzy-ish: case-insensitive, tag case-normalize (hissE → Hisse), sembol
-    word-boundary'siz substring match. Eşleşme yoksa False → filtrelenir.
+    v3.1: Arama yüzeyi genişletildi. Eskiden sadece başlıkta arıyorduk,
+    ama FMP'den gelen US stock haberlerinin başlıkları çoğunlukla
+    "BTQ Appoints Dr..." gibi tag keyword'lerine denk gelmiyor. Artık:
+      • Title (eskisi gibi)
+      • Body (haberin ilk 800 karakteri, FMP'den)
+      • Symbol (FMP'nin atadığı ör: "AAPL", "BTCUSD")
+      • Category (FMP endpoint etiketi: "crypto" → "Kripto" tag'i için)
+    birlikte aranır.
+
+    Eşleşme yoksa False → filtrelenir.
     """
     has_tags = bool(user_tags and user_tags.strip())
     has_follows = bool(custom_follows and custom_follows.strip())
@@ -279,7 +294,18 @@ def haber_kullaniciya_uygun(title: str, user_tags: str, custom_follows: str = ""
     if not has_tags and not has_follows:
         return True
 
-    title_lower = title.lower()
+    # Tüm arama yüzeyini tek bir lowercase haystack'te birleştir
+    haystack_parts = [title or "", body or "", symbol or "", category or ""]
+    haystack = " ".join(p for p in haystack_parts if p).lower()
+
+    # FMP category → tag auto-match: FMP/crypto gelen haber otomatik "Kripto" tag'ine düşer
+    category_tag_map = {
+        "crypto": "kripto",
+        "forex": "dolar",  # forex haberlerini Dolar/Euro tag'lerine yönlendir
+        "stock": "hisse",
+    }
+    cat_lower = (category or "").lower()
+    auto_tag = category_tag_map.get(cat_lower)
 
     if has_tags:
         for raw_tag in user_tags.split(","):
@@ -294,12 +320,15 @@ def haber_kullaniciya_uygun(title: str, user_tags: str, custom_follows: str = ""
                 or TAG_KEYWORDS.get(tag.upper())
                 or [tag.lower()]
             )
-            if any(kw in title_lower for kw in keywords):
+            # Auto-tag matching (FMP/crypto → "Kripto")
+            if auto_tag and auto_tag == tag.lower():
+                return True
+            if any(kw in haystack for kw in keywords):
                 return True
 
     if has_follows:
         for keyword in [k.strip() for k in custom_follows.split(",") if k.strip()]:
-            if keyword.lower() in title_lower:
+            if keyword.lower() in haystack:
                 return True
 
     return False
@@ -674,21 +703,45 @@ async def batch_analyze_loop() -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 async def broadcast_to_telegram(
-    news_id: int, title: str, hook: str, source: str, link: str
+    news_id: int,
+    title: str,
+    hook: str,
+    source: str,
+    link: str,
+    body: str = "",
+    symbol: str = "",
+    category: str = "",
 ) -> None:
     """
     Tek bir haberi tag/follow filtresi ile uygun kullanıcılara iletir.
     Idempotent: broadcast_at set edilmişse tekrar göndermez.
+
+    body/symbol/category: filtre arama yüzeyini genişletir (v3.1).
+    Caller geçmezse DB'den doldurulur (geri uyumluluk).
     """
-    # Idempotency check
+    # Idempotency check + eksik alanları DB'den tamamla
     async with AsyncSessionLocal() as session:
         row = await session.execute(
-            select(NewsItem.broadcast_at).where(NewsItem.id == news_id)
+            select(NewsItem.broadcast_at, NewsItem.body, NewsItem.symbol, NewsItem.source)
+            .where(NewsItem.id == news_id)
         )
-        existing = row.scalars().first()
+        r = row.first()
+        if r is None:
+            return
+        existing = r[0]
         if existing is not None:
             logger.debug(f"⏭️  #{news_id} zaten broadcast edildi, atlanıyor")
             return
+        # Caller boş bıraktıysa DB'den al
+        if not body:
+            body = r[1] or ""
+        if not symbol:
+            symbol = r[2] or ""
+        # Category'i source etiketinden çıkar ("Benzinga · FMP/stock" → "stock")
+        if not category:
+            src = r[3] or ""
+            if "FMP/" in src:
+                category = src.split("FMP/", 1)[1].strip()
 
     # Kullanıcıları çek
     try:
@@ -715,7 +768,7 @@ async def broadcast_to_telegram(
     for user in users:
         user_tags = user.tags if user.tags is not None else ""
         user_follows = user.custom_follows if user.custom_follows is not None else ""
-        if not haber_kullaniciya_uygun(title, user_tags, user_follows):
+        if not haber_kullaniciya_uygun(title, user_tags, user_follows, body=body, symbol=symbol, category=category):
             skipped += 1
             logger.debug(
                 f"  ⏭️  skip user={user.telegram_id} title='{title[:50]}...' "

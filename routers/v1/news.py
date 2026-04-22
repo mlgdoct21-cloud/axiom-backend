@@ -1,14 +1,19 @@
 """News API routes - Retrieval and Filtering"""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
+from sqlalchemy.future import select
+from typing import List, Optional
+import asyncio
 
 from core.database import get_db
 from core.security import get_current_user, get_current_user_id
 from schemas.news_schema import NewsResponse, NewsFilter
 from schemas.error_schema import ErrorResponse
 from services.news import NewsService
+from services.event_bus import bus as news_bus, sse_stream
+from models.news import NewsItem
 from core.logger import get_logger
 from models.user import User
 
@@ -18,6 +23,96 @@ router = APIRouter(
     prefix="/news",
     tags=["news"],
 )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# REAL-TIME ENDPOINTS (SSE stream + feed for initial/infinite-scroll load)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/feed",
+    response_model=List[NewsResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def get_news_feed(
+    limit: int = 30,
+    before_id: Optional[int] = None,
+    only_analyzed: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Dashboard ana feed: en son haberleri döner (analiz durumundan bağımsız).
+
+    - **limit**: Max item count (default 30, max 100)
+    - **before_id**: Cursor — bu ID'den eskisini getir (infinite scroll)
+    - **only_analyzed**: True ise sadece analizi bitmişler (eski davranış)
+
+    MİMARİ NOTU (v3.1):
+    Eski sürüm sadece `analyzed=True` haberleri dönüyordu → FMP 282 yeni
+    haber birden atınca batch analyze (8/90s) yetişemiyor, dashboard 3h eski
+    haberlerle donmuş kalıyordu. Şimdi tüm haberler döner; analyzed=False
+    olanlar için dashboard `dashboard_summary` boş gösterir, SSE ile AI
+    özeti gelince yerinde güncellenir. Kullanıcı haber yakaladığını anında
+    görür, AI özeti 1-2 dk içinde düşer.
+    """
+    if limit > 100:
+        limit = 100
+
+    stmt = select(NewsItem)
+    if only_analyzed:
+        stmt = stmt.where(NewsItem.analyzed == True)  # noqa: E712
+    if before_id is not None:
+        stmt = stmt.where(NewsItem.id < before_id)
+    stmt = stmt.order_by(NewsItem.id.desc()).limit(limit)
+
+    try:
+        result = await db.execute(stmt)
+        items = result.scalars().all()
+        return [NewsResponse.from_orm(n) for n in items]
+    except Exception as e:
+        logger.error(f"Feed endpoint hatası: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get news feed"
+        )
+
+
+@router.get("/stream")
+async def stream_news(request: Request):
+    """
+    Server-Sent Events canlı haber akışı.
+
+    Dashboard'a bir kez açılır; crawler yeni bir haberi analiz ettiğinde
+    anında `event: news` paketi gönderir. Ayrıca her 15 saniyede heartbeat
+    gönderir ki Railway/Cloudflare bağlantıyı kapatmasın.
+
+    Kullanım (frontend):
+        const es = new EventSource('/api/v1/news/stream');
+        es.addEventListener('news', e => { const n = JSON.parse(e.data); ... });
+    """
+    q = await news_bus.subscribe()
+
+    async def event_generator():
+        try:
+            async for chunk in sse_stream(q):
+                # Client disconnected?
+                if await request.is_disconnected():
+                    break
+                yield chunk
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await news_bus.unsubscribe(q)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",  # nginx/proxy buffering kapat
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.get(
@@ -32,7 +127,6 @@ router = APIRouter(
 async def get_news(
     skip: int = 0,
     limit: int = 50,
-    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -67,7 +161,6 @@ async def get_news(
 )
 async def get_latest_news(
     limit: int = 10,
-    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get latest news items"""
@@ -99,7 +192,6 @@ async def search_news(
     q: str,
     skip: int = 0,
     limit: int = 50,
-    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -144,7 +236,7 @@ async def get_news_by_source(
     source: str,
     skip: int = 0,
     limit: int = 50,
-    user: User = Depends(get_current_user),
+    
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -181,7 +273,7 @@ async def get_news_by_tag(
     tag: str,
     skip: int = 0,
     limit: int = 50,
-    user: User = Depends(get_current_user),
+    
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -224,7 +316,7 @@ async def get_news_by_tag(
 )
 async def filter_news(
     filters: NewsFilter,
-    user: User = Depends(get_current_user),
+    
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -264,7 +356,7 @@ async def filter_news(
 )
 async def get_news_by_id(
     news_id: int,
-    user: User = Depends(get_current_user),
+    
     db: AsyncSession = Depends(get_db)
 ):
     """Get specific news item by ID"""
