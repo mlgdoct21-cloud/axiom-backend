@@ -352,9 +352,17 @@ async def fast_fetch_once() -> int:
     dup_title_skipped = 0  # aynı başlık farklı URL → elendi
 
     # --- FMP (primary) ---
-    fmp_count = 0
+    # İki ayrı sayaç:
+    #   fmp_fetched  = FMP API'den gelen toplam payload (dedup'tan bağımsız)
+    #   fmp_new      = bu cycle'da DB'ye aday olarak eklenen (duplicate olmayan)
+    # Fallback kararı fmp_new'e göre DEĞİL fmp_fetched'e göre verilir; çünkü FMP
+    # 50 haber çekip hepsi son 48 saatte görülmüşse bu "kaynak sessiz" değil,
+    # "yeni olay yok" demektir. RSS'e düşmek dashboard'ı eski haberle kirletir.
+    fmp_fetched = 0
+    fmp_new = 0
     try:
         fmp_news = await fetch_fmp_news(limit=50)
+        fmp_fetched = len(fmp_news)
         for item in fmp_news:
             raw_url = item.get("link", "")
             url = normalize_url(raw_url)
@@ -372,17 +380,28 @@ async def fast_fetch_once() -> int:
             seen_urls.add(url)
             if th:
                 seen_title_hashes.add(th)
-            fmp_count += 1
+            fmp_new += 1
     except Exception as e:
         logger.error(f"FMP fetch hatası: {e}")
 
-    # --- RSS (fallback: FMP yetersizse) ---
+    # --- RSS (fallback: SADECE FMP tamamen sessizse) ---
+    # Not: Kullanıcı isterse AXIOM_DISABLE_RSS=1 ile RSS'i tamamen kapatabilir.
     rss_count = 0
-    if fmp_count < FMP_FALLBACK_THRESHOLD:
+    rss_disabled = os.getenv("AXIOM_DISABLE_RSS", "0").strip() in {"1", "true", "yes"}
+    need_rss = (fmp_fetched == 0) and not rss_disabled
+    if need_rss:
         logger.warning(
-            f"⚠️  FMP sadece {fmp_count} haber döndü (<{FMP_FALLBACK_THRESHOLD}), "
-            f"RSS fallback devreye giriyor… (Hata varsa yukarıda 'FMP HTTP' logu bakılmalı)"
+            f"⚠️  FMP payload=0 (API sessiz/hatalı) — RSS fallback devreye giriyor. "
+            f"Detay için yukarıda 'FMP HTTP' logu bakılmalı."
         )
+    else:
+        # FMP sağlıklı döndü (fmp_fetched>0); bu cycle'da dedup tamamladıysa yeni
+        # haber yoksa bile bu normal (FMP yenilenene kadar bekleriz). RSS'e geçmiyoruz.
+        logger.debug(
+            f"FMP sağlıklı (payload={fmp_fetched}, new={fmp_new}); RSS atlandı"
+        )
+
+    if need_rss:
         try:
             sources = await get_sources_from_db()
             rss_news = await fetch_all_feeds(sources)
@@ -409,7 +428,10 @@ async def fast_fetch_once() -> int:
 
     if not all_news:
         if dup_title_skipped:
-            logger.info(f"⚡ FAST FETCH: 0 yeni haber (title-dup eleme: {dup_title_skipped})")
+            logger.info(
+                f"⚡ FAST FETCH: 0 yeni haber "
+                f"(FMP-payload:{fmp_fetched}, title-dup eleme: {dup_title_skipped})"
+            )
         return 0
 
     # --- DB'ye kaydet (analyzed=False olarak) ---
@@ -458,7 +480,8 @@ async def fast_fetch_once() -> int:
 
     logger.info(
         f"⚡ FAST FETCH: {added} yeni haber "
-        f"(FMP:{fmp_count}, RSS:{rss_count}, title-dup eleme: {dup_title_skipped})"
+        f"(FMP payload:{fmp_fetched} → yeni:{fmp_new}, RSS yeni:{rss_count}, "
+        f"title-dup eleme: {dup_title_skipped})"
     )
     return added
 
