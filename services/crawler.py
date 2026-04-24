@@ -113,14 +113,17 @@ CTA_DASHBOARD_PROMPTS = [
 # company/nasdaq/apple/microsoft gibi en çok karşılaşılan kelimeler eklendi ki
 # finansal haberlerin büyük bölümü match etsin.
 TAG_KEYWORDS = {
-    "BTC":    ["btc", "bitcoin", "satoshi", "lightning network", "halving"],
-    "Altın":  ["altın", "altin", "gold", "xau", "altın ons", "ons altın", "gram altın"],
+    "BTC":    [
+        "btc", "bitcoin", "satoshi", "lightning network", "halving",
+        "btcusd", "btcusdt", "btcusdc",
+    ],
+    "Altın":  ["altın", "altin", "gold", "xau", "xauusd", "altın ons", "ons altın", "gram altın"],
     "BIST":   [
         "bist", "borsa istanbul", "bist 100", "bist30", "thyao", "garan", "akbnk",
         "eregl", "aselsan", "asels", "kchol", "sahol", "tuprs", "sise", "toasō",
         "froto", "pgsus", "kozal", "enjsa", "yapı kredi", "ykbnk",
     ],
-    "Dolar":  ["dolar", "dollar", "usd", "dxy", "greenback", "usd/try"],
+    "Dolar":  ["dolar", "dollar", "usd", "dxy", "greenback", "usd/try", "usdtry"],
     "Faiz":   [
         "faiz", "interest rate", "fed funds", "tcmb", "rate hike", "rate cut",
         "rate decision", "policy rate", "benchmark rate", "ecb rate",
@@ -129,29 +132,56 @@ TAG_KEYWORDS = {
         "fed", "fomc", "powell", "federal reserve", "jerome powell",
         "fed meeting", "fed decision", "quantitative easing", "taper",
     ],
-    "Euro":   ["euro", "eur", "eur/usd", "ecb", "european central bank"],
+    "Euro":   ["euro", "eur", "eur/usd", "eurusd", "ecb", "european central bank"],
     "Petrol": [
         "petrol", "oil", "brent", "wti", "opec", "crude", "barrel", "pipeline",
         "exxon", "chevron", "shell", "bp", "oil price", "refinery",
     ],
     "Kripto": [
-        "kripto", "crypto", "ethereum", "eth", "solana", "sol", "blockchain",
-        "defi", "nft", "altcoin", "stablecoin", "usdt", "usdc", "binance",
-        "coinbase", "ripple", "xrp", "cardano", "ada", "dogecoin", "doge",
-        "avalanche", "avax", "polygon", "matic", "chainlink", "link",
-        "token", "web3", "layer 2", "bridge",
+        # Full names (specific enough)
+        "kripto", "crypto", "ethereum", "solana", "blockchain",
+        "defi", "nft", "altcoin", "stablecoin", "binance",
+        "coinbase", "ripple", "cardano", "dogecoin",
+        "avalanche", "polygon", "chainlink", "web3",
+        # Tickers (word-boundary match → "eth" matches "ETH" but NOT "ethan"/"whether")
+        "eth", "sol", "ada", "avax", "matic", "xrp", "doge", "usdt", "usdc",
+        # Trading pairs (concatenated symbols like BTCUSDT)
+        "ethusd", "ethusdt", "ethusdc", "solusd", "solusdt",
+        "adausd", "adausdt", "avaxusd", "avaxusdt",
+        "xrpusd", "xrpusdt", "dogeusd", "dogeusdt",
+        "maticusd", "maticusdt", "linkusd", "linkusdt",
+        # NOT: "link", "token", "bridge" removed — too generic even with \b
     ],
     "Hisse":  [
         "hisse", "stock", "stocks", "equity", "equities", "shares", "share price",
-        "s&p", "s&p 500", "nasdaq", "dow jones", "dow", "russell", "ftse", "dax",
+        "s&p", "s&p 500", "nasdaq", "dow jones", "russell", "ftse", "dax",
         "earnings", "guidance", "revenue", "ceo", "cfo", "ipo", "buyback",
         "dividend", "merger", "acquisition", "spin-off", "wall street",
         "market cap", "analyst", "upgrade", "downgrade", "price target",
         "apple", "microsoft", "google", "alphabet", "amazon", "meta", "tesla",
-        "nvidia", "aapl", "msft", "goog", "googl", "amzn", "meta", "tsla", "nvda",
+        "nvidia", "aapl", "msft", "goog", "googl", "amzn", "tsla", "nvda",
         "form 8k", "form 13f", "form 10k", "form 10q",  # SEC filings = equity
+        # NOT: "dow" removed — matches "download"/"showdown" under substring, OK under \b ama kısaltma zaten "dow jones" kapsiyor
     ],
 }
+
+
+def _keyword_in_haystack(keyword: str, haystack: str) -> bool:
+    """Word-boundary match — 'eth' matches 'ETH was up' ama 'whether'/'ethan' degil.
+    Uzun keyword'ler (≥5 char) icin substring yeterince benzersiz; kisalarda \b zorunlu.
+    Bosluk iceren keyword'ler (ör: 'fed funds') substring kalir — \b icindeki space zaten
+    boundary'dir.
+    """
+    kw = keyword.strip().lower()
+    if not kw:
+        return False
+    # \b word-boundary regex — ASCII word chars icin calisir; Turkish char'li
+    # keyword'ler zaten 5+ char oldugundan substring yeterli.
+    try:
+        return re.search(rf"\b{re.escape(kw)}\b", haystack) is not None
+    except re.error:
+        # Guvenlik: regex hatasinda substring'e dus
+        return kw in haystack
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -236,16 +266,23 @@ _RECENT_CACHE_MAX = 500
 _RECENT_CACHE_TTL_HOURS = 48
 
 
+def _as_utc(dt: datetime) -> datetime:
+    """Naive datetime → UTC-aware'e çevirir. Zaten aware ise dokunmaz."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def _prune_recent_cache() -> None:
     """TTL'ı geçmiş entry'leri ve max boyut aşıldıysa en eskileri at."""
     now = datetime.now(timezone.utc)
     ttl = timedelta(hours=_RECENT_CACHE_TTL_HOURS)
-    expired = [h for h, ts in _recent_title_hashes.items() if now - ts > ttl]
+    expired = [h for h, ts in _recent_title_hashes.items() if now - _as_utc(ts) > ttl]
     for h in expired:
         _recent_title_hashes.pop(h, None)
     if len(_recent_title_hashes) > _RECENT_CACHE_MAX:
         # En eskilerden 100 tanesini at
-        sorted_items = sorted(_recent_title_hashes.items(), key=lambda kv: kv[1])
+        sorted_items = sorted(_recent_title_hashes.items(), key=lambda kv: _as_utc(kv[1]))
         for h, _ in sorted_items[:100]:
             _recent_title_hashes.pop(h, None)
 
@@ -268,7 +305,7 @@ async def _load_recent_title_hashes() -> None:
         for title, created in rows:
             h = title_hash(title or "")
             if h:
-                _recent_title_hashes[h] = created or datetime.now(timezone.utc)
+                _recent_title_hashes[h] = _as_utc(created) if created else datetime.now(timezone.utc)
         logger.info(f"🗂️  Recent title cache hydrated: {len(_recent_title_hashes)} hash")
     except Exception as e:
         logger.warning(f"Recent title cache hydrate hatası: {e}")
@@ -332,12 +369,12 @@ def haber_kullaniciya_uygun(
             # Auto-tag matching (FMP/crypto → "Kripto")
             if auto_tag and auto_tag == tag.lower():
                 return True
-            if any(kw in haystack for kw in keywords):
+            if any(_keyword_in_haystack(kw, haystack) for kw in keywords):
                 return True
 
     if has_follows:
         for keyword in [k.strip() for k in custom_follows.split(",") if k.strip()]:
-            if keyword.lower() in haystack:
+            if _keyword_in_haystack(keyword, haystack):
                 return True
 
     return False
@@ -676,7 +713,7 @@ async def batch_analyze_once() -> int:
             # Sadece SSE_MAX_AGE_MIN içinde created_at'a sahip item'ları yayınla.
             is_fresh = True
             if SSE_MAX_AGE_MIN > 0 and item.created_at:
-                age_min = (datetime.now(timezone.utc) - item.created_at).total_seconds() / 60
+                age_min = (datetime.now(timezone.utc) - _as_utc(item.created_at)).total_seconds() / 60
                 is_fresh = age_min <= SSE_MAX_AGE_MIN
 
             if is_fresh:

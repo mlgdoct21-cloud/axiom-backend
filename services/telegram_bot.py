@@ -109,6 +109,23 @@ def edit_message_text(chat_id, message_id, text):
     except Exception as e:
         logger.error(f"Edit mesaj bağlantı hatası: {e}")
 
+def edit_message_text_with_keyboard(chat_id, message_id, text, keyboard):
+    """Mevcut mesajın metnini inline keyboard ile günceller."""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageText"
+    try:
+        r = requests.post(url, json={
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+            "reply_markup": keyboard
+        }, timeout=15)
+        if r.status_code != 200:
+            logger.warning(f"Edit mesaj+keyboard hatası: {r.text}")
+    except Exception as e:
+        logger.error(f"Edit mesaj+keyboard bağlantı hatası: {e}")
+
 # ── Tag keyboard ───────────────────────────────────────────────────────────────
 
 def build_tag_keyboard(user_tags_str: str) -> dict:
@@ -150,6 +167,7 @@ async def process_start_command(chat_id, user_id, username):
         "Başlayan her fırsatı kaçırma.\n\n"
         "⚡ <b>Ne Yapmak İstiyorsun?</b>\n"
         "/haber — Anlık pazar güncellemeleri\n"
+        "/report AAPL — Hisse insider raporu (AI analiz)\n"
         "/tags — İlgi alanlarını seç (BTC, Altın, BIST...)\n"
         "/takip AAPL — Sembol takip et\n"
         "/takipcikar AAPL — Takipten çıkar\n"
@@ -328,6 +346,109 @@ async def process_takiplistem_command(chat_id, user_id):
 
     send_telegram_message(chat_id, "\n".join(lines))
 
+async def process_report_command(chat_id, user_id, symbol: str):
+    """Insider raporu teaser'ını gönderir, butonlarla dashboard'a yönlendirir."""
+    symbol = symbol.strip().upper()
+    if not symbol:
+        send_telegram_message(
+            chat_id,
+            "⚠️ Kullanım: <b>/report [SEMBOL]</b>\n\n"
+            "Örnek:\n"
+            "• <code>/report AAPL</code>\n"
+            "• <code>/report MSFT</code>\n"
+            "• <code>/report TSLA</code>"
+        )
+        return
+
+    logger.info(f"📊 /report KOMUTU: User {chat_id} → {symbol}")
+
+    # Loading mesajı
+    loading_msg_id = await asyncio.to_thread(
+        send_telegram_message_get_id,
+        chat_id,
+        f"📊 <b>{html.escape(symbol)}</b> için rapor oluşturuluyor...\n\n"
+        f"⏳ FMP verileri + Gemini AI analizi"
+    )
+
+    try:
+        dashboard_url = os.getenv("DASHBOARD_URL", "https://axiom-dashboard.vercel.app").rstrip("/")
+        api_url = f"{dashboard_url}/api/stock/analysis/insider-report?symbol={symbol}&mode=teaser&locale=tr"
+
+        r = await asyncio.to_thread(requests.get, api_url, timeout=60)
+
+        if r.status_code != 200:
+            try:
+                err_body = r.json()
+                err = err_body.get("error", f"HTTP {r.status_code}")
+            except Exception:
+                err = f"HTTP {r.status_code}"
+            logger.warning(f"  ❌ Insider-report API hatası ({symbol}): {err}")
+            if loading_msg_id:
+                edit_message_text(
+                    chat_id, loading_msg_id,
+                    f"❌ <b>{html.escape(symbol)}</b> için rapor alınamadı.\n\n{html.escape(str(err))[:200]}"
+                )
+            return
+
+        data = r.json()
+        teaser = (data.get("teaser") or "").strip()
+
+        if not teaser:
+            if loading_msg_id:
+                edit_message_text(
+                    chat_id, loading_msg_id,
+                    f"⚠️ <b>{html.escape(symbol)}</b> için teaser üretilemedi."
+                )
+            return
+
+        dashboard_deeplink = f"{dashboard_url}/tr?symbol={symbol}&report=telegram&mode=modal"
+        subscribe_url = f"{dashboard_url}/pricing?ref=telegram"
+
+        # Telegram inline keyboard public URL ister; localhost kabul etmez.
+        is_public_url = dashboard_url.startswith("https://") or (
+            dashboard_url.startswith("http://") and "localhost" not in dashboard_url and "127.0.0.1" not in dashboard_url
+        )
+
+        final_message = (
+            f"📊 <b>{html.escape(symbol)} — Insider Raporu</b>\n\n"
+            f"{html.escape(teaser)}\n\n"
+        )
+
+        if is_public_url:
+            final_message += "<i>Tam raporu görmek için aşağıdaki butonu kullan 👇</i>"
+            keyboard = {
+                "inline_keyboard": [[
+                    {"text": "📖 Tam Raporu Oku", "url": dashboard_deeplink},
+                    {"text": "🔔 Abone Ol", "url": subscribe_url}
+                ]]
+            }
+            if loading_msg_id:
+                edit_message_text_with_keyboard(chat_id, loading_msg_id, final_message, keyboard)
+            else:
+                send_message_with_keyboard(chat_id, final_message, keyboard)
+        else:
+            # Lokal test modu: buton yok, sadece teaser + link metin
+            final_message += (
+                f"<i>🔧 Lokal test modu (buton atlanıyor)</i>\n"
+                f"Dashboard: <code>{dashboard_deeplink}</code>"
+            )
+            if loading_msg_id:
+                edit_message_text(chat_id, loading_msg_id, final_message)
+            else:
+                send_telegram_message(chat_id, final_message)
+
+        logger.info(f"  ✅ /report mesajı gönderildi: {symbol}")
+
+    except Exception as e:
+        logger.error(f"  ❌ /report hatası ({symbol}): {e}")
+        if loading_msg_id:
+            edit_message_text(
+                chat_id, loading_msg_id,
+                f"❌ Bir hata oluştu. Lütfen tekrar deneyin.\n\n<code>{html.escape(str(e))[:200]}</code>"
+            )
+        else:
+            send_telegram_message(chat_id, f"❌ Bir hata oluştu: {html.escape(str(e))[:200]}")
+
 async def process_tags_command(chat_id, user_id):
     """Kullanıcıya tag seçim klavyesi gönderir."""
     try:
@@ -452,6 +573,9 @@ async def start_telegram_bot():
                             elif text.lower().startswith("/takip"):
                                 keyword = text[len("/takip"):].strip()
                                 await process_takip_command(chat_id, user_id, keyword)
+                            elif text.lower().startswith("/report"):
+                                symbol = text[len("/report"):].strip()
+                                await process_report_command(chat_id, user_id, symbol)
 
                         # Inline keyboard callback'leri
                         elif "callback_query" in update:

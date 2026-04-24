@@ -53,6 +53,26 @@ async def migrate_db():
         except Exception:
             pass
 
+        # news_items.body kolonu (v3.1 two-stage pipeline için)
+        for col_def in [
+            ("body", "TEXT"),
+            ("symbol", "VARCHAR(32)"),
+            ("analyzed", "BOOLEAN DEFAULT 0"),
+            ("broadcast_at", "DATETIME"),
+            ("is_urgent", "BOOLEAN DEFAULT 0"),
+            ("telegram_hook", "TEXT"),
+            ("dashboard_summary", "TEXT"),
+            ("axiom_analysis", "TEXT"),
+        ]:
+            col_name, col_type = col_def
+            try:
+                await conn.execute(__import__('sqlalchemy').text(
+                    f"ALTER TABLE news_items ADD COLUMN {col_name} {col_type}"
+                ))
+                logger.info(f"Migration: news_items.{col_name} kolonu eklendi.")
+            except Exception:
+                pass  # Kolon zaten var
+
 async def seed_sources():
     """Sources tablosuna varsayılan kaynakları ekler (zaten varsa atlar)."""
     from models.source import Source
@@ -81,13 +101,37 @@ async def main():
 
     logger.info("Sistem Ayağa Kalkıyor: Bot ve Crawler aktif ediliyor...")
 
-    try:
-        await asyncio.gather(
-            start_telegram_bot(),
-            run_crawler()
-        )
-    except Exception as e:
-        logger.error(f"Sistem Kritik Hatası: {e}", exc_info=True)
+    async def _supervised_bot():
+        """Bot'u izler — exception olursa log'la ve restart et."""
+        while True:
+            try:
+                await start_telegram_bot()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Telegram bot çöktü, 5sn sonra restart: {e}", exc_info=True)
+                await asyncio.sleep(5)
+
+    async def _supervised_crawler():
+        """Crawler'ı izler — exception olursa log'la ve restart et."""
+        while True:
+            try:
+                await run_crawler()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Crawler çöktü, 30sn sonra restart: {e}", exc_info=True)
+                await asyncio.sleep(30)
+
+    # return_exceptions=True → bir task çökse bile diğeri yaşar
+    results = await asyncio.gather(
+        _supervised_bot(),
+        _supervised_crawler(),
+        return_exceptions=True
+    )
+    for r in results:
+        if isinstance(r, Exception):
+            logger.error(f"Task kritik hatası: {r}")
 
 if __name__ == "__main__":
     """
