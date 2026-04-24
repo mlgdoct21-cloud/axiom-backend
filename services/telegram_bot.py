@@ -401,7 +401,7 @@ async def process_report_command(chat_id, user_id, symbol: str):
                 )
             return
 
-        dashboard_deeplink = f"{dashboard_url}/tr?symbol={symbol}&report=telegram&mode=modal"
+        dashboard_deeplink = f"{dashboard_url}/tr/report/{symbol}"
         subscribe_url = f"{dashboard_url}/pricing?ref=telegram"
 
         # Telegram inline keyboard public URL ister; localhost kabul etmez.
