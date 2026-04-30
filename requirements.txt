@@ -34,11 +34,15 @@ aiogram==3.4.0
 # RSS & News
 feedparser==6.0.10
 
+# BIST (Borsa Istanbul) data — yfinance backend (Phase 1)
+# Phase 2 will swap to Twelve Data SDK ($29/mo, real-time)
+yfinance==0.2.40
+pandas==2.2.0
+numpy==1.26.4
+
 # Technical Analysis (Phase 2.2) - Install when TradingView API available
-# pandas==2.2.0
 # pandas-ta==0.3.14b0
 # mplfinance==0.12.9
-# numpy==1.26.4
 
 # Testing
 pytest==7.4.4
@@ -54,4 +58,4 @@ black==24.3.0
 flake8==7.0.0
 isort==5.13.2
 mypy==1.8.0
-email-validator
+email-validator==2.3.0

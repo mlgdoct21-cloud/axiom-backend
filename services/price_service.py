@@ -1,4 +1,4 @@
-"""Price data fetching service - Alpha Vantage integration"""
+"""Price data fetching service - Alpha Vantage (US) + yfinance/BIST routing"""
 
 import aiohttp
 import asyncio
@@ -7,6 +7,8 @@ import os
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from core.logger import get_logger
+from services.market_detector import MarketDetector
+from services.bist_service import BISTService
 
 logger = get_logger("price_service")
 
@@ -56,8 +58,14 @@ class PriceService:
     async def fetch_latest_price(symbol: str) -> Optional[Dict]:
         """
         Fetch latest price for a symbol
+        Routes BIST symbols (ASELS, GARAN, ...) to BISTService (yfinance).
+        US symbols continue through Alpha Vantage.
         Returns: {"price": float, "change": float, "timestamp": str}
         """
+        # Route BIST symbols to dedicated service
+        if MarketDetector.is_bist(symbol):
+            return await BISTService.fetch_latest_price(symbol)
+
         try:
             # Check cache
             if PriceService.is_cache_valid(symbol) and symbol in price_cache:
@@ -117,6 +125,23 @@ class PriceService:
         period: "1m", "5m", "15m", "30m", "1h", "4h", "1d"
         Returns: List of OHLCV objects
         """
+        # Route BIST symbols to BISTService and convert dict candles to OHLCV objects
+        if MarketDetector.is_bist(symbol):
+            candles = await BISTService.fetch_ohlcv(symbol, period, limit)
+            if not candles:
+                return None
+            return [
+                OHLCV(
+                    time=c["time"],
+                    open=c["open"],
+                    high=c["high"],
+                    low=c["low"],
+                    close=c["close"],
+                    volume=c["volume"],
+                )
+                for c in candles
+            ]
+
         try:
             # Map periods to Alpha Vantage functions
             function_map = {
@@ -196,12 +221,21 @@ class PriceService:
 
     @staticmethod
     def get_supported_symbols() -> List[str]:
-        """Get list of supported symbols"""
-        symbols_str = os.getenv("TRADING_SYMBOLS", "BTC,ETH,AAPL,MSFT,GOOGL,TSLA")
-        return [s.strip() for s in symbols_str.split(",")]
+        """Get list of supported symbols (US + BIST combined)"""
+        us_str = os.getenv("TRADING_SYMBOLS", "BTC,ETH,AAPL,MSFT,GOOGL,TSLA")
+        us_symbols = [s.strip().upper() for s in us_str.split(",") if s.strip()]
+        bist_symbols = MarketDetector.get_bist_symbols()
+        # Preserve order: US first, then TR
+        seen = set()
+        combined = []
+        for s in us_symbols + bist_symbols:
+            if s not in seen:
+                combined.append(s)
+                seen.add(s)
+        return combined
 
     @staticmethod
     async def validate_symbol(symbol: str) -> bool:
-        """Validate if symbol is supported"""
+        """Validate if symbol is supported (US or BIST)"""
         supported = PriceService.get_supported_symbols()
         return symbol.upper() in supported

@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import requests
 import asyncio
@@ -11,6 +12,18 @@ logger = get_logger("ai_service")
 
 # API Key'in sonundaki olası boşlukları, görünmez karakterleri .strip() ile mutlaka temizliyoruz (Windows sorunlarına karşı)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+
+# URL'deki ?key=... veya &key=... parametrelerini maskelemek için regex.
+# requests exception'ları str()'e dönüştüğünde tam URL'yi içerebilir; bu fonksiyon
+# log mesajlarına API key sızmasını önler.
+_KEY_MASK_RE = re.compile(r"([?&]key=)[^&\s\"']+")
+
+
+def _mask_secrets(text: str) -> str:
+    """Hata mesajlarındaki API key parametrelerini maskeler."""
+    if not text:
+        return text
+    return _KEY_MASK_RE.sub(r"\1***", text)
 
 import json
 
@@ -81,7 +94,6 @@ def generate_summary_sync(news_title: str, news_link: str, company_context: dict
                 continue
 
             # Robust JSON extraction — handles ```json ... ``` blocks too
-            import re
             json_match = re.search(r'\{[\s\S]*\}', text)
             if not json_match:
                 logger.warning(f"[Attempt {attempt+1}] No JSON object found in response text")
@@ -97,10 +109,10 @@ def generate_summary_sync(news_title: str, news_link: str, company_context: dict
             return parsed_json
 
         except json.JSONDecodeError as e:
-            logger.error(f"[Attempt {attempt+1}] JSON parse hatası: {e}")
+            logger.error(f"[Attempt {attempt+1}] JSON parse hatası: {_mask_secrets(str(e))}")
             time.sleep(2)
         except Exception as e:
-            logger.error(f"[Attempt {attempt+1}] Gemini Hatası: {str(e)}")
+            logger.error(f"[Attempt {attempt+1}] Gemini Hatası: {_mask_secrets(str(e))}")
             time.sleep(3)
 
     return None
@@ -296,8 +308,6 @@ def _call_gemini_batch(model: str, prompt_text: str, max_tokens: int, timeout_se
                     continue
                 return {}
 
-            import re
-
             # Gemini 2.5-flash-lite bazen responseMimeType=json olsa bile
             # JSON array yerine multiple top-level objects stream'i döndürüyor:
             #   {id:1, ...}
@@ -397,8 +407,8 @@ def _call_gemini_batch(model: str, prompt_text: str, max_tokens: int, timeout_se
                     parsed = _try_parse(cleaned)
                 except json.JSONDecodeError as e:
                     logger.error(
-                        f"[{model}] JSON repair failed (attempt {attempt+1}): {e} | "
-                        f"raw[:500]={cleaned[:500]!r}"
+                        f"[{model}] JSON repair failed (attempt {attempt+1}): {_mask_secrets(str(e))} | "
+                        f"raw[:500]={_mask_secrets(cleaned[:500])!r}"
                     )
                     raise
             else:
@@ -461,7 +471,7 @@ def _call_gemini_batch(model: str, prompt_text: str, max_tokens: int, timeout_se
             return result
 
         except json.JSONDecodeError as e:
-            logger.error(f"[{model}] JSON parse (attempt {attempt+1}): {e}")
+            logger.error(f"[{model}] JSON parse (attempt {attempt+1}): {_mask_secrets(str(e))}")
             if attempt == 0:
                 time.sleep(2)
                 continue
@@ -472,7 +482,7 @@ def _call_gemini_batch(model: str, prompt_text: str, max_tokens: int, timeout_se
                 continue
             return {}
         except Exception as e:
-            logger.error(f"[{model}] Unexpected error (attempt {attempt+1}): {e}")
+            logger.error(f"[{model}] Unexpected error (attempt {attempt+1}): {_mask_secrets(str(e))}")
             if attempt == 0:
                 time.sleep(3)
                 continue

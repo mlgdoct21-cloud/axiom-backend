@@ -9,8 +9,25 @@ from core.logger import get_logger
 
 logger = get_logger("auth")
 
-# Configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production-please")
+# Configuration — fail-fast: SECRET_KEY mutlaka env'den gelmek zorunda.
+# Production'da zayıf bir fallback ile çalışmak güvenlik açığıdır (JWT forgery riski).
+SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
+
+if not SECRET_KEY or len(SECRET_KEY) < 32:
+    if ENVIRONMENT == "production":
+        raise RuntimeError(
+            "SECRET_KEY env var eksik veya çok kısa (min 32 karakter). "
+            "Production ortamında bu değer zorunlu. "
+            "Üretmek için: python -c 'import secrets; print(secrets.token_urlsafe(48))'"
+        )
+    # Development fallback — sadece local geliştirme için, asla production'da değil
+    logger.warning(
+        "⚠️  SECRET_KEY env var set edilmemiş — geliştirme fallback'i kullanılıyor. "
+        "Production'da bu çağrı RuntimeError fırlatır."
+    )
+    SECRET_KEY = "dev-only-fallback-not-for-production-please-set-SECRET_KEY-env"
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
 REFRESH_TOKEN_EXPIRE_DAYS = 7

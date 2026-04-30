@@ -1,10 +1,14 @@
 """Authentication routes - Register, Login, Token Refresh"""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import os
+import hmac
+from fastapi import APIRouter, Depends, HTTPException, Header, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import timedelta
+from typing import Optional
 
 from core.database import get_db
+from core.security import get_current_user as get_authenticated_user
 from schemas.user_schema import UserCreate, UserLogin, UserResponse
 from schemas.error_schema import ErrorResponse
 from services.user import UserService
@@ -12,6 +16,36 @@ from services.auth import AuthService
 from core.logger import get_logger
 
 logger = get_logger("auth_router")
+
+# Bot Internal Secret — sadece Telegram bot bu değere sahip olmalı.
+# Bu değer olmadan /login endpoint'i kullanılamaz (telegram_id yetkilendirmesi
+# tek başına yetersiz, çünkü Telegram ID'leri tahmin edilebilir sayılardır).
+BOT_INTERNAL_SECRET = os.getenv("BOT_INTERNAL_SECRET", "").strip()
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
+
+
+def _verify_bot_secret(x_bot_secret: Optional[str]) -> None:
+    """Telegram bot dışındaki kaynaklardan /login çağrısı yapılmasını engeller.
+
+    Production'da BOT_INTERNAL_SECRET zorunlu. Geliştirmede setlenmemişse
+    sadece uyarı verir (geriye uyumluluk için).
+    """
+    if not BOT_INTERNAL_SECRET:
+        if ENVIRONMENT == "production":
+            logger.error("BOT_INTERNAL_SECRET production'da set edilmemiş — /login kapalı")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Service misconfiguration",
+            )
+        logger.warning("⚠️  BOT_INTERNAL_SECRET set değil — geliştirme modu, secret bypass")
+        return
+
+    if not x_bot_secret or not hmac.compare_digest(x_bot_secret, BOT_INTERNAL_SECRET):
+        logger.warning("Login attempt without valid X-Bot-Secret header")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+        )
 
 router = APIRouter(
     prefix="/auth",
@@ -81,15 +115,23 @@ async def register(
 )
 async def login(
     login_data: UserLogin,
+    x_bot_secret: Optional[str] = Header(default=None, alias="X-Bot-Secret"),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Login user and get access token
+    Login user and get access token (internal — Telegram bot only)
 
     - **telegram_id**: User's Telegram ID
+    - **X-Bot-Secret** header: BOT_INTERNAL_SECRET değeri (zorunlu, production'da)
+
+    Bu endpoint Telegram bot tarafından, kullanıcı `/start` komutuyla doğrulandıktan
+    sonra çağrılır. Doğrudan dış istek yapmak güvenlik politikasına aykırıdır.
 
     Returns access token and refresh token
     """
+    # Bot secret doğrulaması — Telegram ID tek başına auth için yetersiz
+    _verify_bot_secret(x_bot_secret)
+
     try:
         # Get user
         user = await UserService.get_user_by_telegram_id(db, login_data.telegram_id)
@@ -211,44 +253,11 @@ async def refresh_token(
     }
 )
 async def get_current_user(
-    token: str = None,
-    db: AsyncSession = Depends(get_db)
+    current_user = Depends(get_authenticated_user),
 ):
     """
     Get current authenticated user info
 
-    Requires: Authorization header with Bearer token
+    Requires: Authorization header with Bearer token (e.g., `Authorization: Bearer <jwt>`)
     """
-    try:
-        if not token:
-            # Try to get from header (in real implementation, use Depends on a security function)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Missing authorization token"
-            )
-
-        # Verify token
-        payload = AuthService.verify_token(token)
-        if not payload:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired token"
-            )
-
-        user_id = payload.get("sub")
-        user = await UserService.get_user_by_id(db, user_id)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
-
-        return UserResponse.from_orm(user)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Get current user error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get user info"
-        )
+    return UserResponse.from_orm(current_user)

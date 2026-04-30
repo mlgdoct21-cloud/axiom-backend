@@ -1,9 +1,12 @@
 import os
+import re
 import time
 import html
 import requests
 import asyncio
+from collections import defaultdict
 from typing import Optional
+from urllib.parse import quote
 from dotenv import load_dotenv
 
 from core.database import AsyncSessionLocal
@@ -19,6 +22,35 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 logger = get_logger("telegram_bot")
 
 AVAILABLE_TAGS = ["BTC", "Altın", "BIST", "Dolar", "Faiz", "Fed", "Euro", "Petrol", "Kripto", "Hisse"]
+
+# ── Rate limiting: kullanıcı başına komut cooldown'u ───────────────────────────
+# Pahalı komutlar (/haber, /report) AI ve harici API kotalarını tüketir.
+# Aynı kullanıcının kısa sürede çok kez çağırmasını engelle.
+_HEAVY_CMD_COOLDOWN_SEC = int(os.getenv("BOT_HEAVY_CMD_COOLDOWN_SEC", "30"))
+_LIGHT_CMD_COOLDOWN_SEC = int(os.getenv("BOT_LIGHT_CMD_COOLDOWN_SEC", "3"))
+# {(user_id, command): unix_ts_resume_at}
+_user_cmd_cooldowns: dict = defaultdict(float)
+
+
+def _check_rate_limit(user_id: int, command: str, cooldown_sec: int) -> Optional[int]:
+    """Cooldown aktifse kalan saniyeyi döner; aksi halde None ve cooldown'u set eder."""
+    key = (user_id, command)
+    now = time.time()
+    resume_at = _user_cmd_cooldowns.get(key, 0)
+    if now < resume_at:
+        return int(resume_at - now)
+    _user_cmd_cooldowns[key] = now + cooldown_sec
+    return None
+
+
+# ── Sembol doğrulama ───────────────────────────────────────────────────────────
+# Ticker sembolleri sadece harf, rakam, nokta ve tire içerebilir. Bu desen URL
+# parametre injection'ı engeller (örn. "AAPL&mode=full" reddedilir).
+_VALID_SYMBOL_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
+
+
+def _is_valid_symbol(symbol: str) -> bool:
+    return bool(_VALID_SYMBOL_RE.match(symbol))
 
 # ── Telegram API yardımcıları ──────────────────────────────────────────────────
 
@@ -175,8 +207,17 @@ async def process_start_command(chat_id, user_id, username):
     )
     send_telegram_message(chat_id, welcome_msg)
 
-async def process_haber_command(chat_id):
+async def process_haber_command(chat_id, user_id):
     """Anlık haber talebini karşılar."""
+    # Rate limit kontrolü — her kullanıcı her 30 saniyede bir /haber yapabilir
+    remaining = _check_rate_limit(user_id, "/haber", _HEAVY_CMD_COOLDOWN_SEC)
+    if remaining is not None:
+        send_telegram_message(
+            chat_id,
+            f"⏳ Çok hızlı! <b>{remaining}s</b> sonra tekrar /haber deneyin."
+        )
+        return
+
     logger.info(f"📰 /haber KOMUTU: User {chat_id}")
     # Send loading message and keep its ID so we can edit it in-place
     loading_msg_id = await asyncio.to_thread(
@@ -233,14 +274,21 @@ async def process_haber_command(chat_id):
         else:
             send_telegram_message(chat_id, final_message)
     except Exception as e:
+        # Hata detayı sadece loglara — kullanıcıya generic mesaj
         logger.error(f"  ❌ /haber hatası: {str(e)}")
+        user_msg = "⚠️ Haber alınamadı. Lütfen birkaç dakika sonra tekrar deneyin."
         if loading_msg_id:
-            edit_message_text(chat_id, loading_msg_id, f"❌ Hata: {str(e)}")
+            edit_message_text(chat_id, loading_msg_id, user_msg)
         else:
-            send_telegram_message(chat_id, f"❌ Hata: {str(e)}")
+            send_telegram_message(chat_id, user_msg)
 
 async def process_takip_command(chat_id, user_id, keyword: str):
     """Kullanıcının custom takip listesine yeni kelime ekler."""
+    # Hafif rate limit — DB write yapan komutlar için spam koruması
+    remaining = _check_rate_limit(user_id, "/takip", _LIGHT_CMD_COOLDOWN_SEC)
+    if remaining is not None:
+        return  # Sessiz drop — kullanıcıyı rahatsız etmemek için
+
     keyword = keyword.strip()
     if not keyword:
         send_telegram_message(chat_id, "⚠️ Kullanım: <b>/takip [kelime]</b>\nÖrnek: /takip AAPL")
@@ -360,6 +408,24 @@ async def process_report_command(chat_id, user_id, symbol: str):
         )
         return
 
+    # Sembol formatı doğrulaması — URL parametre injection'ı engeller
+    if not _is_valid_symbol(symbol):
+        send_telegram_message(
+            chat_id,
+            f"❌ Geçersiz sembol: <code>{html.escape(symbol[:20])}</code>\n\n"
+            f"Sembol sadece harf, rakam, nokta ve tire içerebilir (max 10 karakter)."
+        )
+        return
+
+    # Rate limit — /report pahalı bir komut (FMP + Gemini API çağrıları)
+    remaining = _check_rate_limit(user_id, "/report", _HEAVY_CMD_COOLDOWN_SEC)
+    if remaining is not None:
+        send_telegram_message(
+            chat_id,
+            f"⏳ Çok hızlı! <b>{remaining}s</b> sonra tekrar /report deneyin."
+        )
+        return
+
     logger.info(f"📊 /report KOMUTU: User {chat_id} → {symbol}")
 
     # Loading mesajı
@@ -372,7 +438,12 @@ async def process_report_command(chat_id, user_id, symbol: str):
 
     try:
         dashboard_url = os.getenv("DASHBOARD_URL", "https://axiom-dashboard.vercel.app").rstrip("/")
-        api_url = f"{dashboard_url}/api/stock/analysis/insider-report?symbol={symbol}&mode=teaser&locale=tr"
+        # quote() ile URL encoding — symbol artık _is_valid_symbol'dan geçtiği için
+        # zaten güvenli ama defense-in-depth için ekstra koruma
+        api_url = (
+            f"{dashboard_url}/api/stock/analysis/insider-report"
+            f"?symbol={quote(symbol)}&mode=teaser&locale=tr"
+        )
 
         r = await asyncio.to_thread(requests.get, api_url, timeout=60)
 
@@ -383,10 +454,12 @@ async def process_report_command(chat_id, user_id, symbol: str):
             except Exception:
                 err = f"HTTP {r.status_code}"
             logger.warning(f"  ❌ Insider-report API hatası ({symbol}): {err}")
+            # Kullanıcıya ham hata gösterme — generic mesaj
             if loading_msg_id:
                 edit_message_text(
                     chat_id, loading_msg_id,
-                    f"❌ <b>{html.escape(symbol)}</b> için rapor alınamadı.\n\n{html.escape(str(err))[:200]}"
+                    f"❌ <b>{html.escape(symbol)}</b> için rapor alınamadı. "
+                    f"Sembol geçerli değil veya servis geçici olarak kullanılamıyor."
                 )
             return
 
@@ -440,14 +513,13 @@ async def process_report_command(chat_id, user_id, symbol: str):
         logger.info(f"  ✅ /report mesajı gönderildi: {symbol}")
 
     except Exception as e:
+        # Hata detayı sadece loglara — kullanıcıya generic mesaj
         logger.error(f"  ❌ /report hatası ({symbol}): {e}")
+        user_msg = "❌ Rapor oluşturulurken bir sorun oluştu. Lütfen birkaç dakika sonra tekrar deneyin."
         if loading_msg_id:
-            edit_message_text(
-                chat_id, loading_msg_id,
-                f"❌ Bir hata oluştu. Lütfen tekrar deneyin.\n\n<code>{html.escape(str(e))[:200]}</code>"
-            )
+            edit_message_text(chat_id, loading_msg_id, user_msg)
         else:
-            send_telegram_message(chat_id, f"❌ Bir hata oluştu: {html.escape(str(e))[:200]}")
+            send_telegram_message(chat_id, user_msg)
 
 async def process_tags_command(chat_id, user_id):
     """Kullanıcıya tag seçim klavyesi gönderir."""
@@ -562,7 +634,7 @@ async def start_telegram_bot():
                             if text.startswith("/start"):
                                 await process_start_command(chat_id, user_id, username)
                             elif text.lower().startswith("/haber"):
-                                await process_haber_command(chat_id)
+                                await process_haber_command(chat_id, user_id)
                             elif text.lower().startswith("/tags"):
                                 await process_tags_command(chat_id, user_id)
                             elif text.lower().startswith("/takipcikar"):

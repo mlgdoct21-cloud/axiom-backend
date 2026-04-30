@@ -32,13 +32,22 @@ else:
         "statement_cache_size": 0,  # PgBouncer/Session Pooler uyumluluğu için ZORUNLU
     }
 
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,
-    connect_args=connect_args,
-    pool_pre_ping=True,  # Test connection before using
-    pool_recycle=3600   # Recycle connections every hour
-)
+engine_kwargs = {
+    "echo": False,
+    "connect_args": connect_args,
+    "pool_pre_ping": True,    # Bozuk bağlantıları yakala (uzun yaşayan bot için kritik)
+    "pool_recycle": 3600,     # 1 saat sonra bağlantıyı tazele
+}
+
+# SQLite single-connection olduğu için pool config sadece PostgreSQL'de anlamlı
+if "sqlite" not in DATABASE_URL:
+    engine_kwargs.update({
+        "pool_size": int(os.getenv("DB_POOL_SIZE", "10")),
+        "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "20")),
+        "pool_timeout": int(os.getenv("DB_POOL_TIMEOUT", "30")),
+    })
+
+engine = create_async_engine(DATABASE_URL, **engine_kwargs)
 
 # Her istekte yeni bir oturum (Session) açacak sessionmaker
 AsyncSessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False)
