@@ -71,6 +71,31 @@ _POSTGRES_GUARDS = [
         "ix_news_items_created_at",
         "CREATE INDEX IF NOT EXISTS ix_news_items_created_at ON news_items(created_at)",
     ),
+    # ETF flow cache (multi-source scraper backing store) — günlük scrape sonuçları
+    (
+        "etf_flow_cache table",
+        """CREATE TABLE IF NOT EXISTS etf_flow_cache (
+            id BIGSERIAL PRIMARY KEY,
+            symbol VARCHAR(8) NOT NULL,
+            net_flow_usd NUMERIC(20, 2) NOT NULL,
+            net_flow_coins NUMERIC(20, 4) NOT NULL,
+            spot_price NUMERIC(20, 2),
+            total_aum_usd NUMERIC(20, 2),
+            total_holdings_coins NUMERIC(20, 4),
+            source VARCHAR(32) NOT NULL,
+            raw_data JSONB,
+            scraped_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )""",
+    ),
+    (
+        "idx_etf_symbol_scraped",
+        "CREATE INDEX IF NOT EXISTS idx_etf_symbol_scraped ON etf_flow_cache(symbol, scraped_at DESC)",
+    ),
+    (
+        "idx_etf_scraped_at",
+        "CREATE INDEX IF NOT EXISTS idx_etf_scraped_at ON etf_flow_cache(scraped_at DESC)",
+    ),
 ]
 
 

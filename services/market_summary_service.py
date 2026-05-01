@@ -141,77 +141,61 @@ async def get_etf_flows() -> Dict[str, Any]:
     BTC ve ETH Spot ETF'leri için aggregated metrics + coin equivalent.
     SoSoValue tarzı görüntü: USD net flow + BTC/ETH miktar.
 
-    Provider seçeneği: ETF_FLOW_PROVIDER env var
-    - "coinglass" (default): CoinGlass API — real ETF flow data
-    - "fmp": FMP approximation — volume × change% fallback
+    Production-grade fallback chain:
+      1. Supabase cache (last successful scrape, ≤25h fresh)
+      2. FMP approximation (cache eski / yoksa fallback)
+
+    Background scheduler günde 1 kez scrape eder ve cache'i yeniler.
     """
-    provider = os.getenv("ETF_FLOW_PROVIDER", "coinglass").lower()
+    btc_data, eth_data = await asyncio.gather(
+        _get_etf_flow_with_cache("BTC"),
+        _get_etf_flow_with_cache("ETH"),
+        return_exceptions=True,
+    )
 
-    if provider == "coinglass":
-        result = await _get_etf_flows_coinglass()
-    else:
-        result = await _get_etf_flows_fmp()
+    btc_result = btc_data if isinstance(btc_data, dict) else {}
+    eth_result = eth_data if isinstance(eth_data, dict) else {}
 
-    return result
+    # Eğer cache yoksa veya cache okumaktan exception geldiyse: FMP fallback
+    if not btc_result.get("net_flow_usd") and not eth_result.get("net_flow_usd"):
+        logger.warning("ETF cache empty for both BTC/ETH — falling back to FMP approx")
+        return await _get_etf_flows_fmp()
+
+    return {"btc": btc_result, "eth": eth_result}
 
 
-async def _get_etf_flows_coinglass() -> Dict[str, Any]:
+async def _get_etf_flow_with_cache(symbol: str) -> Dict[str, Any]:
     """
-    CoinGlass API'den real ETF flow data çek (Hobbyist plan $29/mo).
-    Fallback: hata olursa FMP approximation'a geç.
+    Supabase cache'den son successful scrape'i al.
+    Yoksa FMP approximation single-symbol döner.
     """
-    from services.coinglass_service import fetch_etf_flow
+    from services.etf_flow_cache_service import get_latest_etf_flow
 
-    btc_task = fetch_etf_flow("BTC", "24h")
-    eth_task = fetch_etf_flow("ETH", "24h")
+    cached = await get_latest_etf_flow(symbol)
+    if cached:
+        return _format_cache_to_aggregate(cached)
 
-    btc_data, eth_data = await asyncio.gather(btc_task, eth_task, return_exceptions=True)
-
-    result = {
-        "btc": _format_coinglass_response(btc_data, "BTC"),
-        "eth": _format_coinglass_response(eth_data, "ETH"),
-    }
-
-    logger.info(f"ETF flows [CoinGlass]: btc_flow=${result['btc'].get('net_flow_usd', 0):,.0f}, eth_flow=${result['eth'].get('net_flow_usd', 0):,.0f}")
-    return result
+    # Cache miss: FMP approx single-symbol
+    fmp_full = await _get_etf_flows_fmp()
+    return fmp_full.get(symbol.lower(), {})
 
 
-def _format_coinglass_response(data: Any, symbol: str) -> Dict[str, Any]:
-    """
-    CoinGlass API yanıtını EtfFlowAggregate formatına çevir.
-    Hata olursa empty aggregation döner.
-    """
-    if isinstance(data, Exception):
-        logger.warning(f"CoinGlass exception ({symbol}): {data}")
-        return {
-            "total_aum": 0, "daily_volume": 0, "avg_change_pct": 0,
-            "etf_count": 0, "top_etf": None,
-            "net_flow_usd": 0, "net_flow_coins": 0,
-            "coin_price": 0,
-            "source": "coinglass_error"
-        }
-
-    if not isinstance(data, dict) or not data.get("success"):
-        logger.warning(f"CoinGlass invalid response ({symbol})")
-        return {
-            "total_aum": 0, "daily_volume": 0, "avg_change_pct": 0,
-            "etf_count": 0, "top_etf": None,
-            "net_flow_usd": 0, "net_flow_coins": 0,
-            "coin_price": 0,
-            "source": "coinglass_error"
-        }
-
-    d = data.get("data") or {}
+def _format_cache_to_aggregate(cached: Dict[str, Any]) -> Dict[str, Any]:
+    """Cache entry'sini frontend EtfFlowAggregate formatına çevir."""
     return {
-        "total_aum": 0,  # CoinGlass ETF flow'a AUM bilgisi dahil değil
-        "daily_volume": 0,  # CoinGlass'ta volume yok
+        "total_aum": cached.get("total_aum_usd") or 0,
+        "daily_volume": 0,
         "avg_change_pct": 0,
-        "etf_count": len(d.get("exchanges") or []),
+        "etf_count": 0,
         "top_etf": None,
-        "net_flow_usd": round(d.get("net_flow_usd") or 0, 0),  # REAL DATA
-        "net_flow_coins": round(d.get("net_flow_coins") or 0, 2),  # REAL DATA
-        "coin_price": round(d.get("spot_price") or 0, 2),
-        "source": "coinglass_real"
+        "net_flow_usd": cached["net_flow_usd"],
+        "net_flow_coins": cached["net_flow_coins"],
+        "coin_price": cached.get("spot_price") or 0,
+        "source": cached["source"],
+        "scraped_at": cached["scraped_at"],
+        "age_hours": cached["age_hours"],
+        "is_fresh": cached["is_fresh"],
+        "is_stale": cached["is_stale"],
     }
 
 

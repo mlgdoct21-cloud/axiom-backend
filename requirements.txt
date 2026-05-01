@@ -40,6 +40,10 @@ yfinance==0.2.40
 pandas==2.2.0
 numpy==1.26.4
 
+# ETF flow scraper — CoinGlass page render (client-side rendered, requires browser)
+# Chromium installed in Dockerfile via `playwright install chromium`
+playwright==1.47.0
+
 # Technical Analysis (Phase 2.2) - Install when TradingView API available
 # pandas-ta==0.3.14b0
 # mplfinance==0.12.9
