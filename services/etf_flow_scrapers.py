@@ -212,18 +212,13 @@ async def scrape_etf_flow_with_fallback(
     Returns: dict or None (None gelirse caller cache veya FMP'a düşer).
 
     Order:
-      1. btcetffundflow.com — BTC only (gerçek günlük net flow JSON)
-      2. bitbo.io HTML table — BTC only (son 14 gün)
+      1. bitbo.io HTML table — BTC only, doğru daily net flow (1 gün gecikme normal)
+      2. btcetffundflow.com — DROP edildi: chart2[] AUM delta, net flow DEĞİL
 
     NOTE: ETH için free public source bulunamadı. ETH FMP approximation'da kalır.
     """
     if symbol != "BTC":
-        # ETH (ve diğerleri) için scraper yok — caller FMP'a düşer
         return None
-
-    result = await fetch_btcetffundflow_btc(spot_price=spot_price)
-    if result:
-        return result
 
     result = await fetch_bitbo_btc(spot_price=spot_price)
     if result:
