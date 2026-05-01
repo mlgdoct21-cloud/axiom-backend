@@ -396,27 +396,34 @@ def _fng_status(value: int) -> tuple:
     return ("Aşırı Açgözlülük", "red")  # paradoxically dangerous
 
 
-def _get_vix_sync() -> Optional[Dict[str, Any]]:
-    """VIX (S&P 500 volatility) — yfinance ile sync olarak çek."""
+async def _get_vix_async() -> Optional[Dict[str, Any]]:
+    """
+    VIX (S&P 500 volatility) — FMP /stable/quote ile.
+    yfinance Railway IP'lerinde rate-limit yiyor; FMP bu sembolü destekliyor.
+    """
+    api_key = _api_key()
+    if not api_key:
+        return None
     try:
-        import yfinance as yf
-        vix = yf.Ticker("^VIX")
-        data = vix.history(period="5d")
-        if data.empty:
+        async with aiohttp.ClientSession() as session:
+            q = await _fetch_quote(session, "^VIX", api_key)
+        if not q:
             return None
-        current = float(data["Close"].iloc[-1])
-        prev = float(data["Close"].iloc[-2]) if len(data) > 1 else current
-        change_pct = ((current - prev) / prev * 100) if prev > 0 else 0
+        current = float(q.get("price") or 0)
+        prev = float(q.get("previousClose") or current)
+        change_pct = q.get("changePercentage")
+        if change_pct is None:
+            change_pct = ((current - prev) / prev * 100) if prev > 0 else 0
         label, color = _vix_status(current)
         return {
             "current": round(current, 2),
             "label": label,
             "color": color,
-            "change_pct": round(change_pct, 2),
+            "change_pct": round(float(change_pct), 2),
             "prev_close": round(prev, 2),
         }
     except Exception as e:
-        logger.warning(f"VIX fetch error: {e}")
+        logger.warning(f"VIX (FMP) fetch error: {e}")
         return None
 
 
@@ -465,15 +472,12 @@ async def _get_crypto_fng() -> Optional[Dict[str, Any]]:
 
 
 async def get_fear_indices() -> Dict[str, Any]:
-    """VIX + Crypto Fear & Greed — tek hücrede iki gauge."""
-    # VIX sync (yfinance), F&G async paralel
-    fng_task = asyncio.create_task(_get_crypto_fng())
-    # yfinance blocking olduğu için thread pool'a koymak gerekirse:
-    loop = asyncio.get_running_loop()
-    vix_task = loop.run_in_executor(None, _get_vix_sync)
-
-    vix, fng = await asyncio.gather(vix_task, fng_task, return_exceptions=True)
-
+    """VIX (FMP) + Crypto Fear & Greed (alternative.me) — paralel."""
+    vix, fng = await asyncio.gather(
+        _get_vix_async(),
+        _get_crypto_fng(),
+        return_exceptions=True,
+    )
     return {
         "vix": vix if isinstance(vix, dict) else None,
         "crypto_fng": fng if isinstance(fng, dict) else None,
