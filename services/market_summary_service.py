@@ -159,14 +159,32 @@ async def get_etf_flows() -> Dict[str, Any]:
 
     def _aggregate(etfs: List[Dict[str, Any]]) -> Dict[str, Any]:
         if not etfs:
-            return {"total_aum": 0, "daily_volume": 0, "avg_change_pct": 0, "etf_count": 0, "top_etf": None}
+            return {
+                "total_aum": 0, "daily_volume": 0, "avg_change_pct": 0,
+                "etf_count": 0, "top_etf": None,
+                "net_flow_est": 0, "inflow_count": 0, "outflow_count": 0,
+            }
 
         total_aum = sum(e.get("marketCap") or 0 for e in etfs)
         daily_volume = sum((e.get("volume") or 0) * (e.get("price") or 0) for e in etfs)
-        avg_change = sum(
-            (e.get("changePercentage") or e.get("changesPercentage") or 0)
+
+        def _change(e: Dict[str, Any]) -> float:
+            return float(e.get("changePercentage") or e.get("changesPercentage") or 0)
+
+        avg_change = sum(_change(e) for e in etfs) / len(etfs)
+
+        # Net flow estimate: trade-value × günlük değişim%
+        # — ETF fiyatı yükselmiş ve hacim varsa "alış baskısı" işareti.
+        # Gerçek primary-market inflow datası FMP'de yok; bu yaklaşık.
+        net_flow_est = sum(
+            (e.get("volume") or 0) * (e.get("price") or 0) * (_change(e) / 100.0)
             for e in etfs
-        ) / len(etfs)
+        )
+
+        # Kaç ETF pozitif/negatif kapanmış?
+        inflow_count = sum(1 for e in etfs if _change(e) > 0)
+        outflow_count = sum(1 for e in etfs if _change(e) < 0)
+
         top = max(etfs, key=lambda e: e.get("marketCap") or 0)
         return {
             "total_aum": round(total_aum, 0),
@@ -174,6 +192,9 @@ async def get_etf_flows() -> Dict[str, Any]:
             "avg_change_pct": round(avg_change, 2),
             "etf_count": len(etfs),
             "top_etf": {"symbol": top["symbol"], "aum": top.get("marketCap")},
+            "net_flow_est": round(net_flow_est, 0),
+            "inflow_count": inflow_count,
+            "outflow_count": outflow_count,
         }
 
     result = {"btc": _aggregate(btc_quotes), "eth": _aggregate(eth_quotes)}
