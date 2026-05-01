@@ -2,11 +2,10 @@
 ETF Flow Multi-Source Scraper — Production-grade fallback chain.
 
 Veri kaynakları (öncelik sırasına göre):
-1. CoinGlass (Playwright-rendered) — BTC + ETH, real settlement data
-2. btcetffundflow.com (Next.js JSON) — BTC only, real-time
-3. bitbo.io (HTML table scrape) — BTC only, last 14 days
-4. Supabase cache (last-known-good, max 7 days old)
-5. FMP approximation — emergency fallback (current behavior)
+1. btcetffundflow.com (Next.js JSON) — BTC only, gerçek günlük net flow
+2. bitbo.io (HTML table scrape) — BTC only, last 14 days
+3. Postgres cache (last-known-good, max 7 days old)
+4. FMP approximation — emergency fallback (current behavior, ETH için ana kaynak)
 
 Tüm fonksiyonlar başarısız olursa None döner, caller fallback chain'i yönetir.
 """
@@ -23,189 +22,7 @@ from core.logger import get_logger
 logger = get_logger("etf_flow_scrapers")
 
 # ════════════════════════════════════════════════════════════════════════════
-# 1. COINGLASS PLAYWRIGHT SCRAPER (PRIMARY) — BTC + ETH
-# ════════════════════════════════════════════════════════════════════════════
-
-COINGLASS_BTC_URL = "https://www.coinglass.com/etf/bitcoin"
-COINGLASS_ETH_URL = "https://www.coinglass.com/etf/ethereum"
-
-# Playwright import lazy (Railway image'da olmalı, lokal'de olmayabilir)
-async def _playwright_scrape_coinglass(symbol: str) -> Optional[Dict[str, Any]]:
-    """
-    CoinGlass /etf/{bitcoin|ethereum} sayfasını render et, "Daily Total Net Inflow"
-    değerini DOM'dan oku. Page client-side rendered olduğu için Playwright şart.
-    """
-    url = COINGLASS_BTC_URL if symbol == "BTC" else COINGLASS_ETH_URL
-    coin_label = "BTC" if symbol == "BTC" else "ETH"
-
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        logger.warning("Playwright not installed; skipping CoinGlass scrape")
-        return None
-
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-dev-shm-usage",
-                ],
-            )
-            context = await browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/130.0.0.0 Safari/537.36"
-                ),
-                viewport={"width": 1280, "height": 720},
-                locale="en-US",
-            )
-            page = await context.new_page()
-
-            try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                # "Daily Total Net Inflow" kart'ı render olana kadar bekle
-                await page.wait_for_selector(
-                    "text=Daily Total Net Inflow",
-                    timeout=20000,
-                )
-                # DOM stabilize olsun (network idle yakla)
-                await asyncio.sleep(2)
-
-                page_text = await page.content()
-            finally:
-                await context.close()
-                await browser.close()
-
-        # HTML içinden veri parse et
-        result = _parse_coinglass_html(page_text, coin_label)
-        if result:
-            logger.info(
-                f"✓ CoinGlass[{symbol}]: net_flow_usd=${result['net_flow_usd']:,.0f}, "
-                f"net_flow_coins={result['net_flow_coins']:,.2f}"
-            )
-        return result
-
-    except Exception as e:
-        logger.warning(f"CoinGlass Playwright scrape failed ({symbol}): {e}")
-        return None
-
-
-def _parse_coinglass_html(html: str, coin_label: str) -> Optional[Dict[str, Any]]:
-    """
-    Rendered HTML'den 'Daily Total Net Inflow' kartını parse et.
-    Hedef pattern: "+$23.50M" (USD) + "+310.24 BTC" (coin amount).
-    """
-    # "Daily Total Net Inflow" başlığını yakala, sonraki rakamları bul
-    # CoinGlass DOM yapısında ardışık 2 değer var: USD ve coin
-    daily_section = re.search(
-        r'Daily\s+Total\s+Net\s+Inflow.*?'
-        r'([+-]?\$?[\d,.]+[KMB]?)\s*([+-]?[\d,.]+[KMB]?\s*' + coin_label + r')',
-        html,
-        re.DOTALL | re.IGNORECASE,
-    )
-
-    if not daily_section:
-        return None
-
-    usd_str = daily_section.group(1).strip()
-    coin_str = daily_section.group(2).strip()
-
-    net_flow_usd = _parse_money_string(usd_str)
-    net_flow_coins = _parse_coin_string(coin_str, coin_label)
-
-    if net_flow_usd is None or net_flow_coins is None:
-        return None
-
-    # Total Net Assets ve Total Net Inflow ek bilgiler (opsiyonel)
-    total_aum = _parse_money_string_after(html, "Total Net Assets")
-    total_holdings = _parse_holdings_after(html, "Total Net Inflow", coin_label)
-
-    return {
-        "net_flow_usd": net_flow_usd,
-        "net_flow_coins": net_flow_coins,
-        "total_aum_usd": total_aum,
-        "total_holdings_coins": total_holdings,
-        "source": "coinglass_scrape",
-    }
-
-
-def _parse_money_string(s: str) -> Optional[float]:
-    """'+$23.50M', '-$1.25B', '$101.81B' → float USD değeri"""
-    s = s.strip().replace(",", "").replace("$", "")
-    sign = 1
-    if s.startswith("+"):
-        s = s[1:]
-    elif s.startswith("-"):
-        sign = -1
-        s = s[1:]
-    multiplier = 1
-    if s.endswith("K"):
-        multiplier = 1_000
-        s = s[:-1]
-    elif s.endswith("M"):
-        multiplier = 1_000_000
-        s = s[:-1]
-    elif s.endswith("B"):
-        multiplier = 1_000_000_000
-        s = s[:-1]
-    try:
-        return sign * float(s) * multiplier
-    except ValueError:
-        return None
-
-
-def _parse_coin_string(s: str, coin_label: str) -> Optional[float]:
-    """'+310.24 BTC', '-211.35 ETH' → 310.24"""
-    s = s.upper().replace(coin_label, "").strip().replace(",", "")
-    sign = 1
-    if s.startswith("+"):
-        s = s[1:]
-    elif s.startswith("-"):
-        sign = -1
-        s = s[1:]
-    multiplier = 1
-    if s.endswith("K"):
-        multiplier = 1_000
-        s = s[:-1]
-    elif s.endswith("M"):
-        multiplier = 1_000_000
-        s = s[:-1]
-    try:
-        return sign * float(s.strip()) * multiplier
-    except ValueError:
-        return None
-
-
-def _parse_money_string_after(html: str, label: str) -> Optional[float]:
-    """Bir label'dan sonraki ilk para değerini parse et."""
-    m = re.search(
-        re.escape(label) + r'.*?([+-]?\$[\d,.]+[KMB]?)',
-        html,
-        re.DOTALL | re.IGNORECASE,
-    )
-    if m:
-        return _parse_money_string(m.group(1))
-    return None
-
-
-def _parse_holdings_after(html: str, label: str, coin_label: str) -> Optional[float]:
-    """Total Net Inflow yanındaki '+739.26K BTC' gibi coin holdings'i parse et."""
-    m = re.search(
-        re.escape(label) + r'.*?([+-]?[\d,.]+[KMB]?)\s*' + coin_label,
-        html,
-        re.DOTALL | re.IGNORECASE,
-    )
-    if m:
-        return _parse_coin_string(m.group(1) + " " + coin_label, coin_label)
-    return None
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# 2. BTCETFFUNDFLOW.COM JSON (BTC FALLBACK 1)
+# 1. BTCETFFUNDFLOW.COM JSON (PRIMARY for BTC)
 # ════════════════════════════════════════════════════════════════════════════
 
 BTCETFFUNDFLOW_URL = "https://btcetffundflow.com/us"
@@ -391,28 +208,26 @@ async def scrape_etf_flow_with_fallback(
     spot_price: Optional[float] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Production-grade fallback chain.
-    Returns: dict or None (caller'a None gelirse Supabase cache veya FMP'a düş)
+    Production-grade HTTP-only fallback chain.
+    Returns: dict or None (None gelirse caller cache veya FMP'a düşer).
 
     Order:
-      1. CoinGlass Playwright (BTC + ETH)
-      2. btcetffundflow.com (BTC only)
-      3. bitbo.io (BTC only)
+      1. btcetffundflow.com — BTC only (gerçek günlük net flow JSON)
+      2. bitbo.io HTML table — BTC only (son 14 gün)
+
+    NOTE: ETH için free public source bulunamadı. ETH FMP approximation'da kalır.
     """
-    # 1. CoinGlass Primary
-    result = await _playwright_scrape_coinglass(symbol)
+    if symbol != "BTC":
+        # ETH (ve diğerleri) için scraper yok — caller FMP'a düşer
+        return None
+
+    result = await fetch_btcetffundflow_btc(spot_price=spot_price)
     if result:
         return result
 
-    # 2-3. BTC için extra fallback'ler
-    if symbol == "BTC":
-        result = await fetch_btcetffundflow_btc(spot_price=spot_price)
-        if result:
-            return result
-
-        result = await fetch_bitbo_btc(spot_price=spot_price)
-        if result:
-            return result
+    result = await fetch_bitbo_btc(spot_price=spot_price)
+    if result:
+        return result
 
     logger.warning(f"All scrape sources failed for {symbol}")
     return None
