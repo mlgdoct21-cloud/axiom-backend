@@ -369,6 +369,118 @@ async def get_sector_performance() -> List[Dict[str, Any]]:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# 7. FEAR INDICES (VIX + Crypto Fear & Greed)
+# ════════════════════════════════════════════════════════════════════════════
+
+def _vix_status(level: float) -> tuple:
+    """VIX seviyesine göre Türkçe etiket + renk."""
+    if level > 30:
+        return ("Yüksek (Panik)", "red")
+    if level > 20:
+        return ("Orta", "yellow")
+    if level > 15:
+        return ("Normal", "green")
+    return ("Düşük (Sakin)", "green")
+
+
+def _fng_status(value: int) -> tuple:
+    """Crypto Fear & Greed (0-100) seviyesine göre etiket + renk."""
+    if value <= 24:
+        return ("Aşırı Korku", "red")
+    if value <= 44:
+        return ("Korku", "yellow")
+    if value <= 55:
+        return ("Nötr", "yellow")
+    if value <= 74:
+        return ("Açgözlülük", "green")
+    return ("Aşırı Açgözlülük", "red")  # paradoxically dangerous
+
+
+def _get_vix_sync() -> Optional[Dict[str, Any]]:
+    """VIX (S&P 500 volatility) — yfinance ile sync olarak çek."""
+    try:
+        import yfinance as yf
+        vix = yf.Ticker("^VIX")
+        data = vix.history(period="5d")
+        if data.empty:
+            return None
+        current = float(data["Close"].iloc[-1])
+        prev = float(data["Close"].iloc[-2]) if len(data) > 1 else current
+        change_pct = ((current - prev) / prev * 100) if prev > 0 else 0
+        label, color = _vix_status(current)
+        return {
+            "current": round(current, 2),
+            "label": label,
+            "color": color,
+            "change_pct": round(change_pct, 2),
+            "prev_close": round(prev, 2),
+        }
+    except Exception as e:
+        logger.warning(f"VIX fetch error: {e}")
+        return None
+
+
+async def _get_crypto_fng() -> Optional[Dict[str, Any]]:
+    """Crypto Fear & Greed Index — alternative.me free API."""
+    url = "https://api.alternative.me/fng/?limit=2"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=6)) as resp:
+                if resp.status != 200:
+                    logger.warning(f"F&G API HTTP {resp.status}")
+                    return None
+                data = await resp.json()
+        items = data.get("data") or []
+        if not items:
+            return None
+        today = items[0]
+        yesterday = items[1] if len(items) > 1 else None
+
+        try:
+            value = int(today.get("value") or 0)
+        except (ValueError, TypeError):
+            return None
+
+        prev_value = None
+        if yesterday:
+            try:
+                prev_value = int(yesterday.get("value") or 0)
+            except (ValueError, TypeError):
+                prev_value = None
+
+        label, color = _fng_status(value)
+        change = (value - prev_value) if prev_value is not None else None
+
+        return {
+            "value": value,                    # 0-100
+            "label": label,                    # TR
+            "label_en": today.get("value_classification"),  # EN
+            "color": color,
+            "prev_value": prev_value,
+            "change": change,
+        }
+    except Exception as e:
+        logger.warning(f"F&G fetch error: {e}")
+        return None
+
+
+async def get_fear_indices() -> Dict[str, Any]:
+    """VIX + Crypto Fear & Greed — tek hücrede iki gauge."""
+    # VIX sync (yfinance), F&G async paralel
+    fng_task = asyncio.create_task(_get_crypto_fng())
+    # yfinance blocking olduğu için thread pool'a koymak gerekirse:
+    loop = asyncio.get_running_loop()
+    vix_task = loop.run_in_executor(None, _get_vix_sync)
+
+    vix, fng = await asyncio.gather(vix_task, fng_task, return_exceptions=True)
+
+    return {
+        "vix": vix if isinstance(vix, dict) else None,
+        "crypto_fng": fng if isinstance(fng, dict) else None,
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # UNIFIED FETCHER
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -382,11 +494,12 @@ async def get_full_dashboard_summary() -> Dict[str, Any]:
             get_premarket_movers(),
             get_earnings_today(),
             get_sector_performance(),
+            get_fear_indices(),
             return_exceptions=True,
         )
     except Exception as e:
         logger.error(f"Dashboard summary fatal error: {e}")
-        results = [None] * 6
+        results = [None] * 7
 
     def _safe(result: Any, default: Any) -> Any:
         if isinstance(result, Exception) or result is None:
@@ -400,5 +513,6 @@ async def get_full_dashboard_summary() -> Dict[str, Any]:
         "premarket_movers":  _safe(results[3], {"gainers": [], "losers": [], "actives": []}),
         "earnings_today":    _safe(results[4], []),
         "sector_performance":_safe(results[5], []),
+        "fear_indices":      _safe(results[6], {"vix": None, "crypto_fng": None}),
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
