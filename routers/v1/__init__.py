@@ -12,6 +12,7 @@ from .signal_history import router as signal_history_router
 from .health import router as health_router
 from .daily_digest import router as daily_digest_router
 from .dashboard_summary import router as dashboard_summary_router
+from .etf_admin import router as etf_admin_router
 
 router = APIRouter(prefix="/api/v1", tags=["v1"])
 
@@ -27,3 +28,4 @@ router.include_router(signal_history_router, tags=["signal-history"])
 router.include_router(health_router, tags=["health"])
 router.include_router(daily_digest_router, tags=["daily-digest"])
 router.include_router(dashboard_summary_router, tags=["dashboard-summary"])
+router.include_router(etf_admin_router, tags=["admin"])
