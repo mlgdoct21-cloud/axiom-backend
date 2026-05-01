@@ -1,16 +1,18 @@
 """
-Market Summary Service — Dashboard "Günün Özeti" 6 panel için FMP entegrasyonu.
+Market Summary Service — Dashboard "Sen Uyurken Piyasada" 6 panel için FMP entegrasyonu.
 
-PANELLER:
-  1. Overnight Markets   → /quote (Asya/Avrupa/US futures endeksleri)
-  2. ETF Flows           → BTC/ETH spot ETF günlük inflow (FMP /etf-holder + Coingecko)
-  3. Economic Calendar   → /economic-calendar (high-impact bugün)
-  4. Pre-Market Movers   → /stock_market/gainers + /losers (pre-market)
-  5. Earnings Today      → /earning_calendar (bugün açıklanacaklar)
-  6. Sector Performance  → /sector-performance (sektör heatmap)
+PANELLER (FMP /stable endpoint'leri):
+  1. Overnight Markets   → /quote?symbol=X (her endeks için paralel)
+  2. ETF Flows           → /quote?symbol=X (BTC/ETH spot ETF'leri paralel)
+  3. Economic Calendar   → /economic-calendar (high-impact filtre)
+  4. Pre-Market Movers   → /biggest-gainers + /biggest-losers + /most-actives
+  5. Earnings Today      → /earnings-calendar
+  6. Sector Performance  → /sector-performance-snapshot?date=YYYY-MM-DD
 
-Tüm panelleri paralel olarak (asyncio.gather) çekeriz; bir endpoint timeout'a
-düşse bile diğerleri etkilenmez.
+NOT: FMP'nin /api/v3 endpoint'leri 2025-08-31'den sonra legacy oldu.
+Yeni aboneler /stable kullanmak zorunda. Bazı stable yanıtları farklı
+field isimleriyle gelir (örn. quote → changePercentage; gainers →
+changesPercentage). Burada her birini doğru parse ediyoruz.
 """
 import os
 import asyncio
@@ -23,7 +25,6 @@ from core.logger import get_logger
 logger = get_logger("market_summary_service")
 
 FMP_BASE_URL = "https://financialmodelingprep.com/stable"
-FMP_LEGACY_URL = "https://financialmodelingprep.com/api/v3"  # bazı endpoint'ler hâlâ v3
 
 # Endeks sembolleri (FMP'nin kullandığı format)
 OVERNIGHT_INDICES = {
@@ -47,6 +48,10 @@ OVERNIGHT_INDICES = {
     ],
 }
 
+# Bilinen Bitcoin/Ethereum Spot ETF'leri (US-listed)
+BTC_SPOT_ETFS = ["IBIT", "FBTC", "BITB", "ARKB", "BTCO", "EZBC", "BRRR", "HODL"]
+ETH_SPOT_ETFS = ["ETHA", "FETH", "ETHV", "ETHW", "QETH", "EZET"]
+
 
 def _api_key() -> str:
     return os.getenv("FMP_API_KEY", "").strip()
@@ -57,15 +62,24 @@ async def _fmp_get(session: aiohttp.ClientSession, url: str, timeout: int = 8) -
     try:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
             if resp.status != 200:
-                logger.warning(f"FMP GET {resp.status}: {url[:80]}")
+                logger.warning(f"FMP GET {resp.status}: {url[:100]}")
                 return None
             return await resp.json()
     except asyncio.TimeoutError:
-        logger.warning(f"FMP GET timeout: {url[:80]}")
+        logger.warning(f"FMP GET timeout: {url[:100]}")
         return None
     except Exception as e:
         logger.warning(f"FMP GET error: {e}")
         return None
+
+
+async def _fetch_quote(session: aiohttp.ClientSession, symbol: str, api_key: str) -> Optional[Dict[str, Any]]:
+    """Tek bir sembol için /stable/quote çağrısı."""
+    url = f"{FMP_BASE_URL}/quote?symbol={symbol}&apikey={api_key}"
+    data = await _fmp_get(session, url, timeout=6)
+    if not data or not isinstance(data, list) or not data:
+        return None
+    return data[0]
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -75,55 +89,46 @@ async def _fmp_get(session: aiohttp.ClientSession, url: str, timeout: int = 8) -
 async def get_overnight_markets() -> Dict[str, Any]:
     """
     Asya, Avrupa endeksleri ve US futures — kullanıcı uyurken neler oldu?
-    FMP /quote/{symbol1,symbol2,...} batch endpoint kullanır.
+    Her sembol için /stable/quote'a paralel istek (multi-symbol premium gerektiriyor).
     """
     api_key = _api_key()
     if not api_key:
         logger.error("FMP_API_KEY missing — overnight markets skipped")
         return {"asia": [], "europe": [], "us_futures": [], "error": "no_api_key"}
 
-    # Tüm sembolleri tek string'e topla (FMP batch quote)
-    all_symbols = []
-    for region_syms in OVERNIGHT_INDICES.values():
-        all_symbols.extend([s[0] for s in region_syms])
-    symbols_str = ",".join(all_symbols)
-
-    url = f"{FMP_LEGACY_URL}/quote/{symbols_str}?apikey={api_key}"
+    # Tüm sembolleri toparla
+    all_index_meta: List[tuple] = []  # (symbol, label, flag, region)
+    for region, syms in OVERNIGHT_INDICES.items():
+        for symbol, label, flag in syms:
+            all_index_meta.append((symbol, label, flag, region))
 
     async with aiohttp.ClientSession() as session:
-        data = await _fmp_get(session, url)
+        tasks = [_fetch_quote(session, m[0], api_key) for m in all_index_meta]
+        quotes = await asyncio.gather(*tasks, return_exceptions=True)
 
-    if not data or not isinstance(data, list):
-        return {"asia": [], "europe": [], "us_futures": [], "error": "no_data"}
+    result: Dict[str, List[Dict[str, Any]]] = {"asia": [], "europe": [], "us_futures": []}
 
-    # Symbol → quote dict
-    quote_map = {item.get("symbol"): item for item in data if isinstance(item, dict)}
-
-    def _format_index(symbol: str, label: str, flag: str) -> Optional[Dict[str, Any]]:
-        q = quote_map.get(symbol)
-        if not q:
-            return None
-        change_pct = q.get("changesPercentage") or 0
-        return {
+    for (symbol, label, flag, region), q in zip(all_index_meta, quotes):
+        if isinstance(q, Exception) or not q:
+            continue
+        # /stable/quote field'ları: price, change, changePercentage (s'siz!)
+        change_pct = q.get("changePercentage") or q.get("changesPercentage") or 0
+        price = q.get("price") or 0
+        change = q.get("change") or 0
+        result[region].append({
             "symbol": symbol,
             "label": label,
             "flag": flag,
-            "price": round(q.get("price") or 0, 2),
-            "change": round(q.get("change") or 0, 2),
+            "price": round(price, 2),
+            "change": round(change, 2),
             "change_pct": round(change_pct, 2),
             "trend": "up" if change_pct >= 0 else "down",
-        }
+        })
 
-    result = {}
-    for region, syms in OVERNIGHT_INDICES.items():
-        region_data = []
-        for symbol, label, flag in syms:
-            formatted = _format_index(symbol, label, flag)
-            if formatted:
-                region_data.append(formatted)
-        result[region] = region_data
-
-    logger.info(f"Overnight markets: asia={len(result['asia'])}, eu={len(result['europe'])}, us={len(result['us_futures'])}")
+    logger.info(
+        f"Overnight markets: asia={len(result['asia'])}, "
+        f"eu={len(result['europe'])}, us={len(result['us_futures'])}"
+    )
     return result
 
 
@@ -131,70 +136,48 @@ async def get_overnight_markets() -> Dict[str, Any]:
 # 2. ETF FLOWS (BTC/ETH SPOT)
 # ════════════════════════════════════════════════════════════════════════════
 
-# Bilinen Bitcoin Spot ETF'leri (US-listed)
-BTC_SPOT_ETFS = ["IBIT", "FBTC", "BITB", "ARKB", "BTCO", "EZBC", "BRRR", "HODL"]
-ETH_SPOT_ETFS = ["ETHA", "FETH", "ETHV", "ETHW", "QETH", "EZET"]
-
-
-async def _fetch_etf_quote(session: aiohttp.ClientSession, symbol: str, api_key: str) -> Optional[Dict[str, Any]]:
-    """Tek bir ETF için quote + AUM çek."""
-    url = f"{FMP_LEGACY_URL}/quote/{symbol}?apikey={api_key}"
-    data = await _fmp_get(session, url, timeout=5)
-    if not data or not isinstance(data, list) or not data:
-        return None
-    q = data[0]
-    return {
-        "symbol": symbol,
-        "price": q.get("price"),
-        "volume": q.get("volume") or 0,
-        "avg_volume": q.get("avgVolume") or 0,
-        "market_cap": q.get("marketCap") or 0,  # AUM proxy
-        "change_pct": q.get("changesPercentage") or 0,
-    }
-
-
 async def get_etf_flows() -> Dict[str, Any]:
-    """
-    BTC ve ETH Spot ETF'leri için aggregated metrics.
-
-    NOTE: FMP free tier daily flow datası vermiyor; biz volume × price
-    proxy'sini "estimated daily inflow" olarak veriyoruz. Tam flow datası
-    için FarSide Investors scraping (ileride) gerekir.
-    """
+    """BTC ve ETH Spot ETF'leri için aggregated metrics."""
     api_key = _api_key()
     if not api_key:
         return {"btc": {}, "eth": {}, "error": "no_api_key"}
 
     async with aiohttp.ClientSession() as session:
-        btc_tasks = [_fetch_etf_quote(session, s, api_key) for s in BTC_SPOT_ETFS]
-        eth_tasks = [_fetch_etf_quote(session, s, api_key) for s in ETH_SPOT_ETFS]
+        btc_tasks = [_fetch_quote(session, s, api_key) for s in BTC_SPOT_ETFS]
+        eth_tasks = [_fetch_quote(session, s, api_key) for s in ETH_SPOT_ETFS]
         all_results = await asyncio.gather(*btc_tasks, *eth_tasks, return_exceptions=True)
 
-    btc_results = [r for r in all_results[:len(BTC_SPOT_ETFS)] if isinstance(r, dict) and r]
-    eth_results = [r for r in all_results[len(BTC_SPOT_ETFS):] if isinstance(r, dict) and r]
+    btc_quotes = []
+    for sym, q in zip(BTC_SPOT_ETFS, all_results[:len(BTC_SPOT_ETFS)]):
+        if isinstance(q, dict) and q:
+            btc_quotes.append({"symbol": sym, **q})
+
+    eth_quotes = []
+    for sym, q in zip(ETH_SPOT_ETFS, all_results[len(BTC_SPOT_ETFS):]):
+        if isinstance(q, dict) and q:
+            eth_quotes.append({"symbol": sym, **q})
 
     def _aggregate(etfs: List[Dict[str, Any]]) -> Dict[str, Any]:
         if not etfs:
             return {"total_aum": 0, "daily_volume": 0, "avg_change_pct": 0, "etf_count": 0, "top_etf": None}
 
-        total_aum = sum(e.get("market_cap") or 0 for e in etfs)
+        total_aum = sum(e.get("marketCap") or 0 for e in etfs)
         daily_volume = sum((e.get("volume") or 0) * (e.get("price") or 0) for e in etfs)
-        avg_change = sum(e.get("change_pct") or 0 for e in etfs) / len(etfs)
-        # En büyük ETF (AUM bazlı)
-        top = max(etfs, key=lambda e: e.get("market_cap") or 0)
+        avg_change = sum(
+            (e.get("changePercentage") or e.get("changesPercentage") or 0)
+            for e in etfs
+        ) / len(etfs)
+        top = max(etfs, key=lambda e: e.get("marketCap") or 0)
         return {
             "total_aum": round(total_aum, 0),
             "daily_volume": round(daily_volume, 0),
             "avg_change_pct": round(avg_change, 2),
             "etf_count": len(etfs),
-            "top_etf": {"symbol": top["symbol"], "aum": top.get("market_cap")},
+            "top_etf": {"symbol": top["symbol"], "aum": top.get("marketCap")},
         }
 
-    result = {
-        "btc": _aggregate(btc_results),
-        "eth": _aggregate(eth_results),
-    }
-    logger.info(f"ETF flows: btc_etfs={len(btc_results)}, eth_etfs={len(eth_results)}")
+    result = {"btc": _aggregate(btc_quotes), "eth": _aggregate(eth_quotes)}
+    logger.info(f"ETF flows: btc_etfs={len(btc_quotes)}, eth_etfs={len(eth_quotes)}")
     return result
 
 
@@ -203,15 +186,13 @@ async def get_etf_flows() -> Dict[str, Any]:
 # ════════════════════════════════════════════════════════════════════════════
 
 async def get_economic_calendar(limit: int = 8) -> List[Dict[str, Any]]:
-    """
-    Bugün açıklanacak ekonomik veriler — sadece high-impact (US/EU).
-    """
+    """Bugün açıklanacak ekonomik veriler — high/medium impact + major countries."""
     api_key = _api_key()
     if not api_key:
         return []
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    url = f"{FMP_LEGACY_URL}/economic_calendar?from={today}&to={today}&apikey={api_key}"
+    url = f"{FMP_BASE_URL}/economic-calendar?from={today}&to={today}&apikey={api_key}"
 
     async with aiohttp.ClientSession() as session:
         data = await _fmp_get(session, url)
@@ -219,26 +200,22 @@ async def get_economic_calendar(limit: int = 8) -> List[Dict[str, Any]]:
     if not data or not isinstance(data, list):
         return []
 
-    # Filtre: yüksek impact + ABD/EU
-    high_impact_countries = {"US", "EU", "DE", "GB", "JP", "TR", "CN"}
+    high_impact_countries = {"US", "EU", "DE", "GB", "JP", "TR", "CN", "FR"}
     filtered = [
         e for e in data
         if e.get("impact") in ("High", "Medium")
         and e.get("country") in high_impact_countries
     ]
 
-    # Time bazlı sırala
-    def _time_key(e: Dict[str, Any]) -> str:
-        return e.get("date") or "9999-99-99"
-
-    filtered.sort(key=_time_key)
+    # ISO datetime ile sırala
+    filtered.sort(key=lambda e: e.get("date") or "9999-99-99")
 
     formatted = []
     for e in filtered[:limit]:
         formatted.append({
             "country": e.get("country"),
             "event": e.get("event"),
-            "date": e.get("date"),  # ISO
+            "date": e.get("date"),
             "impact": e.get("impact"),
             "actual": e.get("actual"),
             "previous": e.get("previous"),
@@ -255,18 +232,15 @@ async def get_economic_calendar(limit: int = 8) -> List[Dict[str, Any]]:
 # ════════════════════════════════════════════════════════════════════════════
 
 async def get_premarket_movers(limit: int = 5) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    Top gainers + losers + most active stocks.
-    FMP'nin /stock_market/gainers, /losers, /actives endpoint'lerini paralel çağırır.
-    """
+    """Top gainers + losers + most active (FMP /stable endpoint'leri)."""
     api_key = _api_key()
     if not api_key:
         return {"gainers": [], "losers": [], "actives": []}
 
     urls = {
-        "gainers": f"{FMP_LEGACY_URL}/stock_market/gainers?apikey={api_key}",
-        "losers": f"{FMP_LEGACY_URL}/stock_market/losers?apikey={api_key}",
-        "actives": f"{FMP_LEGACY_URL}/stock_market/actives?apikey={api_key}",
+        "gainers": f"{FMP_BASE_URL}/biggest-gainers?apikey={api_key}",
+        "losers": f"{FMP_BASE_URL}/biggest-losers?apikey={api_key}",
+        "actives": f"{FMP_BASE_URL}/most-actives?apikey={api_key}",
     }
 
     async with aiohttp.ClientSession() as session:
@@ -287,6 +261,7 @@ async def get_premarket_movers(limit: int = 5) -> Dict[str, List[Dict[str, Any]]
                 "name": item.get("name"),
                 "price": item.get("price"),
                 "change": item.get("change"),
+                # gainers/losers/actives: changesPercentage (s'li)
                 "change_pct": item.get("changesPercentage"),
             })
         return out
@@ -303,16 +278,13 @@ async def get_premarket_movers(limit: int = 5) -> Dict[str, List[Dict[str, Any]]
 # ════════════════════════════════════════════════════════════════════════════
 
 async def get_earnings_today(limit: int = 8) -> List[Dict[str, Any]]:
-    """
-    Bugün bilanço açıklayacak şirketler.
-    Pre-market (BMO) + after-market (AMC) ayrımı yapılır.
-    """
+    """Bugün bilanço açıklayacak şirketler (epsEstimated olanlar prioritized)."""
     api_key = _api_key()
     if not api_key:
         return []
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    url = f"{FMP_LEGACY_URL}/earning_calendar?from={today}&to={today}&apikey={api_key}"
+    url = f"{FMP_BASE_URL}/earnings-calendar?from={today}&to={today}&apikey={api_key}"
 
     async with aiohttp.ClientSession() as session:
         data = await _fmp_get(session, url)
@@ -320,18 +292,21 @@ async def get_earnings_today(limit: int = 8) -> List[Dict[str, Any]]:
     if not data or not isinstance(data, list):
         return []
 
-    # Sadece major şirketler (EPS estimate olanlar) + market cap proxy yok ama
-    # epsEstimated varsa anlamlı bir takip değeri demek.
+    # Sadece anlamlı estimate'i olanlar (büyük şirketler genelde estimate olur)
     relevant = [e for e in data if e.get("epsEstimated") is not None]
+
+    # Estimate yoksa hâlâ bir şey göstermek için backup'a düşelim
+    if not relevant:
+        relevant = data[:limit]
 
     formatted = []
     for e in relevant[:limit]:
         formatted.append({
             "symbol": e.get("symbol"),
             "date": e.get("date"),
-            "time": e.get("time"),  # bmo / amc / dmh
+            "time": e.get("time"),  # bmo / amc / dmh — stable'da yok olabilir
             "eps_estimate": e.get("epsEstimated"),
-            "eps_actual": e.get("eps"),
+            "eps_actual": e.get("epsActual") or e.get("eps"),
             "revenue_estimate": e.get("revenueEstimated"),
         })
 
@@ -344,40 +319,50 @@ async def get_earnings_today(limit: int = 8) -> List[Dict[str, Any]]:
 # ════════════════════════════════════════════════════════════════════════════
 
 async def get_sector_performance() -> List[Dict[str, Any]]:
-    """
-    11 ana sektörün günlük performansı — heatmap için.
-    """
+    """11 ana sektörün günlük performansı — heatmap için."""
     api_key = _api_key()
     if not api_key:
         return []
 
-    url = f"{FMP_LEGACY_URL}/sectors-performance?apikey={api_key}"
+    # /stable/sector-performance-snapshot date parametresi gerektiriyor
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    url = f"{FMP_BASE_URL}/sector-performance-snapshot?date={today}&apikey={api_key}"
 
     async with aiohttp.ClientSession() as session:
         data = await _fmp_get(session, url)
 
+    # Bugün veri yoksa dün dene (hafta sonu/tatil günleri için)
+    if not data or not isinstance(data, list) or len(data) == 0:
+        from datetime import timedelta
+        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+        url = f"{FMP_BASE_URL}/sector-performance-snapshot?date={yesterday}&apikey={api_key}"
+        async with aiohttp.ClientSession() as session:
+            data = await _fmp_get(session, url)
+
     if not data or not isinstance(data, list):
         return []
 
-    formatted = []
+    # Aynı sektör birden çok exchange için gelebilir — sektöre göre averaj
+    sector_map: Dict[str, List[float]] = {}
     for s in data:
+        sector_name = s.get("sector")
+        avg_change = s.get("averageChange")
+        if sector_name is None or avg_change is None:
+            continue
         try:
-            change_str = s.get("changesPercentage", "0%")
-            # FMP "1.23%" string olarak döner, parse et
-            if isinstance(change_str, str):
-                change_pct = float(change_str.replace("%", "").replace("+", "").strip())
-            else:
-                change_pct = float(change_str or 0)
+            sector_map.setdefault(sector_name, []).append(float(avg_change))
         except (ValueError, TypeError):
-            change_pct = 0.0
+            continue
 
+    formatted = []
+    for sector, values in sector_map.items():
+        avg = sum(values) / len(values) if values else 0.0
         formatted.append({
-            "sector": s.get("sector"),
-            "change_pct": round(change_pct, 2),
-            "trend": "up" if change_pct >= 0 else "down",
+            "sector": sector,
+            "change_pct": round(avg, 2),
+            "trend": "up" if avg >= 0 else "down",
         })
 
-    # Performansa göre sırala (en pozitiften en negatife)
     formatted.sort(key=lambda x: x["change_pct"], reverse=True)
     logger.info(f"Sector performance: {len(formatted)} sectors")
     return formatted
@@ -388,10 +373,7 @@ async def get_sector_performance() -> List[Dict[str, Any]]:
 # ════════════════════════════════════════════════════════════════════════════
 
 async def get_full_dashboard_summary() -> Dict[str, Any]:
-    """
-    6 paneli paralel olarak çek. Bir panel timeout'a düşse bile diğerleri döner.
-    Cache layer endpoint tarafında (HTTP Cache-Control 5 dk).
-    """
+    """6 paneli paralel çek; bir panel başarısız olsa diğerleri döner."""
     try:
         results = await asyncio.gather(
             get_overnight_markets(),
