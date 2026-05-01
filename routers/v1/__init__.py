@@ -10,6 +10,8 @@ from .portfolio import router as portfolio_router
 from .position import router as position_router
 from .signal_history import router as signal_history_router
 from .health import router as health_router
+from .daily_digest import router as daily_digest_router
+from .dashboard_summary import router as dashboard_summary_router
 
 router = APIRouter(prefix="/api/v1", tags=["v1"])
 
@@ -23,3 +25,5 @@ router.include_router(portfolio_router, tags=["portfolios"])
 router.include_router(position_router, tags=["positions"])
 router.include_router(signal_history_router, tags=["signal-history"])
 router.include_router(health_router, tags=["health"])
+router.include_router(daily_digest_router, tags=["daily-digest"])
+router.include_router(dashboard_summary_router, tags=["dashboard-summary"])
