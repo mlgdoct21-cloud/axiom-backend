@@ -141,56 +141,60 @@ async def get_etf_flows() -> Dict[str, Any]:
     BTC ve ETH Spot ETF'leri için aggregated metrics + coin equivalent.
     SoSoValue tarzı görüntü: USD net flow + BTC/ETH miktar.
 
-    Production-grade fallback chain:
-      1. Supabase cache (last successful scrape, ≤25h fresh)
-      2. FMP approximation (cache eski / yoksa fallback)
-
-    Background scheduler günde 1 kez scrape eder ve cache'i yeniler.
+    Hibrit yaklaşım:
+      - net_flow_usd / net_flow_coins → cache (gerçek scrape data)
+      - etf_count / daily_volume / top_etf / avg_change_pct → FMP (her zaman taze)
+      - Cache yoksa → FMP approximation tüm field'ler (fallback)
     """
+    # Önce FMP'den her iki sembol için "ETF list metrics"i çek (count, volume, top, AUM)
+    fmp_full = await _get_etf_flows_fmp()
+
     btc_data, eth_data = await asyncio.gather(
-        _get_etf_flow_with_cache("BTC"),
-        _get_etf_flow_with_cache("ETH"),
+        _get_etf_flow_with_cache("BTC", fmp_fallback=fmp_full.get("btc", {})),
+        _get_etf_flow_with_cache("ETH", fmp_fallback=fmp_full.get("eth", {})),
         return_exceptions=True,
     )
 
-    btc_result = btc_data if isinstance(btc_data, dict) else {}
-    eth_result = eth_data if isinstance(eth_data, dict) else {}
-
-    # Eğer cache yoksa veya cache okumaktan exception geldiyse: FMP fallback
-    if not btc_result.get("net_flow_usd") and not eth_result.get("net_flow_usd"):
-        logger.warning("ETF cache empty for both BTC/ETH — falling back to FMP approx")
-        return await _get_etf_flows_fmp()
+    btc_result = btc_data if isinstance(btc_data, dict) else fmp_full.get("btc", {})
+    eth_result = eth_data if isinstance(eth_data, dict) else fmp_full.get("eth", {})
 
     return {"btc": btc_result, "eth": eth_result}
 
 
-async def _get_etf_flow_with_cache(symbol: str) -> Dict[str, Any]:
+async def _get_etf_flow_with_cache(
+    symbol: str,
+    fmp_fallback: Dict[str, Any],
+) -> Dict[str, Any]:
     """
-    Supabase cache'den son successful scrape'i al.
-    Yoksa FMP approximation single-symbol döner.
+    Cache'den net flow + FMP'den list metrics → hibrit response.
+    Cache yoksa FMP fallback (mevcut approximation).
     """
     from services.etf_flow_cache_service import get_latest_etf_flow
 
     cached = await get_latest_etf_flow(symbol)
     if cached:
-        return _format_cache_to_aggregate(cached)
+        return _format_hybrid(cached, fmp_fallback)
 
-    # Cache miss: FMP approx single-symbol
-    fmp_full = await _get_etf_flows_fmp()
-    return fmp_full.get(symbol.lower(), {})
+    # Cache miss → FMP approximation
+    return fmp_fallback
 
 
-def _format_cache_to_aggregate(cached: Dict[str, Any]) -> Dict[str, Any]:
-    """Cache entry'sini frontend EtfFlowAggregate formatına çevir."""
+def _format_hybrid(cached: Dict[str, Any], fmp: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Cache + FMP enrichment.
+    - net_flow_usd / net_flow_coins → cache (real scrape)
+    - etf_count / top_etf / daily_volume / avg_change_pct → FMP
+    - total_aum → cache varsa cache, yoksa FMP
+    """
     return {
-        "total_aum": cached.get("total_aum_usd") or 0,
-        "daily_volume": 0,
-        "avg_change_pct": 0,
-        "etf_count": 0,
-        "top_etf": None,
+        "total_aum": cached.get("total_aum_usd") or fmp.get("total_aum") or 0,
+        "daily_volume": fmp.get("daily_volume") or 0,
+        "avg_change_pct": fmp.get("avg_change_pct") or 0,
+        "etf_count": fmp.get("etf_count") or 0,
+        "top_etf": fmp.get("top_etf"),
         "net_flow_usd": cached["net_flow_usd"],
         "net_flow_coins": cached["net_flow_coins"],
-        "coin_price": cached.get("spot_price") or 0,
+        "coin_price": cached.get("spot_price") or fmp.get("coin_price") or 0,
         "source": cached["source"],
         "scraped_at": cached["scraped_at"],
         "age_hours": cached["age_hours"],
