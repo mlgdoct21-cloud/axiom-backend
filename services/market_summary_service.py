@@ -137,7 +137,10 @@ async def get_overnight_markets() -> Dict[str, Any]:
 # ════════════════════════════════════════════════════════════════════════════
 
 async def get_etf_flows() -> Dict[str, Any]:
-    """BTC ve ETH Spot ETF'leri için aggregated metrics."""
+    """
+    BTC ve ETH Spot ETF'leri için aggregated metrics + coin equivalent.
+    SoSoValue tarzı görüntü: USD net flow + BTC/ETH miktar.
+    """
     api_key = _api_key()
     if not api_key:
         return {"btc": {}, "eth": {}, "error": "no_api_key"}
@@ -145,7 +148,14 @@ async def get_etf_flows() -> Dict[str, Any]:
     async with aiohttp.ClientSession() as session:
         btc_tasks = [_fetch_quote(session, s, api_key) for s in BTC_SPOT_ETFS]
         eth_tasks = [_fetch_quote(session, s, api_key) for s in ETH_SPOT_ETFS]
-        all_results = await asyncio.gather(*btc_tasks, *eth_tasks, return_exceptions=True)
+        # Spot fiyatları paralel — coin equivalent için gerekli
+        btc_price_task = _fetch_quote(session, "BTCUSD", api_key)
+        eth_price_task = _fetch_quote(session, "ETHUSD", api_key)
+
+        all_results = await asyncio.gather(
+            *btc_tasks, *eth_tasks, btc_price_task, eth_price_task,
+            return_exceptions=True,
+        )
 
     btc_quotes = []
     for sym, q in zip(BTC_SPOT_ETFS, all_results[:len(BTC_SPOT_ETFS)]):
@@ -153,16 +163,23 @@ async def get_etf_flows() -> Dict[str, Any]:
             btc_quotes.append({"symbol": sym, **q})
 
     eth_quotes = []
-    for sym, q in zip(ETH_SPOT_ETFS, all_results[len(BTC_SPOT_ETFS):]):
+    eth_offset = len(BTC_SPOT_ETFS)
+    for sym, q in zip(ETH_SPOT_ETFS, all_results[eth_offset:eth_offset + len(ETH_SPOT_ETFS)]):
         if isinstance(q, dict) and q:
             eth_quotes.append({"symbol": sym, **q})
 
-    def _aggregate(etfs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    btc_price_q = all_results[-2]
+    eth_price_q = all_results[-1]
+    btc_price = float((btc_price_q or {}).get("price") or 0) if isinstance(btc_price_q, dict) else 0
+    eth_price = float((eth_price_q or {}).get("price") or 0) if isinstance(eth_price_q, dict) else 0
+
+    def _aggregate(etfs: List[Dict[str, Any]], coin_price: float) -> Dict[str, Any]:
         if not etfs:
             return {
                 "total_aum": 0, "daily_volume": 0, "avg_change_pct": 0,
                 "etf_count": 0, "top_etf": None,
-                "net_flow_est": 0, "inflow_count": 0, "outflow_count": 0,
+                "net_flow_usd": 0, "net_flow_coins": 0,
+                "coin_price": coin_price,
             }
 
         total_aum = sum(e.get("marketCap") or 0 for e in etfs)
@@ -173,17 +190,14 @@ async def get_etf_flows() -> Dict[str, Any]:
 
         avg_change = sum(_change(e) for e in etfs) / len(etfs)
 
-        # Net flow estimate: trade-value × günlük değişim%
-        # — ETF fiyatı yükselmiş ve hacim varsa "alış baskısı" işareti.
-        # Gerçek primary-market inflow datası FMP'de yok; bu yaklaşık.
-        net_flow_est = sum(
+        # USD net flow: trade-value × günlük değişim
+        net_flow_usd = sum(
             (e.get("volume") or 0) * (e.get("price") or 0) * (_change(e) / 100.0)
             for e in etfs
         )
 
-        # Kaç ETF pozitif/negatif kapanmış?
-        inflow_count = sum(1 for e in etfs if _change(e) > 0)
-        outflow_count = sum(1 for e in etfs if _change(e) < 0)
+        # Coin equivalent: USD / spot price → kaç BTC/ETH ekvivalan
+        net_flow_coins = (net_flow_usd / coin_price) if coin_price > 0 else 0
 
         top = max(etfs, key=lambda e: e.get("marketCap") or 0)
         return {
@@ -192,13 +206,19 @@ async def get_etf_flows() -> Dict[str, Any]:
             "avg_change_pct": round(avg_change, 2),
             "etf_count": len(etfs),
             "top_etf": {"symbol": top["symbol"], "aum": top.get("marketCap")},
-            "net_flow_est": round(net_flow_est, 0),
-            "inflow_count": inflow_count,
-            "outflow_count": outflow_count,
+            "net_flow_usd": round(net_flow_usd, 0),
+            "net_flow_coins": round(net_flow_coins, 2),
+            "coin_price": round(coin_price, 2),
         }
 
-    result = {"btc": _aggregate(btc_quotes), "eth": _aggregate(eth_quotes)}
-    logger.info(f"ETF flows: btc_etfs={len(btc_quotes)}, eth_etfs={len(eth_quotes)}")
+    result = {
+        "btc": _aggregate(btc_quotes, btc_price),
+        "eth": _aggregate(eth_quotes, eth_price),
+    }
+    logger.info(
+        f"ETF flows: btc={len(btc_quotes)}@${btc_price:.0f}, "
+        f"eth={len(eth_quotes)}@${eth_price:.0f}"
+    )
     return result
 
 
