@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "axiom-dashboard",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "/Users/mehmetgulec/Documents/AXIOM/axiom-dashboard"],
+      "port": 3000
+    }
+  ]
+}

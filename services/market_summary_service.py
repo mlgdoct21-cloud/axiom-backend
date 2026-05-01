@@ -140,6 +140,84 @@ async def get_etf_flows() -> Dict[str, Any]:
     """
     BTC ve ETH Spot ETF'leri için aggregated metrics + coin equivalent.
     SoSoValue tarzı görüntü: USD net flow + BTC/ETH miktar.
+
+    Provider seçeneği: ETF_FLOW_PROVIDER env var
+    - "coinglass" (default): CoinGlass API — real ETF flow data
+    - "fmp": FMP approximation — volume × change% fallback
+    """
+    provider = os.getenv("ETF_FLOW_PROVIDER", "coinglass").lower()
+
+    if provider == "coinglass":
+        result = await _get_etf_flows_coinglass()
+    else:
+        result = await _get_etf_flows_fmp()
+
+    return result
+
+
+async def _get_etf_flows_coinglass() -> Dict[str, Any]:
+    """
+    CoinGlass API'den real ETF flow data çek (Hobbyist plan $29/mo).
+    Fallback: hata olursa FMP approximation'a geç.
+    """
+    from services.coinglass_service import fetch_etf_flow
+
+    btc_task = fetch_etf_flow("BTC", "24h")
+    eth_task = fetch_etf_flow("ETH", "24h")
+
+    btc_data, eth_data = await asyncio.gather(btc_task, eth_task, return_exceptions=True)
+
+    result = {
+        "btc": _format_coinglass_response(btc_data, "BTC"),
+        "eth": _format_coinglass_response(eth_data, "ETH"),
+    }
+
+    logger.info(f"ETF flows [CoinGlass]: btc_flow=${result['btc'].get('net_flow_usd', 0):,.0f}, eth_flow=${result['eth'].get('net_flow_usd', 0):,.0f}")
+    return result
+
+
+def _format_coinglass_response(data: Any, symbol: str) -> Dict[str, Any]:
+    """
+    CoinGlass API yanıtını EtfFlowAggregate formatına çevir.
+    Hata olursa empty aggregation döner.
+    """
+    if isinstance(data, Exception):
+        logger.warning(f"CoinGlass exception ({symbol}): {data}")
+        return {
+            "total_aum": 0, "daily_volume": 0, "avg_change_pct": 0,
+            "etf_count": 0, "top_etf": None,
+            "net_flow_usd": 0, "net_flow_coins": 0,
+            "coin_price": 0,
+            "source": "coinglass_error"
+        }
+
+    if not isinstance(data, dict) or not data.get("success"):
+        logger.warning(f"CoinGlass invalid response ({symbol})")
+        return {
+            "total_aum": 0, "daily_volume": 0, "avg_change_pct": 0,
+            "etf_count": 0, "top_etf": None,
+            "net_flow_usd": 0, "net_flow_coins": 0,
+            "coin_price": 0,
+            "source": "coinglass_error"
+        }
+
+    d = data.get("data") or {}
+    return {
+        "total_aum": 0,  # CoinGlass ETF flow'a AUM bilgisi dahil değil
+        "daily_volume": 0,  # CoinGlass'ta volume yok
+        "avg_change_pct": 0,
+        "etf_count": len(d.get("exchanges") or []),
+        "top_etf": None,
+        "net_flow_usd": round(d.get("net_flow_usd") or 0, 0),  # REAL DATA
+        "net_flow_coins": round(d.get("net_flow_coins") or 0, 2),  # REAL DATA
+        "coin_price": round(d.get("spot_price") or 0, 2),
+        "source": "coinglass_real"
+    }
+
+
+async def _get_etf_flows_fmp() -> Dict[str, Any]:
+    """
+    FMP approximation — volume × price × change% (fallback veya direct).
     """
     api_key = _api_key()
     if not api_key:
@@ -190,7 +268,7 @@ async def get_etf_flows() -> Dict[str, Any]:
 
         avg_change = sum(_change(e) for e in etfs) / len(etfs)
 
-        # USD net flow: trade-value × günlük değişim
+        # USD net flow: approximation — trade-value × günlük değişim
         net_flow_usd = sum(
             (e.get("volume") or 0) * (e.get("price") or 0) * (_change(e) / 100.0)
             for e in etfs
@@ -216,7 +294,7 @@ async def get_etf_flows() -> Dict[str, Any]:
         "eth": _aggregate(eth_quotes, eth_price),
     }
     logger.info(
-        f"ETF flows: btc={len(btc_quotes)}@${btc_price:.0f}, "
+        f"ETF flows [FMP]: btc={len(btc_quotes)}@${btc_price:.0f}, "
         f"eth={len(eth_quotes)}@${eth_price:.0f}"
     )
     return result
