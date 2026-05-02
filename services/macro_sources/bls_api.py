@@ -32,7 +32,9 @@ SERIES = {
 }
 
 _USER_AGENT = "AXIOM-Macro/0.1 (+https://axiom-dashboard-sigma.vercel.app)"
-_HTTP_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
+# Generous connect budget — Railway egress to api.bls.gov has been observed
+# at ~5s+ during TLS handshake while local + `railway run` finish in <1s.
+_HTTP_TIMEOUT = httpx.Timeout(15.0, connect=10.0)
 
 
 @dataclass
@@ -79,11 +81,13 @@ async def fetch_bls_multi(
     try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             resp = await client.post(BLS_API_URL, content=json.dumps(payload), headers=headers)
-    except httpx.HTTPError as e:
-        logger.error(f"bls_api fetch failed: {e}")
-        result = BLSFetchResult(error=str(e))
+    except Exception as e:
+        # Many httpx exception types stringify to "" — capture the type name.
+        err = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        logger.error(f"bls_api fetch failed: {err}")
+        result = BLSFetchResult(error=err)
         for sid in series_ids:
-            result.series[sid] = BLSSeriesResult(series_id=sid, error=str(e))
+            result.series[sid] = BLSSeriesResult(series_id=sid, error=err)
         return result
 
     raw = resp.content
