@@ -25,6 +25,10 @@ from core.database import engine
 from core.logger import get_logger
 from services.macro_sources.fed_rss import fetch_fed_rss
 from services.macro_sources.fred_api import SERIES as FRED_SERIES, fetch_fred_multi
+from services.macro_sources.release_detect import (
+    record_fed_rss_events,
+    record_fred_observation,
+)
 
 logger = get_logger("macro.reliability_probe")
 
@@ -71,6 +75,16 @@ async def _probe_fed_rss() -> dict:
         state.last_modified = result.last_modified
 
     success = result.error is None
+
+    # Persist any newly seen FOMC events into macro_releases (idempotent).
+    if success and not result.not_modified and result.events:
+        try:
+            inserted = await record_fed_rss_events(result.events)
+            if inserted:
+                logger.info(f"fed_rss: {inserted} new release(s) recorded")
+        except Exception as e:
+            logger.error(f"fed_rss release persist failed: {e}")
+
     return {
         "source": "fed_rss",
         "success": success,
@@ -97,7 +111,8 @@ async def _probe_fred_all() -> list[dict]:
     """
     series_ids = [FRED_SERIES["fred_cpi"], FRED_SERIES["fred_nfp"]]
     t0 = time.monotonic()
-    result = await fetch_fred_multi(series_ids)
+    # limit=2 so release detection has both latest and prior observations.
+    result = await fetch_fred_multi(series_ids, limit=2)
     total_latency_ms = int((time.monotonic() - t0) * 1000)
 
     rows: list[dict] = []
@@ -119,6 +134,18 @@ async def _probe_fred_all() -> list[dict]:
             "events_extracted": per.data_points if success else None,
             "error_msg": per.error if per else None,
         })
+
+        # Persist into macro_releases when we have a fresh observation (idempotent).
+        if success and per and per.latest_date:
+            try:
+                await record_fred_observation(
+                    source=source_name,
+                    latest_date=per.latest_date,
+                    latest_value=per.latest_value,
+                    prior_value=per.prior_value,
+                )
+            except Exception as e:
+                logger.error(f"fred release persist failed for {source_name}: {e}")
     return rows
 
 

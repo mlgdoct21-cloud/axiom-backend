@@ -42,6 +42,8 @@ class FREDSeriesResult:
     data_points: int = 0
     latest_date: Optional[str] = None      # ISO yyyy-mm-dd
     latest_value: Optional[str] = None     # raw string ("." means missing)
+    prior_date: Optional[str] = None       # filled when fetch limit >= 2
+    prior_value: Optional[str] = None
     payload_bytes: int = 0
     http_status: Optional[int] = None
     error: Optional[str] = None
@@ -100,6 +102,10 @@ async def fetch_fred_series(series_id: str, *, limit: int = 1) -> FREDSeriesResu
         latest = obs[0]
         out.latest_date = latest.get("date")
         out.latest_value = latest.get("value")
+        if len(obs) >= 2:
+            prior = obs[1]
+            out.prior_date = prior.get("date")
+            out.prior_value = prior.get("value")
         out.success = True
     else:
         out.error = "no observations"
@@ -112,9 +118,13 @@ class FREDFetchResult:
     series: dict[str, FREDSeriesResult] = field(default_factory=dict)
 
 
-async def fetch_fred_multi(series_ids: list[str]) -> FREDFetchResult:
-    """Sequential fetch of N series. Returns aggregate; per-series errors isolated."""
+async def fetch_fred_multi(series_ids: list[str], *, limit: int = 1) -> FREDFetchResult:
+    """Sequential fetch of N series. Returns aggregate; per-series errors isolated.
+
+    `limit` propagates to each per-series call; pass 2 when callers need a
+    prior observation alongside the latest one (e.g. release detection).
+    """
     out = FREDFetchResult()
     for sid in series_ids:
-        out.series[sid] = await fetch_fred_series(sid)
+        out.series[sid] = await fetch_fred_series(sid, limit=limit)
     return out
