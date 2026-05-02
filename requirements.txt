@@ -34,6 +34,9 @@ aiogram==3.4.0
 # RSS & News
 feedparser==6.0.10
 
+# Macro Intelligence — sector_impact_map.yaml loader
+PyYAML==6.0.1
+
 # BIST (Borsa Istanbul) data — yfinance backend (Phase 1)
 # Phase 2 will swap to Twelve Data SDK ($29/mo, real-time)
 yfinance==0.2.40
