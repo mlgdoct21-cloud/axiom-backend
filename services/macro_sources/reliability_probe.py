@@ -1,6 +1,6 @@
 """Macro source reliability probe — periodic health-check + rolling stats.
 
-Runs as a FastAPI lifespan background task. Every PROBE_INTERVAL it pings
+Runs as a FastAPI lifespan background task. Every TICK_INTERVAL it pings
 each registered source, records latency / success / payload metrics into
 `macro_source_health`, and keeps in-memory ETag/Last-Modified state so
 sequential probes can hit 304s.
@@ -16,19 +16,30 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import text
 
 from core.database import engine
 from core.logger import get_logger
+from services.macro_sources.bls_api import SERIES as BLS_SERIES, fetch_bls_multi
 from services.macro_sources.fed_rss import fetch_fed_rss
 
 logger = get_logger("macro.reliability_probe")
 
-PROBE_INTERVAL = timedelta(minutes=5)
+# Outer tick — supervisor wakes this often. Per-source intervals below decide
+# whether each source actually fires on a given tick.
+TICK_INTERVAL = timedelta(minutes=5)
 RETRY_INTERVAL = timedelta(seconds=60)
+
+# Per-source minimum spacing. BLS unregistered limit is 25 calls/day per IP;
+# 60-min cadence keeps total BLS calls at 24/day even when CPI+NFP combined.
+SOURCE_INTERVAL: dict[str, timedelta] = {
+    "fed_rss": timedelta(minutes=5),
+    "bls_cpi": timedelta(minutes=60),
+    "bls_nfp": timedelta(minutes=60),
+}
 
 
 @dataclass
@@ -36,10 +47,13 @@ class _SourceState:
     name: str
     etag: Optional[str] = None
     last_modified: Optional[str] = None
+    last_probed_at: Optional[datetime] = None
 
 
 _STATES: dict[str, _SourceState] = {
     "fed_rss": _SourceState(name="fed_rss"),
+    "bls_cpi": _SourceState(name="bls_cpi"),
+    "bls_nfp": _SourceState(name="bls_nfp"),
 }
 
 
@@ -75,6 +89,36 @@ def _approx_payload_size(events) -> Optional[int]:
     return sum(len(e.raw_summary or "") + len(e.title or "") for e in events) or None
 
 
+async def _probe_bls_combined() -> list[dict]:
+    """Single combined POST for all BLS series; returns one probe row per series.
+
+    Cuts BLS daily quota usage in half (vs separate calls per series).
+    """
+    series_ids = [BLS_SERIES["bls_cpi"], BLS_SERIES["bls_nfp"]]
+    t0 = time.monotonic()
+    result = await fetch_bls_multi(series_ids)
+    latency_ms = int((time.monotonic() - t0) * 1000)
+
+    rows: list[dict] = []
+    for source_name, series_id in (("bls_cpi", BLS_SERIES["bls_cpi"]),
+                                   ("bls_nfp", BLS_SERIES["bls_nfp"])):
+        per = result.series.get(series_id)
+        success = bool(per and per.success)
+        # data_points doubles as "events_extracted" — closest analog (count of
+        # observations returned). Real release-event detection lands in Day 5.
+        rows.append({
+            "source": source_name,
+            "success": success,
+            "latency_ms": latency_ms,
+            "http_status": result.http_status,
+            "not_modified": False,  # BLS API has no ETag
+            "payload_bytes": result.payload_bytes,
+            "events_extracted": per.data_points if (per and per.success) else None,
+            "error_msg": (per.error if per else None) or result.error,
+        })
+    return rows
+
+
 async def _record(probe: dict) -> None:
     sql = text("""
         INSERT INTO macro_source_health
@@ -89,18 +133,58 @@ async def _record(probe: dict) -> None:
         logger.error(f"reliability_probe insert failed: {e}")
 
 
-async def probe_once() -> dict:
-    """Probe every registered source once. Returns a summary dict for logs/tests."""
-    probe = await _probe_fed_rss()
-    await _record(probe)
-    if probe["success"]:
-        tag = "304" if probe["not_modified"] else "200"
+def _is_due(name: str, now: datetime) -> bool:
+    state = _STATES[name]
+    if state.last_probed_at is None:
+        return True
+    return (now - state.last_probed_at) >= SOURCE_INTERVAL[name]
+
+
+def _mark(name: str, now: datetime) -> None:
+    _STATES[name].last_probed_at = now
+
+
+async def probe_once(*, force: bool = False) -> dict:
+    """Run probes for any sources whose interval has elapsed (or all on force).
+
+    BLS series are batched into a single combined POST when both are due.
+    Returns the per-source probe rows that fired this tick.
+    """
+    now = datetime.now(timezone.utc)
+    fired: list[dict] = []
+
+    if force or _is_due("fed_rss", now):
+        row = await _probe_fed_rss()
+        await _record(row)
+        _log_row(row)
+        _mark("fed_rss", now)
+        fired.append(row)
+
+    bls_due = [s for s in ("bls_cpi", "bls_nfp") if force or _is_due(s, now)]
+    if bls_due:
+        rows = await _probe_bls_combined()
+        # Only record/mark the ones that were actually due — but combined call
+        # returns both; record both anyway since the cost is already paid.
+        for row in rows:
+            await _record(row)
+            _log_row(row)
+            _mark(row["source"], now)
+            fired.append(row)
+
+    return {"fired": [r["source"] for r in fired], "rows": fired}
+
+
+def _log_row(row: dict) -> None:
+    if row["success"]:
+        tag = "304" if row.get("not_modified") else str(row.get("http_status") or "ok")
         logger.info(
-            f"probe fed_rss ok [{tag}] {probe['latency_ms']}ms events={probe['events_extracted']}"
+            f"probe {row['source']} ok [{tag}] {row['latency_ms']}ms "
+            f"events={row.get('events_extracted')} bytes={row.get('payload_bytes')}"
         )
     else:
-        logger.warning(f"probe fed_rss FAIL {probe['latency_ms']}ms err={probe['error_msg']}")
-    return probe
+        logger.warning(
+            f"probe {row['source']} FAIL {row['latency_ms']}ms err={row.get('error_msg')}"
+        )
 
 
 async def reliability_probe_supervisor() -> None:
@@ -109,7 +193,7 @@ async def reliability_probe_supervisor() -> None:
     # Initial probe a few seconds after boot, not immediately, to let DB settle.
     try:
         await asyncio.sleep(15)
-        await probe_once()
+        await probe_once(force=True)
     except asyncio.CancelledError:
         return
     except Exception as e:
@@ -117,7 +201,7 @@ async def reliability_probe_supervisor() -> None:
 
     while True:
         try:
-            await asyncio.sleep(PROBE_INTERVAL.total_seconds())
+            await asyncio.sleep(TICK_INTERVAL.total_seconds())
             await probe_once()
         except asyncio.CancelledError:
             logger.info("Reliability probe supervisor cancelled")
