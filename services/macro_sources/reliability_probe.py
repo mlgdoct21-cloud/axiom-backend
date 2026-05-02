@@ -23,8 +23,8 @@ from sqlalchemy import text
 
 from core.database import engine
 from core.logger import get_logger
-from services.macro_sources.bls_api import SERIES as BLS_SERIES, fetch_bls_multi
 from services.macro_sources.fed_rss import fetch_fed_rss
+from services.macro_sources.fred_api import SERIES as FRED_SERIES, fetch_fred_multi
 
 logger = get_logger("macro.reliability_probe")
 
@@ -33,12 +33,13 @@ logger = get_logger("macro.reliability_probe")
 TICK_INTERVAL = timedelta(minutes=5)
 RETRY_INTERVAL = timedelta(seconds=60)
 
-# Per-source minimum spacing. BLS unregistered limit is 25 calls/day per IP;
-# 60-min cadence keeps total BLS calls at 24/day even when CPI+NFP combined.
+# Per-source minimum spacing. FRED quota is 50,000/day with key — generous,
+# so we still gate at 60-min for parity with the broader release-detection
+# cadence (a faster probe gains nothing for monthly data points).
 SOURCE_INTERVAL: dict[str, timedelta] = {
     "fed_rss": timedelta(minutes=5),
-    "bls_cpi": timedelta(minutes=60),
-    "bls_nfp": timedelta(minutes=60),
+    "fred_cpi": timedelta(minutes=60),
+    "fred_nfp": timedelta(minutes=60),
 }
 
 
@@ -52,8 +53,8 @@ class _SourceState:
 
 _STATES: dict[str, _SourceState] = {
     "fed_rss": _SourceState(name="fed_rss"),
-    "bls_cpi": _SourceState(name="bls_cpi"),
-    "bls_nfp": _SourceState(name="bls_nfp"),
+    "fred_cpi": _SourceState(name="fred_cpi"),
+    "fred_nfp": _SourceState(name="fred_nfp"),
 }
 
 
@@ -89,32 +90,34 @@ def _approx_payload_size(events) -> Optional[int]:
     return sum(len(e.raw_summary or "") + len(e.title or "") for e in events) or None
 
 
-async def _probe_bls_combined() -> list[dict]:
-    """Single combined POST for all BLS series; returns one probe row per series.
+async def _probe_fred_all() -> list[dict]:
+    """Per-series GET for all FRED series; returns one probe row per series.
 
-    Cuts BLS daily quota usage in half (vs separate calls per series).
+    Each call independent — one series down doesn't taint the others.
     """
-    series_ids = [BLS_SERIES["bls_cpi"], BLS_SERIES["bls_nfp"]]
+    series_ids = [FRED_SERIES["fred_cpi"], FRED_SERIES["fred_nfp"]]
     t0 = time.monotonic()
-    result = await fetch_bls_multi(series_ids)
-    latency_ms = int((time.monotonic() - t0) * 1000)
+    result = await fetch_fred_multi(series_ids)
+    total_latency_ms = int((time.monotonic() - t0) * 1000)
 
     rows: list[dict] = []
-    for source_name, series_id in (("bls_cpi", BLS_SERIES["bls_cpi"]),
-                                   ("bls_nfp", BLS_SERIES["bls_nfp"])):
+    for source_name, series_id in (("fred_cpi", FRED_SERIES["fred_cpi"]),
+                                   ("fred_nfp", FRED_SERIES["fred_nfp"])):
         per = result.series.get(series_id)
+        # latency_ms is the per-series wall time approximation; we issued
+        # them sequentially so split the total in half. Good enough for
+        # uptime tracking; precise per-call timing lives inside fred_api.
+        per_latency = total_latency_ms // 2
         success = bool(per and per.success)
-        # data_points doubles as "events_extracted" — closest analog (count of
-        # observations returned). Real release-event detection lands in Day 5.
         rows.append({
             "source": source_name,
             "success": success,
-            "latency_ms": latency_ms,
-            "http_status": result.http_status,
-            "not_modified": False,  # BLS API has no ETag
-            "payload_bytes": result.payload_bytes,
-            "events_extracted": per.data_points if (per and per.success) else None,
-            "error_msg": (per.error if per else None) or result.error,
+            "latency_ms": per_latency,
+            "http_status": per.http_status if per else None,
+            "not_modified": False,  # FRED has no ETag
+            "payload_bytes": per.payload_bytes if per else 0,
+            "events_extracted": per.data_points if success else None,
+            "error_msg": per.error if per else None,
         })
     return rows
 
@@ -160,11 +163,9 @@ async def probe_once(*, force: bool = False) -> dict:
         _mark("fed_rss", now)
         fired.append(row)
 
-    bls_due = [s for s in ("bls_cpi", "bls_nfp") if force or _is_due(s, now)]
-    if bls_due:
-        rows = await _probe_bls_combined()
-        # Only record/mark the ones that were actually due — but combined call
-        # returns both; record both anyway since the cost is already paid.
+    fred_due = [s for s in ("fred_cpi", "fred_nfp") if force or _is_due(s, now)]
+    if fred_due:
+        rows = await _probe_fred_all()
         for row in rows:
             await _record(row)
             _log_row(row)
