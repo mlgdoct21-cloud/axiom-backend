@@ -96,6 +96,40 @@ _POSTGRES_GUARDS = [
         "idx_etf_scraped_at",
         "CREATE INDEX IF NOT EXISTS idx_etf_scraped_at ON etf_flow_cache(scraped_at DESC)",
     ),
+    # Macro Intelligence Layer (alembic 004) — runtime guard so Railway picks it
+    # up without manual `alembic upgrade head`. Numeric (not float) so the
+    # narrative number-validator can do exact-string regex matches.
+    (
+        "macro_releases table",
+        """CREATE TABLE IF NOT EXISTS macro_releases (
+            event_id VARCHAR(64) PRIMARY KEY,
+            event_type VARCHAR(32) NOT NULL,
+            country VARCHAR(8) NOT NULL DEFAULT 'US',
+            scheduled_at TIMESTAMPTZ,
+            released_at TIMESTAMPTZ,
+            prior_value NUMERIC(18, 6),
+            expected_value NUMERIC(18, 6),
+            actual_value NUMERIC(18, 6),
+            surprise_pct NUMERIC(10, 4),
+            source VARCHAR(32),
+            source_url TEXT,
+            narrative_md TEXT,
+            sentiment_score NUMERIC(4, 3),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )""",
+    ),
+    (
+        "ix_macro_releases_scheduled_at",
+        "CREATE INDEX IF NOT EXISTS ix_macro_releases_scheduled_at ON macro_releases(scheduled_at)",
+    ),
+    (
+        "ix_macro_releases_event_type_released_at",
+        "CREATE INDEX IF NOT EXISTS ix_macro_releases_event_type_released_at ON macro_releases(event_type, released_at)",
+    ),
+    (
+        "ix_macro_releases_country",
+        "CREATE INDEX IF NOT EXISTS ix_macro_releases_country ON macro_releases(country)",
+    ),
 ]
 
 

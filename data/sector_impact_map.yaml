@@ -1,0 +1,56 @@
+# AXIOM Macro Intelligence — Sector Impact Whitelist v0
+#
+# Used by macro_narrative.py to constrain Gemini output. If a sector name in
+# the LLM response is NOT present in the active category's lists, the response
+# is rejected and the raw YAML is served instead.
+#
+# Sector keys must stay lowercase ASCII (used in chip rendering + i18n maps).
+# Mechanism is a single-sentence rationale — kept terse to fit prompt budget.
+
+CPI_HOT:
+  description: "CPI prints above expectation; sticky inflation; rate-cut bets fade"
+  mechanism: "Higher-for-longer rates compress duration assets and lift real yields"
+  sectors_negative: [tech, growth_stocks, real_estate, consumer_discretionary, utilities]
+  sectors_positive: [energy, financials, commodities, materials]
+
+CPI_COOL:
+  description: "CPI prints below expectation; disinflation extends; cut odds rise"
+  mechanism: "Falling real yields rerate duration; risk-on into growth"
+  sectors_positive: [tech, growth_stocks, real_estate, consumer_discretionary, utilities]
+  sectors_negative: [energy, financials]
+
+NFP_HOT:
+  description: "Nonfarm payrolls beat strongly; wage growth firm; labour tight"
+  mechanism: "Hot labour delays cuts; small caps and rate-sensitives bear the cost"
+  sectors_negative: [small_caps, real_estate, utilities, growth_stocks]
+  sectors_positive: [financials, industrials, consumer_discretionary]
+
+NFP_COOL:
+  description: "Nonfarm payrolls miss; unemployment ticks up; labour softens"
+  mechanism: "Soft-landing trade revives; defensives and bonds bid"
+  sectors_positive: [tech, growth_stocks, real_estate, utilities, consumer_staples]
+  sectors_negative: [financials, energy, industrials]
+
+FOMC_HAWKISH:
+  description: "FOMC statement/dots more restrictive than priced; cuts pushed out"
+  mechanism: "Dollar firms, real yields rise, equity risk premium compresses"
+  sectors_negative: [tech, growth_stocks, real_estate, small_caps, em_exposure]
+  sectors_positive: [financials, energy, defensives]
+
+FOMC_DOVISH:
+  description: "FOMC statement/dots more accommodative than priced; cuts pulled forward"
+  mechanism: "Dollar softens, duration rallies, risk-on broadens"
+  sectors_positive: [tech, growth_stocks, real_estate, small_caps, em_exposure, consumer_discretionary]
+  sectors_negative: [financials, defensives]
+
+PCE_HOT:
+  description: "Core PCE above expectation; Fed's preferred gauge stays sticky"
+  mechanism: "Equivalent to CPI_HOT with stronger Fed-policy weight"
+  sectors_negative: [tech, growth_stocks, real_estate, consumer_discretionary]
+  sectors_positive: [energy, financials, commodities]
+
+PCE_COOL:
+  description: "Core PCE undershoots; disinflation confirmed in Fed's gauge"
+  mechanism: "Cut bets accelerate; duration assets lead"
+  sectors_positive: [tech, growth_stocks, real_estate, consumer_discretionary]
+  sectors_negative: [energy, financials]
