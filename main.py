@@ -12,6 +12,7 @@ from routers.v1 import router as v1_router
 from services.telegram_bot import start_telegram_bot
 from services.crawler import run_crawler
 from services.etf_flow_scheduler import etf_scraper_supervisor
+from services.macro_sources.reliability_probe import reliability_probe_supervisor
 from core.logger import get_logger
 from core.schema_guard import ensure_schema
 
@@ -21,6 +22,7 @@ logger = get_logger("main")
 bot_task = None
 crawler_task = None
 etf_scraper_task = None
+macro_probe_task = None
 
 
 async def bot_supervisor():
@@ -51,7 +53,7 @@ async def crawler_supervisor():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global bot_task, crawler_task, etf_scraper_task
+    global bot_task, crawler_task, etf_scraper_task, macro_probe_task
     logger.info("Application startup")
 
     # Schema guard — idempotent ALTER TABLE to ensure pipeline columns exist.
@@ -82,10 +84,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to start ETF scraper: {e}")
 
+    # Start Macro source reliability probe (5-min cadence, Hafta 1 verification)
+    try:
+        macro_probe_task = asyncio.create_task(reliability_probe_supervisor())
+        logger.info("Macro reliability probe started")
+    except Exception as e:
+        logger.error(f"Failed to start macro probe: {e}")
+
     yield
 
     logger.info("Application shutdown")
-    for task in [bot_task, crawler_task, etf_scraper_task]:
+    for task in [bot_task, crawler_task, etf_scraper_task, macro_probe_task]:
         if task:
             task.cancel()
             try:

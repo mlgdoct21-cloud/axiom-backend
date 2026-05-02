@@ -130,6 +130,32 @@ _POSTGRES_GUARDS = [
         "ix_macro_releases_country",
         "CREATE INDEX IF NOT EXISTS ix_macro_releases_country ON macro_releases(country)",
     ),
+    # Macro source reliability — append-only probe log. Hafta 1 verification
+    # criterion (>=99% uptime, p95<3s) is computed by rolling SELECT over the
+    # last N hours of rows. ~2000 rows/source/week at 5-min cadence.
+    (
+        "macro_source_health table",
+        """CREATE TABLE IF NOT EXISTS macro_source_health (
+            id BIGSERIAL PRIMARY KEY,
+            source VARCHAR(32) NOT NULL,
+            probed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            success BOOLEAN NOT NULL,
+            latency_ms INTEGER,
+            http_status INTEGER,
+            not_modified BOOLEAN NOT NULL DEFAULT FALSE,
+            payload_bytes INTEGER,
+            events_extracted INTEGER,
+            error_msg TEXT
+        )""",
+    ),
+    (
+        "ix_macro_source_health_source_probed",
+        "CREATE INDEX IF NOT EXISTS ix_macro_source_health_source_probed ON macro_source_health(source, probed_at DESC)",
+    ),
+    (
+        "ix_macro_source_health_probed",
+        "CREATE INDEX IF NOT EXISTS ix_macro_source_health_probed ON macro_source_health(probed_at DESC)",
+    ),
 ]
 
 
