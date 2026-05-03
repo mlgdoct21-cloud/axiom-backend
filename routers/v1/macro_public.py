@@ -375,6 +375,11 @@ async def history(
             yoy_target = r["released_at"] - timedelta_days(350)
             yr_ago = await _fetch_history_value(conn, et, source, yoy_target)
             yoy = _pct(actual, yr_ago) if et in _PCT_DELTA_EVENTS else None
+            change_k = (
+                round(actual - prior, 1)
+                if (et in _NFP_EVENTS and actual is not None and prior is not None)
+                else None
+            )
             out.append({
                 "event_id": r["event_id"],
                 "released_at": r["released_at"].isoformat(),
@@ -382,6 +387,7 @@ async def history(
                 "prior_value": prior,
                 "mom_pct": mom,
                 "yoy_pct": yoy,
+                "change_k": change_k,
             })
     return {"event_type": et, "source": source, "points": out}
 

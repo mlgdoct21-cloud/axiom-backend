@@ -1,0 +1,24 @@
+# AXIOM Macro Intelligence — Sector → BIST Ticker map
+#
+# Companion to sector_tickers.yaml (US large-caps). Used by macro_callback's
+# "💼 Etkilenen hisseler" reply to give Turkish users locally-relevant names
+# alongside the US tickers.
+#
+# Keys mirror sector_impact_map.yaml. Tickers are top-3..5 BIST names per
+# sector — picked for size + name-recognition, not exhaustive coverage.
+# Update when BIST 30/100 composition shifts.
+
+energy:        [TUPRS, AKSEN, AKSA, AYGAZ]
+financials:    [AKBNK, GARAN, ISCTR, YKBNK, HALKB]
+tech:          [ASELS, LOGO, ARENA, NETAS, KAREL]
+growth_stocks: [ASELS, LOGO, KAREL]
+real_estate:   [EKGYO, ISGYO, SNGYO, OZGYO, TRGYO]
+consumer_discretionary: [BIMAS, MGROS, SOKM, TKFEN, MAVI]
+consumer_staples: [ULKER, BIMAS, AEFES, CCOLA, MGROS]
+utilities:     [AKSEN, ZOREN, ENJSA, AKSA]
+materials:     [EREGL, KRDMD, IZMDC, HEKTS, KOZAA]
+commodities:   [TUPRS, KOZAA, KOZAL, EREGL]
+industrials:   [SISE, ARCLK, KCHOL, SAHOL, ENKAI]
+defensives:    [ULKER, BIMAS, AEFES, CCOLA]
+em_exposure:   [XU100]    # BIST 100 endeksi — tek proxy
+small_caps:    [XU050]    # BIST 50 endeksi

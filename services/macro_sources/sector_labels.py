@@ -43,43 +43,57 @@ def label_tr(sector_key: str) -> str:
     return sector_key.replace("_", " ").title()
 
 
-_SECTOR_TICKERS_CACHE: Optional[dict[str, list[str]]] = None  # type: ignore
+_TICKER_CACHES: dict[str, dict[str, list[str]]] = {}
 
 
-def load_sector_tickers() -> dict[str, list[str]]:
-    """Load + cache the sector → tickers map from data/sector_tickers.yaml.
-    Returns empty dict on any IO/parse failure (so callers degrade silently).
-    """
-    global _SECTOR_TICKERS_CACHE
-    if _SECTOR_TICKERS_CACHE is not None:
-        return _SECTOR_TICKERS_CACHE
+def _load_ticker_yaml(filename: str) -> dict[str, list[str]]:
+    """Load + cache one ticker-map YAML by filename. Returns empty dict on
+    any IO/parse failure (callers degrade silently)."""
+    if filename in _TICKER_CACHES:
+        return _TICKER_CACHES[filename]
     try:
         import os
         import yaml
         path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "data", "sector_tickers.yaml",
+            os.path.dirname(__file__), "..", "..", "data", filename,
         )
         with open(path, "r") as f:
             raw = yaml.safe_load(f) or {}
-        _SECTOR_TICKERS_CACHE = {
+        _TICKER_CACHES[filename] = {
             k: [str(t) for t in (v or []) if t]
             for k, v in raw.items()
         }
     except Exception:
-        _SECTOR_TICKERS_CACHE = {}
-    return _SECTOR_TICKERS_CACHE
+        _TICKER_CACHES[filename] = {}
+    return _TICKER_CACHES[filename]
+
+
+def load_sector_tickers() -> dict[str, list[str]]:
+    """US large-caps per sector (data/sector_tickers.yaml)."""
+    return _load_ticker_yaml("sector_tickers.yaml")
+
+
+def load_sector_bist_tickers() -> dict[str, list[str]]:
+    """BIST counterparts per sector (data/sector_bist_tickers.yaml)."""
+    return _load_ticker_yaml("sector_bist_tickers.yaml")
+
+
+def _flatten_tickers(sector_keys: list, source_map: dict[str, list[str]], cap: int) -> list[str]:
+    seen: list[str] = []
+    for key in (sector_keys or []):
+        for t in source_map.get(str(key), []):
+            if t not in seen:
+                seen.append(t)
+            if len(seen) >= cap:
+                return seen
+    return seen
 
 
 def tickers_for_sectors(sector_keys: list) -> list[str]:
-    """Flatten + dedupe ticker symbols for a list of sector keys.
-    Returns up to 10 unique tickers (cap to keep Telegram messages tight).
-    """
-    tickers_map = load_sector_tickers()
-    seen: list[str] = []
-    for key in (sector_keys or []):
-        for t in tickers_map.get(str(key), []):
-            if t not in seen:
-                seen.append(t)
-            if len(seen) >= 10:
-                return seen
-    return seen
+    """US flatten + dedupe (10-cap)."""
+    return _flatten_tickers(sector_keys, load_sector_tickers(), cap=10)
+
+
+def bist_tickers_for_sectors(sector_keys: list) -> list[str]:
+    """BIST flatten + dedupe (8-cap to stay tighter on Telegram lines)."""
+    return _flatten_tickers(sector_keys, load_sector_bist_tickers(), cap=8)
