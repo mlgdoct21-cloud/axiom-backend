@@ -106,6 +106,13 @@ async def regenerate_narrative(
                 {"eid": event_id},
             )
     res = await generate_narrative(event_id)
+    # Sectors / narrative may have changed — drop the inline-keyboard cache so
+    # the next [💼 Hisseler] / [📊 Tarihsel] click reads the fresh state.
+    try:
+        from services.macro_callback import invalidate_event
+        invalidate_event(event_id)
+    except Exception:
+        pass
     return {
         "event_id": res.event_id,
         "written": res.written,

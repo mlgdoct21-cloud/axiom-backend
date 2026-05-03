@@ -74,6 +74,23 @@ def _cache_put(key: str, payload: str) -> None:
     _PAYLOAD_CACHE[key] = (time.monotonic() + _CACHE_TTL_SECONDS, payload)
 
 
+def invalidate_event(event_id: str) -> int:
+    """Drop every cached payload tied to one event_id.
+
+    Called by the broadcaster after a re-broadcast and by the narrative
+    pipeline after a re-generation, so a fresh click on [📊 Tarihsel] /
+    [💼 Etkilenen] sees the new sectors / numbers immediately rather than
+    waiting out the 60s TTL. Returns count of evicted keys (for logging).
+    """
+    if not event_id:
+        return 0
+    suffix = f":{event_id}"
+    dead = [k for k in _PAYLOAD_CACHE if k.endswith(suffix)]
+    for k in dead:
+        _PAYLOAD_CACHE.pop(k, None)
+    return len(dead)
+
+
 def _rate_limited(chat_id) -> bool:
     """Returns True when the chat called us within the rate-limit window."""
     cid = str(chat_id)

@@ -515,6 +515,17 @@ async def broadcast_release(event_id: str) -> dict:
     except Exception as e:
         logger.warning(f"macro broadcast: last_broadcast_at update failed for {event_id}: {e}")
 
+    # Drop stale inline-keyboard cache so the next [📊 Tarihsel] / [💼 Hisseler]
+    # click reads fresh DB state (sectors, narrative, ticker map) instead of
+    # serving up to 60s of stale payload from before this re-broadcast.
+    try:
+        from services.macro_callback import invalidate_event
+        evicted = invalidate_event(event_id)
+        if evicted:
+            logger.debug(f"macro broadcast: evicted {evicted} cache entries for {event_id}")
+    except Exception as e:
+        logger.warning(f"macro broadcast: cache invalidate failed for {event_id}: {e}")
+
     sent, failed = await _fanout(base_message, paid_users, event_id)
     logger.info(
         f"📣 macro broadcast {event_id} [PAID instant]: "
