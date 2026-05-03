@@ -175,10 +175,19 @@ async def capture_reaction(event_id: str) -> None:
         logger.error(f"capture_reaction T+5 crashed for {event_id}: {e}")
 
 
+# Strong references to in-flight reaction tasks so the event loop can't
+# garbage-collect them mid-sleep. Without this, the T+5min capture often
+# never runs because asyncio.create_task() returns a weak reference and
+# Python may collect it during the 300s sleep.
+_INFLIGHT: set = set()
+
+
 def trigger_reaction(event_id: str) -> None:
     """Fire-and-forget wrapper used by macro_narrative — never raises and
     never blocks the caller."""
     try:
-        asyncio.create_task(capture_reaction(event_id))
+        task = asyncio.create_task(capture_reaction(event_id))
+        _INFLIGHT.add(task)
+        task.add_done_callback(_INFLIGHT.discard)
     except Exception as e:
         logger.error(f"trigger_reaction failed for {event_id}: {e}")
