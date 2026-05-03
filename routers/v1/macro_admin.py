@@ -12,7 +12,12 @@ from sqlalchemy import text
 
 from core.database import engine
 from core.logger import get_logger
-from services.macro_calendar import upcoming_events
+from services.macro_calendar import (
+    invalidate_calendar_cache,
+    load_calendar,
+    upcoming_events,
+)
+from services.macro_sources.fred_calendar import cache_status as fred_calendar_cache_status
 from services.macro_broadcaster import broadcast_release
 from services.macro_narrative import generate_narrative
 from services.macro_sources.reliability_probe import (
@@ -63,7 +68,7 @@ async def calendar_view(
             "scheduled_at": e.scheduled_at.isoformat(),
             "sources_to_accelerate": list(e.sources_to_accelerate),
         }
-        for e in upcoming_events(now, days=days)
+        for e in await upcoming_events(now, days=days)
     ]
     sql = text("""
         SELECT event_id, event_type, source, released_at, actual_value, prior_value, narrative_md
@@ -86,7 +91,27 @@ async def calendar_view(
         }
         for r in rows
     ]
-    return {"now": now.isoformat(), "days": days, "upcoming": upcoming, "recent": recent}
+    return {
+        "now": now.isoformat(),
+        "days": days,
+        "upcoming": upcoming,
+        "recent": recent,
+        "fred_calendar_cache": fred_calendar_cache_status(),
+    }
+
+
+@router.post("/calendar/refresh")
+async def calendar_refresh(x_internal_secret: Optional[str] = Header(None)):
+    """Drop the merged-calendar cache + FRED's 24h release/dates cache, then
+    rebuild from scratch. Useful after a BLS reschedule or when adding a new
+    event_type to macro_calendar.yaml without bouncing the process."""
+    _check_auth(x_internal_secret)
+    invalidate_calendar_cache()
+    events = await load_calendar(force_refresh=True)
+    return {
+        "merged_event_count": len(events),
+        "fred_calendar_cache": fred_calendar_cache_status(),
+    }
 
 
 @router.post("/narrative/{event_id}")

@@ -273,6 +273,15 @@ def _log_row(row: dict) -> None:
 async def reliability_probe_supervisor() -> None:
     """Background supervisor — same shape as etf_scraper_supervisor."""
     logger.info("Reliability probe supervisor started")
+    # Prime the merged calendar (YAML + FRED) so is_in_hot_window has fresh
+    # data on the very first probe instead of falling back to YAML-only.
+    try:
+        from services.macro_calendar import load_calendar
+        events = await load_calendar()
+        logger.info(f"Calendar primed: {len(events)} upcoming events (YAML + FRED merged)")
+    except Exception as e:
+        logger.warning(f"Calendar prime failed (degrading to YAML-only): {e}")
+
     # Initial probe a few seconds after boot, not immediately, to let DB settle.
     try:
         await asyncio.sleep(15)
@@ -282,10 +291,20 @@ async def reliability_probe_supervisor() -> None:
     except Exception as e:
         logger.error(f"Initial probe error: {e}")
 
+    last_calendar_refresh = time.monotonic()
     while True:
         try:
             await asyncio.sleep(TICK_INTERVAL.total_seconds())
             await probe_once()
+            # Re-prime once a day so a calendar update doesn't wait 24h to
+            # show up in `is_in_hot_window`.
+            if time.monotonic() - last_calendar_refresh > 24 * 3600:
+                try:
+                    from services.macro_calendar import load_calendar
+                    await load_calendar(force_refresh=True)
+                    last_calendar_refresh = time.monotonic()
+                except Exception as e:
+                    logger.warning(f"Calendar daily refresh failed: {e}")
         except asyncio.CancelledError:
             logger.info("Reliability probe supervisor cancelled")
             break
