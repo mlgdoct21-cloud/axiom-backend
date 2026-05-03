@@ -224,7 +224,10 @@ async def process_start_command(chat_id, user_id, username):
         "/tags — İlgi alanlarını seç (BTC, Altın, BIST...)\n"
         "/takip AAPL — Sembol takip et\n"
         "/takipcikar AAPL — Takipten çıkar\n"
-        "/takiplistem — Takip listeni gör"
+        "/takiplistem — Takip listeni gör\n\n"
+        "💳 <b>Üyelik:</b>\n"
+        "/tier — Mevcut planını gör\n"
+        "/upgrade — PREMIUM / ADVANCE planlarına yükselt"
     )
     send_telegram_message(chat_id, welcome_msg)
 
@@ -542,6 +545,72 @@ async def process_report_command(chat_id, user_id, symbol: str):
         else:
             send_telegram_message(chat_id, user_msg)
 
+_TIER_LABELS = {
+    "free": "🆓 FREE",
+    "premium": "💎 PREMIUM",
+    "advance": "🚀 ADVANCE",
+}
+
+# Admin handle for upgrade requests until Stripe billing lands. Override
+# via env so we don't have to redeploy when the contact changes.
+_UPGRADE_CONTACT = os.getenv("UPGRADE_CONTACT", "@axiom_destek")
+
+
+async def _get_user_tier(user_id) -> str:
+    """Read the caller's tier; defaults to 'free' for unknown / new users."""
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(User).where(User.telegram_id == str(user_id)))
+            user = result.scalars().first()
+            if not user:
+                return "free"
+            return (getattr(user, "tier", "free") or "free").lower()
+    except Exception as e:
+        logger.error(f"DB hatası (_get_user_tier) user={user_id}: {e}")
+        return "free"
+
+
+async def process_tier_command(chat_id, user_id):
+    """Show the caller their current tier — terse one-line reply."""
+    tier = await _get_user_tier(user_id)
+    label = _TIER_LABELS.get(tier, tier.upper())
+    msg = (
+        f"📋 <b>Mevcut planınız:</b> {label}\n\n"
+        f"Yükseltmek için: /upgrade"
+    )
+    send_telegram_message(chat_id, msg)
+
+
+async def process_upgrade_command(chat_id, user_id):
+    """Show tier comparison + how to upgrade. Until Stripe billing is wired,
+    upgrades happen via direct admin contact (env: UPGRADE_CONTACT)."""
+    tier = await _get_user_tier(user_id)
+    current_label = _TIER_LABELS.get(tier, tier.upper())
+    contact = html.escape(_UPGRADE_CONTACT)
+    msg = (
+        f"💳 <b>Plan Yükseltme</b>\n"
+        f"Mevcut planınız: {current_label}\n\n"
+
+        f"🆓 <b>FREE</b> — $0\n"
+        f"  • Makro yayınları (5 dk gecikmeli)\n"
+        f"  • Sınırlı /haber + /report kullanımı\n\n"
+
+        f"💎 <b>PREMIUM</b> — $2/ay\n"
+        f"  • Anlık makro yayınları (gecikme yok)\n"
+        f"  • Tüm tarihsel chart + sektör hisse listeleri\n"
+        f"  • Dashboard tam erişim\n\n"
+
+        f"🚀 <b>ADVANCE</b> — $5/ay\n"
+        f"  • PREMIUM tüm özellikler\n"
+        f"  • Sınırsız /report + /haber\n"
+        f"  • Erken yeni özellik erişimi\n\n"
+
+        f"⚡ <b>Yükseltmek için</b>: {contact} ile iletişime geçin.\n"
+        f"<i>(Otomatik ödeme yakında — Stripe entegrasyonu beta'da.)</i>"
+    )
+    send_telegram_message(chat_id, msg)
+
+
 async def process_tags_command(chat_id, user_id):
     """Kullanıcıya tag seçim klavyesi gönderir."""
     try:
@@ -669,6 +738,10 @@ async def start_telegram_bot():
                             elif text.lower().startswith("/report"):
                                 symbol = text[len("/report"):].strip()
                                 await process_report_command(chat_id, user_id, symbol)
+                            elif text.lower().startswith("/upgrade"):
+                                await process_upgrade_command(chat_id, user_id)
+                            elif text.lower().startswith("/tier"):
+                                await process_tier_command(chat_id, user_id)
 
                         # Inline keyboard callback'leri
                         elif "callback_query" in update:
