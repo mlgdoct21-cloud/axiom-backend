@@ -11,16 +11,18 @@ Deltas (%, %, bp) are computed at read time inside macro_public so the
 DB stores raw quotes only. This keeps schema dumb and lets us tweak the
 display formula without a backfill.
 
-Quote source: yfinance — Yahoo's index symbols (^DXY, ^TNX) are free and
-intraday, while FMP /stable/quote rejects index tickers on free tier.
-yfinance is already in requirements (used by daily_digest VIX + BIST).
+Quote source: Yahoo Finance v8 chart API directly via HTTP. yfinance lib
+returns broken / wrong-field values for index tickers (saw `DX-Y.NYB`
+come back as 25.7 instead of 98.2 in prod), and FMP's free tier rejects
+indices. The chart API exposes the right value in `meta.regularMarketPrice`
+without auth or rate-limit pain at our cadence (≤ a few releases/day).
 """
 from __future__ import annotations
 
 import asyncio
 from typing import Optional
 
-import yfinance as yf
+import httpx
 from sqlalchemy import text
 
 from core.database import engine
@@ -28,53 +30,61 @@ from core.logger import get_logger
 
 logger = get_logger("macro.market_reaction")
 
-# Yahoo Finance ticker symbols. ^DXY and ^TNX work on the free tier.
-_DXY_SYMBOL = "DX-Y.NYB"  # primary
-_DXY_FALLBACKS = ("^DXY",)
+# Yahoo Finance v8 chart endpoint — same URL the web client hits, no auth.
+_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+_USER_AGENT = "Mozilla/5.0 (compatible; AxiomMacro/0.1)"
+_HTTP_TIMEOUT = httpx.Timeout(8.0, connect=5.0)
+
+# Symbols that resolve to actual values via Yahoo:
+# - DX-Y.NYB → ICE US Dollar Index spot (~98)
+# - SPY      → SPY ETF (proxy for S&P 500)
+# - ^TNX     → 10-Year Treasury Yield Index, value in % (4.25 = 4.25%)
+_DXY_SYMBOL = "DX-Y.NYB"
 _SPY_SYMBOL = "SPY"
-_US10Y_SYMBOL = "^TNX"  # CBOE 10-Year Treasury Yield Index, value in %
+_US10Y_SYMBOL = "^TNX"
 
 # Offsets we capture. Add T+30 / T+60 here later if useful.
 _SNAPSHOT_OFFSETS = (0, 300)
 
 
-def _yf_latest(symbol: str) -> Optional[float]:
-    """Latest minute-bar close price for a Yahoo Finance ticker. Synchronous —
-    callers wrap in asyncio.to_thread.
-    """
+async def _fetch_quote(client: httpx.AsyncClient, symbol: str) -> Optional[float]:
+    """Pull `meta.regularMarketPrice` from Yahoo's chart API for one symbol."""
     try:
-        ticker = yf.Ticker(symbol)
-        # 1-day intraday at 1-min resolution gives us the freshest tick.
-        hist = ticker.history(period="1d", interval="1m")
-        if hist.empty:
-            # Markets closed / symbol stale — fall back to daily close.
-            hist = ticker.history(period="5d", interval="1d")
-            if hist.empty:
-                return None
-        price = float(hist["Close"].iloc[-1])
-        if not price or price != price:  # NaN guard
+        r = await client.get(
+            _CHART_URL.format(symbol=symbol),
+            params={"interval": "1d", "range": "5d"},
+            headers={"User-Agent": _USER_AGENT},
+        )
+        if r.status_code != 200:
+            logger.debug(f"yahoo chart {symbol} HTTP {r.status_code}")
             return None
-        return price
+        body = r.json()
+        results = body.get("chart", {}).get("result") or []
+        if not results:
+            return None
+        meta = results[0].get("meta") or {}
+        price = meta.get("regularMarketPrice")
+        if price is None:
+            return None
+        try:
+            v = float(price)
+        except (TypeError, ValueError):
+            return None
+        # NaN guard
+        return v if v == v else None
     except Exception as e:
-        logger.debug(f"yf {symbol} failed: {e}")
+        logger.debug(f"yahoo chart {symbol} failed: {e}")
         return None
-
-
-def _yf_first_match(candidates: tuple) -> Optional[float]:
-    for sym in candidates:
-        price = _yf_latest(sym)
-        if price is not None:
-            return price
-    return None
 
 
 async def _capture_snapshot(event_id: str, t_offset_seconds: int) -> bool:
     """Take one DXY/SPY/US10Y snapshot for the given event and persist."""
-    dxy, spy, us10y = await asyncio.gather(
-        asyncio.to_thread(_yf_first_match, (_DXY_SYMBOL,) + _DXY_FALLBACKS),
-        asyncio.to_thread(_yf_latest, _SPY_SYMBOL),
-        asyncio.to_thread(_yf_latest, _US10Y_SYMBOL),
-    )
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+        dxy, spy, us10y = await asyncio.gather(
+            _fetch_quote(client, _DXY_SYMBOL),
+            _fetch_quote(client, _SPY_SYMBOL),
+            _fetch_quote(client, _US10Y_SYMBOL),
+        )
     if dxy is None and spy is None and us10y is None:
         logger.warning(f"market reaction T+{t_offset_seconds} all None for {event_id}")
         return False
