@@ -156,6 +156,26 @@ _POSTGRES_GUARDS = [
         "ix_macro_source_health_probed",
         "CREATE INDEX IF NOT EXISTS ix_macro_source_health_probed ON macro_source_health(probed_at DESC)",
     ),
+    # Append-only market-pricing snapshots (Kalshi KXFED, etc). Narrative reads
+    # the last row before / first row after a release_at to compute the
+    # before/after delta that drives the "Piyasa önce X, ŞİMDİ Y" line.
+    (
+        "macro_market_pricing table",
+        """CREATE TABLE IF NOT EXISTS macro_market_pricing (
+            id BIGSERIAL PRIMARY KEY,
+            source VARCHAR(32) NOT NULL,
+            meeting_ticker VARCHAR(32) NOT NULL,
+            snapshot_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            modal_rate_pct NUMERIC(6, 3),
+            modal_prob NUMERIC(5, 4),
+            distribution JSONB,
+            payload_bytes INTEGER
+        )""",
+    ),
+    (
+        "ix_macro_market_pricing_meeting_ts",
+        "CREATE INDEX IF NOT EXISTS ix_macro_market_pricing_meeting_ts ON macro_market_pricing(meeting_ticker, snapshot_ts DESC)",
+    ),
 ]
 
 

@@ -25,9 +25,11 @@ from core.database import engine
 from core.logger import get_logger
 from services.macro_sources.fed_rss import fetch_fed_rss
 from services.macro_sources.fred_api import SERIES as FRED_SERIES, fetch_fred_multi
+from services.macro_sources.kalshi_fed import fetch_kalshi_fed
 from services.macro_sources.release_detect import (
     record_fed_rss_events,
     record_fred_observation,
+    record_kalshi_snapshot,
 )
 
 logger = get_logger("macro.reliability_probe")
@@ -44,6 +46,7 @@ SOURCE_INTERVAL: dict[str, timedelta] = {
     "fed_rss": timedelta(minutes=5),
     "fred_cpi": timedelta(minutes=60),
     "fred_nfp": timedelta(minutes=60),
+    "kalshi_fed": timedelta(minutes=60),
 }
 
 
@@ -59,6 +62,7 @@ _STATES: dict[str, _SourceState] = {
     "fed_rss": _SourceState(name="fed_rss"),
     "fred_cpi": _SourceState(name="fred_cpi"),
     "fred_nfp": _SourceState(name="fred_nfp"),
+    "kalshi_fed": _SourceState(name="kalshi_fed"),
 }
 
 
@@ -149,6 +153,30 @@ async def _probe_fred_all() -> list[dict]:
     return rows
 
 
+async def _probe_kalshi() -> dict:
+    """One Kalshi KXFED snapshot — also writes the distribution to macro_market_pricing."""
+    t0 = time.monotonic()
+    snap = await fetch_kalshi_fed()
+    latency_ms = int((time.monotonic() - t0) * 1000)
+
+    if snap.success and snap.meeting_ticker:
+        try:
+            await record_kalshi_snapshot(snap)
+        except Exception as e:
+            logger.error(f"kalshi snapshot persist failed: {e}")
+
+    return {
+        "source": "kalshi_fed",
+        "success": snap.success,
+        "latency_ms": latency_ms,
+        "http_status": snap.http_status,
+        "not_modified": False,
+        "payload_bytes": snap.payload_bytes or None,
+        "events_extracted": len(snap.distribution) if snap.success else None,
+        "error_msg": snap.error,
+    }
+
+
 async def _record(probe: dict) -> None:
     sql = text("""
         INSERT INTO macro_source_health
@@ -198,6 +226,13 @@ async def probe_once(*, force: bool = False) -> dict:
             _log_row(row)
             _mark(row["source"], now)
             fired.append(row)
+
+    if force or _is_due("kalshi_fed", now):
+        row = await _probe_kalshi()
+        await _record(row)
+        _log_row(row)
+        _mark("kalshi_fed", now)
+        fired.append(row)
 
     return {"fired": [r["source"] for r in fired], "rows": fired}
 

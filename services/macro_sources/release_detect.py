@@ -18,12 +18,15 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
+import json
+
 from sqlalchemy import text
 
 from core.database import engine
 from core.logger import get_logger
 from services.macro_sources.fed_rss import ReleaseEvent
 from services.macro_sources.fred_api import SERIES as FRED_SERIES
+from services.macro_sources.kalshi_fed import KalshiSnapshot
 
 logger = get_logger("macro.release_detect")
 
@@ -104,6 +107,38 @@ async def record_fred_observation(
         return False
     except Exception as e:
         logger.error(f"record_fred_observation failed for {event_id}: {e}")
+        return False
+
+
+async def record_kalshi_snapshot(snap: KalshiSnapshot) -> bool:
+    """Append one Kalshi rate-distribution snapshot. Always inserts (no dedup).
+
+    `before/after` Narrative Change reads come from this append-only log, so we
+    intentionally keep every probe even when the distribution didn't move.
+    """
+    if not snap.success or not snap.meeting_ticker:
+        return False
+    sql = text("""
+        INSERT INTO macro_market_pricing
+        (source, meeting_ticker, snapshot_ts, modal_rate_pct, modal_prob, distribution, payload_bytes)
+        VALUES
+        ('kalshi_fed', :meeting_ticker, :snapshot_ts, :modal_rate_pct, :modal_prob,
+         CAST(:distribution AS JSONB), :payload_bytes)
+    """)
+    params = {
+        "meeting_ticker": snap.meeting_ticker,
+        "snapshot_ts": snap.snapshot_ts,
+        "modal_rate_pct": snap.modal_rate_pct,
+        "modal_prob": snap.modal_prob,
+        "distribution": json.dumps(snap.distribution),
+        "payload_bytes": snap.payload_bytes or None,
+    }
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(sql, params)
+        return True
+    except Exception as e:
+        logger.error(f"record_kalshi_snapshot failed for {snap.meeting_ticker}: {e}")
         return False
 
 
