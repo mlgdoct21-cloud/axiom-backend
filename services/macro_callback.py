@@ -254,10 +254,43 @@ async def _stocks_payload(event_id: str) -> str:
     return "\n".join(lines)
 
 
-async def handle_callback(callback_query_id: str, chat_id, data: str) -> None:
+_FREE_CALLBACK_TEASER = (
+    "🔒 <b>Bu özellik PREMIUM/ADVANCE üyelere özel.</b>\n\n"
+    "📊 Tarihsel kıyaslama grafiği + 💼 etkilenen hisseler listesi\n"
+    "anlık makro yayını + dashboard tam erişimle birlikte gelir.\n\n"
+    "💎 PREMIUM — $2/ay  ·  🚀 ADVANCE — $5/ay\n"
+    "Yükseltmek için: /upgrade"
+)
+
+
+async def _user_tier(user_id) -> str:
+    """Look up the caller's tier from users.tier. Defaults to 'free' for
+    unknown users — a strict fail-closed default keeps the gate honest."""
+    if user_id is None:
+        return "free"
+    try:
+        async with engine.begin() as conn:
+            row = (await conn.execute(
+                text("SELECT tier FROM users WHERE telegram_id = :tid"),
+                {"tid": str(user_id)},
+            )).first()
+            if row is None or row[0] is None:
+                return "free"
+            return str(row[0]).lower()
+    except Exception as e:
+        logger.warning(f"_user_tier lookup failed for {user_id}: {e}")
+        return "free"
+
+
+async def handle_callback(callback_query_id: str, chat_id, data: str, *, user_id=None) -> None:
     """Route a macro_* callback to the matching payload builder + reply.
     Always acknowledges the callback so the Telegram spinner clears.
     Rate-limited per chat_id; result cached per callback_data.
+
+    Tier guard: macro_hist / macro_stocks reveal premium-only enrichment
+    (history chart + impacted-stock tickers). Free users get a teaser that
+    points them at /upgrade. user_id falls back to chat_id for private
+    chats where they're identical.
     """
     try:
         if ":" not in data:
@@ -266,6 +299,12 @@ async def handle_callback(callback_query_id: str, chat_id, data: str) -> None:
         if _rate_limited(chat_id):
             logger.debug(f"rate-limited callback from chat={chat_id}")
             answer_callback_query(callback_query_id)
+            return
+
+        # Tier gate — both inline-keyboard buttons are paid features.
+        tier = await _user_tier(user_id if user_id is not None else chat_id)
+        if tier == "free":
+            await asyncio.to_thread(send_telegram_message, chat_id, _FREE_CALLBACK_TEASER)
             return
 
         prefix, event_id = data.split(":", 1)
