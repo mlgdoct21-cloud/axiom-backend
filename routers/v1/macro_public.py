@@ -272,17 +272,20 @@ async def _fetch_paired_core(conn, headline) -> Optional[dict]:
 async def latest_release(response: Response):
     """Single most-recent release that has a narrative_md filled in.
 
-    Sort intent: a rich CPI/NFP narrative ("Önceki dönem 327.46 iken bu dönem
-    330.293 geldi…") is more useful than a bare fed_rss title even if the
-    fed_rss row is more recent. So we rank `actual_value IS NOT NULL` rows
-    first, then by recency. 180-day window prevents an ancient rich row from
-    sticking forever; FRED's `released_at` stores the observation-period start
-    (e.g. March CPI sits on 2026-03-01) not the publication date, so a tight
-    60-day window would falsely exclude perfectly fresh prints.
+    Sort intent: "most recently broadcast" wins. Multiple sibling releases
+    share the same released_at (FRED stores observation-period start, e.g.
+    NFP, CPI, PCE for March all sit on 2026-03-01); without a broadcast
+    timestamp, /macro/latest was tied on released_at and fell back to
+    created_at, so a PCE row whose narrative was regenerated on probe could
+    outrank a freshly-broadcast NFP. `last_broadcast_at` is bumped at the
+    top of macro_broadcaster.broadcast_release so any re-send promotes the
+    row to the top of this list. Coalesce to created_at for legacy rows
+    that were ingested before the column existed.
 
-    Returns 200 with `release: null` rather than 404 when there's nothing yet,
-    so the dashboard chip can render an "Henüz yeni release yok" state without
-    triggering an error path.
+    180-day window prevents an ancient rich row from sticking forever.
+    Returns 200 with `release: null` rather than 404 when there's nothing
+    yet, so the dashboard chip can render an "Henüz yeni release yok" state
+    without triggering an error path.
     """
     response.headers["Cache-Control"] = _CACHE_HEADER
     sql = text(f"""
@@ -292,8 +295,8 @@ async def latest_release(response: Response):
           AND released_at >= NOW() - INTERVAL '180 days'
           AND event_type NOT LIKE 'CORE_%'
         ORDER BY (actual_value IS NOT NULL) DESC,
-                 released_at DESC NULLS LAST,
-                 created_at DESC
+                 COALESCE(last_broadcast_at, created_at) DESC,
+                 released_at DESC NULLS LAST
         LIMIT 1
     """)
     async with engine.begin() as conn:

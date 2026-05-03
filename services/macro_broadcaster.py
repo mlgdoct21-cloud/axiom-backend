@@ -504,6 +504,17 @@ async def broadcast_release(event_id: str) -> dict:
     paid_users = [u for u in all_users if (getattr(u, "tier", "free") or "free").lower() != "free"]
     free_users = [u for u in all_users if (getattr(u, "tier", "free") or "free").lower() == "free"]
 
+    # Stamp before fan-out so /macro/latest reflects the broadcast even if
+    # all sends fail (the *intent* to broadcast is what users see).
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("UPDATE macro_releases SET last_broadcast_at = NOW() WHERE event_id = :eid"),
+                {"eid": event_id},
+            )
+    except Exception as e:
+        logger.warning(f"macro broadcast: last_broadcast_at update failed for {event_id}: {e}")
+
     sent, failed = await _fanout(base_message, paid_users, event_id)
     logger.info(
         f"📣 macro broadcast {event_id} [PAID instant]: "

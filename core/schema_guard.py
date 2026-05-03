@@ -217,6 +217,17 @@ _POSTGRES_GUARDS = [
         "users.tier",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS tier VARCHAR(20) NOT NULL DEFAULT 'free'",
     ),
+    # alembic 009 — macro release broadcast timestamp. /macro/latest needs to
+    # sort by this so a freshly-broadcast NFP outranks a PCE row whose
+    # narrative was regenerated on probe but whose Telegram fan-out is older.
+    (
+        "macro_releases.last_broadcast_at",
+        "ALTER TABLE macro_releases ADD COLUMN IF NOT EXISTS last_broadcast_at TIMESTAMPTZ",
+    ),
+    (
+        "macro_releases.last_broadcast_at backfill",
+        "UPDATE macro_releases SET last_broadcast_at = created_at WHERE last_broadcast_at IS NULL",
+    ),
 ]
 
 
