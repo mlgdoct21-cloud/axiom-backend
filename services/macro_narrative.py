@@ -200,9 +200,15 @@ def _format_clause(payload: dict) -> str:
             "<after_market.modal_prob> olasılıkla bekleniyor.\" Ardından bir "
             "cümlede mekanizmayı özetle (≤30 kelime)."
         )
-    if et in ("CPI", "NFP", "PCE") and payload.get("prior") is not None and payload.get("actual") is not None:
+    if et in ("CPI", "PCE", "CORE_CPI", "CORE_PCE") and payload.get("mom_pct") is not None:
         return (
-            "Format: \"Önceki dönem <prior> iken bu dönem <actual> geldi.\" "
+            "Format: \"Aylık değişim <mom_pct>% (önceki endeks <prior>, mevcut <actual>).\" "
+            "Ardından bir cümlede yön + mekanizma (≤30 kelime). "
+            "\"Piyasa beklentisi\" ifadesi KULLANMA — INPUT'ta beklenti yok."
+        )
+    if et == "NFP" and payload.get("prior") is not None and payload.get("actual") is not None:
+        return (
+            "Format: \"Önceki ay <prior> iken bu ay <actual> kişi geldi.\" "
             "Ardından bir cümlede yön + mekanizma (≤30 kelime). "
             "\"Piyasa beklentisi\" ifadesi KULLANMA — INPUT'ta beklenti yok."
         )
@@ -328,14 +334,23 @@ async def generate_narrative(event_id: str) -> NarrativeResult:
             before_after_meeting, release.get("released_at"),
         )
 
+    actual_f = float(release["actual_value"]) if release.get("actual_value") is not None else None
+    prior_f = float(release["prior_value"]) if release.get("prior_value") is not None else None
+    mom_pct = None
+    if actual_f is not None and prior_f is not None and prior_f != 0:
+        mom_pct = round((actual_f - prior_f) / abs(prior_f) * 100, 2)
     payload: dict = {
         "event_id": event_id,
         "event_type": release.get("event_type"),
         "category": category,
         "released_at": release.get("released_at").isoformat() if release.get("released_at") else None,
-        "actual": float(release["actual_value"]) if release.get("actual_value") is not None else None,
-        "prior": float(release["prior_value"]) if release.get("prior_value") is not None else None,
+        "actual": actual_f,
+        "prior": prior_f,
     }
+    if mom_pct is not None and (release.get("event_type") or "").upper() in (
+        "CPI", "PCE", "CORE_CPI", "CORE_PCE",
+    ):
+        payload["mom_pct"] = mom_pct
     if before:
         payload["before_market"] = {
             "modal_rate_pct": float(before["modal_rate_pct"]) if before.get("modal_rate_pct") is not None else None,
@@ -349,7 +364,7 @@ async def generate_narrative(event_id: str) -> NarrativeResult:
 
     # Build the validator whitelist from every numeric value we fed in.
     allowed_inputs: list = [
-        payload.get("actual"), payload.get("prior"),
+        payload.get("actual"), payload.get("prior"), payload.get("mom_pct"),
     ]
     for key in ("before_market", "after_market"):
         if key in payload:

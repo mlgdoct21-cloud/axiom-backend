@@ -28,15 +28,25 @@ router = APIRouter(prefix="/macro", tags=["macro"])
 _CACHE_HEADER = "public, max-age=60, stale-while-revalidate=120"
 
 
+_PCT_DELTA_EVENTS = frozenset({"CPI", "PCE", "CORE_CPI", "CORE_PCE"})
+
+
 def _row_to_release(r) -> dict:
+    actual = float(r["actual_value"]) if r["actual_value"] is not None else None
+    prior = float(r["prior_value"]) if r["prior_value"] is not None else None
+    et = (r["event_type"] or "").upper()
+    mom_pct: Optional[float] = None
+    if et in _PCT_DELTA_EVENTS and actual is not None and prior is not None and prior != 0:
+        mom_pct = round((actual - prior) / abs(prior) * 100, 2)
     return {
         "event_id": r["event_id"],
         "event_type": r["event_type"],
         "country": r["country"],
         "source": r["source"],
         "released_at": r["released_at"].isoformat() if r["released_at"] else None,
-        "actual_value": float(r["actual_value"]) if r["actual_value"] is not None else None,
-        "prior_value": float(r["prior_value"]) if r["prior_value"] is not None else None,
+        "actual_value": actual,
+        "prior_value": prior,
+        "mom_pct": mom_pct,
         "narrative_md": r["narrative_md"],
         "sentiment_score": float(r["sentiment_score"]) if r["sentiment_score"] is not None else None,
         "source_url": r["source_url"],

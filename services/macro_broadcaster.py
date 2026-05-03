@@ -25,6 +25,7 @@ from sqlalchemy.future import select
 from core.database import AsyncSessionLocal, engine
 from core.logger import get_logger
 from models.user import User
+from services.macro_sources.sector_labels import label_tr
 from services.telegram_bot import send_telegram_message
 
 logger = get_logger("macro.broadcaster")
@@ -67,6 +68,58 @@ def _sentiment_chip(score: Optional[float]) -> str:
 
 _GAUGE_CELLS = 8
 
+# Event types where actual/prior are price indices and MoM% is the headline
+# reading. NFP is jobs added (raw count); FOMC has no actual_value at all.
+_PCT_DELTA_EVENTS = frozenset({"CPI", "PCE", "CORE_CPI", "CORE_PCE"})
+
+# Turkish month names indexed 1..12 — date.strftime("%B") gives English in
+# the Railway container regardless of locale config, and we want a clean
+# "Mart 2026" without yanking the locale module.
+_TR_MONTHS = [
+    "", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+    "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık",
+]
+
+
+def _mom_pct(actual: Optional[float], prior: Optional[float]) -> Optional[float]:
+    """Compute month-on-month % change. Returns None when not computable."""
+    if actual is None or prior is None:
+        return None
+    try:
+        a = float(actual)
+        p = float(prior)
+    except (TypeError, ValueError):
+        return None
+    if p == 0:
+        return None
+    return (a - p) / abs(p) * 100.0
+
+
+def _format_period(released_at) -> Optional[str]:
+    """'Mart 2026' from a released_at date (or None)."""
+    if released_at is None:
+        return None
+    month = getattr(released_at, "month", None)
+    year = getattr(released_at, "year", None)
+    if not month or not year:
+        return None
+    return f"{_TR_MONTHS[month]} {year}"
+
+
+def _render_headline_metric(release: dict) -> Optional[str]:
+    """For % event types, render 'Mart 2026 MoM +0.87%'. None otherwise."""
+    et = (release.get("event_type") or "").upper()
+    if et not in _PCT_DELTA_EVENTS:
+        return None
+    pct = _mom_pct(release.get("actual_value"), release.get("prior_value"))
+    if pct is None:
+        return None
+    period = _format_period(release.get("released_at")) or ""
+    sign = "+" if pct >= 0 else ""
+    if period:
+        return f"📈 {period} MoM <b>{sign}{pct:.2f}%</b>"
+    return f"📈 MoM <b>{sign}{pct:.2f}%</b>"
+
 
 def _render_gauge(score: Optional[float]) -> Optional[str]:
     """ASCII gauge for a 0..1 sentiment score: ━━━●━━━━ 0.42.
@@ -85,8 +138,8 @@ def _render_sectors(positive, negative) -> Optional[str]:
     """Two-line sector chip block. Returns None when both lists are empty.
     Inputs may be JSON strings (Postgres JSONB round-tripped) or lists.
     """
-    pos = _coerce_list(positive)
-    neg = _coerce_list(negative)
+    pos = [label_tr(s) for s in _coerce_list(positive)]
+    neg = [label_tr(s) for s in _coerce_list(negative)]
     if not pos and not neg:
         return None
     lines = []
@@ -127,9 +180,12 @@ def _format_message(release: dict) -> str:
 
     parts = [
         f"{emoji} <b>{html.escape(headline)}</b>",
-        "",
-        html.escape(narrative),
     ]
+    metric = _render_headline_metric(release)
+    if metric:
+        parts.append(metric)
+    parts.append("")
+    parts.append(html.escape(narrative))
     if sectors:
         parts.append("")
         parts.append(sectors)
@@ -160,6 +216,7 @@ def _to_float(v) -> Optional[float]:
 async def _load_release(event_id: str) -> Optional[dict]:
     sql = text("""
         SELECT event_id, event_type, source, released_at,
+               actual_value, prior_value,
                narrative_md, sentiment_score, source_url,
                sectors_positive, sectors_negative
         FROM macro_releases WHERE event_id = :eid
