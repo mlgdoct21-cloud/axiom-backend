@@ -11,17 +11,16 @@ Deltas (%, %, bp) are computed at read time inside macro_public so the
 DB stores raw quotes only. This keeps schema dumb and lets us tweak the
 display formula without a backfill.
 
-FMP_API_KEY is shared with the existing fmp_service / etf_flow_scheduler
-wiring (no new env). All errors are swallowed — if FMP is briefly down
-or the price symbol changes, the reaction line just doesn't render.
+Quote source: yfinance — Yahoo's index symbols (^DXY, ^TNX) are free and
+intraday, while FMP /stable/quote rejects index tickers on free tier.
+yfinance is already in requirements (used by daily_digest VIX + BIST).
 """
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import Optional
 
-import httpx
+import yfinance as yf
 from sqlalchemy import text
 
 from core.database import engine
@@ -29,43 +28,41 @@ from core.logger import get_logger
 
 logger = get_logger("macro.market_reaction")
 
-# FMP /stable/quote symbols. Index-style tickers vary in FMP support so we
-# try the caret form first and fall back to the bare ticker / common
-# alternatives — this keeps the line lit even if FMP rotates which form
-# they accept.
-_DXY_CANDIDATES = ("^DXY", "DXY", "DX-Y.NYB", "USDX")
-_SPY_CANDIDATES = ("SPY",)
-_US10Y_CANDIDATES = ("^TNX", "TNX", "US10Y")
-
-_FMP_QUOTE_URL = "https://financialmodelingprep.com/stable/quote"
-_HTTP_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
+# Yahoo Finance ticker symbols. ^DXY and ^TNX work on the free tier.
+_DXY_SYMBOL = "DX-Y.NYB"  # primary
+_DXY_FALLBACKS = ("^DXY",)
+_SPY_SYMBOL = "SPY"
+_US10Y_SYMBOL = "^TNX"  # CBOE 10-Year Treasury Yield Index, value in %
 
 # Offsets we capture. Add T+30 / T+60 here later if useful.
 _SNAPSHOT_OFFSETS = (0, 300)
 
 
-async def _fetch_quote(client: httpx.AsyncClient, symbol: str, api_key: str) -> Optional[float]:
+def _yf_latest(symbol: str) -> Optional[float]:
+    """Latest minute-bar close price for a Yahoo Finance ticker. Synchronous —
+    callers wrap in asyncio.to_thread.
+    """
     try:
-        r = await client.get(_FMP_QUOTE_URL, params={"symbol": symbol, "apikey": api_key})
-        if r.status_code != 200:
-            logger.debug(f"market reaction quote {symbol} HTTP {r.status_code}")
+        ticker = yf.Ticker(symbol)
+        # 1-day intraday at 1-min resolution gives us the freshest tick.
+        hist = ticker.history(period="1d", interval="1m")
+        if hist.empty:
+            # Markets closed / symbol stale — fall back to daily close.
+            hist = ticker.history(period="5d", interval="1d")
+            if hist.empty:
+                return None
+        price = float(hist["Close"].iloc[-1])
+        if not price or price != price:  # NaN guard
             return None
-        body = r.json()
-        if isinstance(body, list) and body:
-            price = body[0].get("price")
-            if price is not None and price != 0:
-                return float(price)
+        return price
     except Exception as e:
-        logger.debug(f"market reaction quote {symbol} failed: {e}")
-    return None
+        logger.debug(f"yf {symbol} failed: {e}")
+        return None
 
 
-async def _fetch_quote_first_match(
-    client: httpx.AsyncClient, candidates: tuple, api_key: str,
-) -> Optional[float]:
-    """Try each candidate symbol in order; return the first non-null price."""
+def _yf_first_match(candidates: tuple) -> Optional[float]:
     for sym in candidates:
-        price = await _fetch_quote(client, sym, api_key)
+        price = _yf_latest(sym)
         if price is not None:
             return price
     return None
@@ -73,17 +70,13 @@ async def _fetch_quote_first_match(
 
 async def _capture_snapshot(event_id: str, t_offset_seconds: int) -> bool:
     """Take one DXY/SPY/US10Y snapshot for the given event and persist."""
-    api_key = os.getenv("FMP_API_KEY", "").strip()
-    if not api_key:
-        logger.debug("FMP_API_KEY missing — market reaction skipped")
-        return False
-    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-        dxy, spy, us10y = await asyncio.gather(
-            _fetch_quote_first_match(client, _DXY_CANDIDATES, api_key),
-            _fetch_quote_first_match(client, _SPY_CANDIDATES, api_key),
-            _fetch_quote_first_match(client, _US10Y_CANDIDATES, api_key),
-        )
+    dxy, spy, us10y = await asyncio.gather(
+        asyncio.to_thread(_yf_first_match, (_DXY_SYMBOL,) + _DXY_FALLBACKS),
+        asyncio.to_thread(_yf_latest, _SPY_SYMBOL),
+        asyncio.to_thread(_yf_latest, _US10Y_SYMBOL),
+    )
     if dxy is None and spy is None and us10y is None:
+        logger.warning(f"market reaction T+{t_offset_seconds} all None for {event_id}")
         return False
     sql = text("""
         INSERT INTO macro_release_market_snapshots
@@ -118,8 +111,6 @@ async def capture_reaction(event_id: str) -> None:
         await _capture_snapshot(event_id, 0)
     except Exception as e:
         logger.error(f"capture_reaction T+0 crashed for {event_id}: {e}")
-    # T+5 with a sleep — keep this in the same task; if the worker dies
-    # mid-sleep we just lose the second snapshot.
     try:
         await asyncio.sleep(_SNAPSHOT_OFFSETS[1])
         await _capture_snapshot(event_id, _SNAPSHOT_OFFSETS[1])
