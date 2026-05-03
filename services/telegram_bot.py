@@ -105,6 +105,27 @@ def send_message_with_keyboard(chat_id, text, keyboard):
     except Exception as e:
         logger.error(f"Baglanti Hatasi: {e}")
 
+def send_telegram_photo(chat_id, photo_bytes: bytes, caption: str = "") -> bool:
+    """Upload a PNG (in memory) via multipart sendPhoto, optional HTML caption.
+    Returns True on 200, False otherwise — callers fall back to a text message.
+    """
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+    files = {"photo": ("chart.png", photo_bytes, "image/png")}
+    data = {"chat_id": str(chat_id), "parse_mode": "HTML"}
+    if caption:
+        # Telegram caps captions at 1024 chars; trim defensively.
+        data["caption"] = caption[:1000]
+    try:
+        r = requests.post(url, data=data, files=files, timeout=20)
+        if r.status_code != 200:
+            logger.warning(f"sendPhoto Hatasi: {r.text}")
+            return False
+        return True
+    except Exception as e:
+        logger.error(f"sendPhoto Baglanti Hatasi: {e}")
+        return False
+
+
 def answer_callback_query(callback_query_id):
     """Callback sorguya boş yanıt verir (yükleniyor ikonunu kaldırır)."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery"

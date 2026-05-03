@@ -43,6 +43,10 @@ yfinance==0.2.40
 pandas==2.2.0
 numpy==1.26.4
 
+# Macro inline-keyboard charts — rendered server-side as PNG and uploaded
+# via Telegram sendPhoto. Headless (Agg backend) on Railway.
+matplotlib==3.8.4
+
 # Technical Analysis (Phase 2.2) - Install when TradingView API available
 # pandas-ta==0.3.14b0
 # mplfinance==0.12.9

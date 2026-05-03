@@ -11,6 +11,8 @@ broadcast stays intact and users can drill in multiple times.
 Two protections against spam / accidental re-clicks:
 - Per-(callback_data) result cache, 60s TTL — same DB query isn't repeated
   if 100 users mash the button at once after a broadcast.
+  (Only the text fallback path is cached; sendPhoto re-uploads the PNG so
+  Telegram CDN can dedupe on its side without us holding raw bytes in RAM.)
 - Per-chat_id rate-limit, 1 callback every 3s — keeps a single user from
   firing rapid repeats that would still pass through to FRED/Telegram.
 """
@@ -33,7 +35,17 @@ from services.macro_sources.sector_labels import (
 from services.telegram_bot import (
     answer_callback_query,
     send_telegram_message,
+    send_telegram_photo,
 )
+
+# matplotlib is heavy; if pip install fails or the import errors, fall back
+# silently to the text variant rather than crashing the whole callback module.
+try:
+    from services.macro_chart import render_history_chart
+    _CHART_OK = True
+except Exception as _chart_import_err:  # pragma: no cover
+    render_history_chart = None  # type: ignore
+    _CHART_OK = False
 
 logger = get_logger("macro.callback")
 
@@ -110,24 +122,34 @@ def _fmt_period(released_at) -> str:
         return "?"
 
 
-async def _hist_payload(event_id: str) -> str:
-    """Build the 'Tarihsel kıyaslama' reply text for one event_id."""
-    parts = event_id.split(":")
-    if len(parts) < 3 or parts[0] != "fred":
-        return "Bu release için tarihsel veri yok."
-    et = parts[1]
+_HIST_CHART_MONTHS = 14  # chart variant gets a wider window than the text fallback
+
+
+async def _hist_rows(event_type: str, source: str, limit: int) -> list[dict]:
     sql = text("""
         SELECT released_at, actual_value, prior_value
         FROM macro_releases
-        WHERE event_type = :et AND source = 'fred' AND actual_value IS NOT NULL
+        WHERE event_type = :et AND source = :src AND actual_value IS NOT NULL
         ORDER BY released_at DESC
         LIMIT :limit
     """)
     async with engine.begin() as conn:
-        rows = (await conn.execute(sql, {"et": et, "limit": _HIST_MONTHS})).mappings().all()
+        rows = (await conn.execute(sql, {
+            "et": event_type, "src": source, "limit": limit,
+        })).mappings().all()
+    return [dict(r) for r in reversed(rows)]  # oldest first
+
+
+async def _hist_payload(event_id: str) -> str:
+    """Text-only 'Tarihsel kıyaslama' reply, used as the fallback when the
+    chart render or sendPhoto upload fails."""
+    parts = event_id.split(":")
+    if len(parts) < 3 or parts[0] != "fred":
+        return "Bu release için tarihsel veri yok."
+    et = parts[1]
+    rows = await _hist_rows(et, "fred", _HIST_MONTHS)
     if not rows:
         return f"{et} için tarihsel veri bulunamadı."
-    rows = list(reversed(rows))  # oldest first
     lines = [f"📊 <b>{html.escape(et)} — son {_HIST_MONTHS} ay</b>", ""]
     for i, r in enumerate(rows):
         actual = float(r["actual_value"]) if r["actual_value"] is not None else None
@@ -142,6 +164,25 @@ async def _hist_payload(event_id: str) -> str:
         marker = " ← bu ay" if i == len(rows) - 1 else ""
         lines.append(f"  {html.escape(period)}: <b>{val}</b>{marker}")
     return "\n".join(lines)
+
+
+async def _hist_chart(event_id: str) -> Optional[tuple[bytes, str]]:
+    """Render the chart variant. Returns (png_bytes, caption_html) on success
+    or None when matplotlib is unavailable / event_id unsupported / not
+    enough data / render raised. Caller falls back to _hist_payload text."""
+    if not _CHART_OK or render_history_chart is None:
+        return None
+    parts = event_id.split(":")
+    if len(parts) < 3 or parts[0] != "fred":
+        return None
+    et = parts[1]
+    rows = await _hist_rows(et, "fred", _HIST_CHART_MONTHS)
+    if not rows:
+        return None
+    png, caption = render_history_chart(et, rows)
+    if png is None:
+        return None
+    return png, caption
 
 
 async def _stocks_payload(event_id: str) -> str:
@@ -210,21 +251,34 @@ async def handle_callback(callback_query_id: str, chat_id, data: str) -> None:
             answer_callback_query(callback_query_id)
             return
 
-        cached = _cache_get(data)
-        if cached is not None:
-            await asyncio.to_thread(send_telegram_message, chat_id, cached)
-            return
-
         prefix, event_id = data.split(":", 1)
         if prefix == "macro_hist":
+            # Chart variant first; falls through to text on render/upload failure.
+            chart = await _hist_chart(event_id)
+            if chart is not None:
+                png, caption = chart
+                ok = await asyncio.to_thread(send_telegram_photo, chat_id, png, caption)
+                if ok:
+                    return
+                # If sendPhoto failed (Telegram side), fall back to text below.
+            cached = _cache_get(data)
+            if cached is not None:
+                await asyncio.to_thread(send_telegram_message, chat_id, cached)
+                return
             text_out = await _hist_payload(event_id)
+            _cache_put(data, text_out)
+            await asyncio.to_thread(send_telegram_message, chat_id, text_out)
         elif prefix == "macro_stocks":
+            cached = _cache_get(data)
+            if cached is not None:
+                await asyncio.to_thread(send_telegram_message, chat_id, cached)
+                return
             text_out = await _stocks_payload(event_id)
+            _cache_put(data, text_out)
+            await asyncio.to_thread(send_telegram_message, chat_id, text_out)
         else:
             answer_callback_query(callback_query_id)
             return
-        _cache_put(data, text_out)
-        await asyncio.to_thread(send_telegram_message, chat_id, text_out)
     except Exception as e:
         logger.error(f"handle_callback failed for {data}: {e}")
     finally:
