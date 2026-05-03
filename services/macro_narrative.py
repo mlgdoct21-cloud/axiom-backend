@@ -157,7 +157,48 @@ def _categorise(release: dict) -> Optional[str]:
 
 # ---------- Gemini call ----------
 
+# Event types where Kalshi rate-distribution before/after snapshots make sense
+# (markets repricing the meeting outcome). For CPI/NFP/PCE the meeting-rate
+# distribution doesn't track the print's expectation, so we suppress those.
+_FOMC_EVENT_TYPES = frozenset({
+    "FOMC_STATEMENT", "FOMC_MINUTES", "FOMC_PROJECTIONS", "RATE_DECISION",
+})
+
+
+def _format_clause(payload: dict) -> str:
+    """Pick the narrative opening that matches the data we actually have.
+
+    - FOMC + Kalshi before/after present → "Piyasa önce X bekliyordu, ŞİMDİ Y"
+      (X = before_market.modal_rate_pct, Y = after_market.modal_rate_pct)
+    - FRED CPI/NFP with prior + actual → "Önceki ay X iken bu ay Y geldi"
+    - FOMC without snapshots → "Fed bugün <event_type> yayınladı. Mekanizma: ..."
+    """
+    et = (payload.get("event_type") or "").upper()
+    has_ba = "before_market" in payload and "after_market" in payload
+
+    if et in _FOMC_EVENT_TYPES and has_ba:
+        return (
+            "Format: \"Piyasa önce <before_market.modal_rate_pct>% modal oranı "
+            "<before_market.modal_prob> olasılıkla bekliyordu; ŞİMDİ "
+            "<after_market.modal_rate_pct>% modal oranı "
+            "<after_market.modal_prob> olasılıkla bekleniyor.\" Ardından bir "
+            "cümlede mekanizmayı özetle (≤30 kelime)."
+        )
+    if et in ("CPI", "NFP", "PCE") and payload.get("prior") is not None and payload.get("actual") is not None:
+        return (
+            "Format: \"Önceki dönem <prior> iken bu dönem <actual> geldi.\" "
+            "Ardından bir cümlede yön + mekanizma (≤30 kelime). "
+            "\"Piyasa beklentisi\" ifadesi KULLANMA — INPUT'ta beklenti yok."
+        )
+    # FOMC without before/after (or unknown shape): factual + mechanism only.
+    return (
+        "Format: \"Fed bugün <event_type> yayınladı.\" Ardından bir cümlede "
+        "mekanizmayı özetle (≤30 kelime). Sayı yazma — INPUT'ta numeric yok."
+    )
+
+
 def _build_prompt(payload: dict, impact: SectorImpact) -> str:
+    format_clause = _format_clause(payload)
     return (
         "Sen makro analist asistanısın. Aşağıdaki JSON release verisini oku ve "
         "**sadece geçerli bir JSON** döndür. Hiçbir açıklama, markdown veya "
@@ -165,8 +206,8 @@ def _build_prompt(payload: dict, impact: SectorImpact) -> str:
         f"INPUT:\n{json.dumps(payload, ensure_ascii=False, indent=2, default=str)}\n\n"
         "ÇIKTI ŞEMASI (zorunlu):\n"
         "{\n"
-        '  "narrative_md": "≤80 kelime, Türkçe, format: \\"Piyasa önce X bekliyordu, ŞİMDİ Y bekliyor\\". '
-        "Sayılar SADECE INPUT'ta geçen değerlerden olmalı; sayı uydurma. Tek paragraf.\",\n"
+        f'  "narrative_md": "≤80 kelime, Türkçe, tek paragraf. {format_clause} '
+        "Sayılar SADECE INPUT'ta geçen değerlerden olmalı; sayı uydurma.\",\n"
         '  "sentiment_score": 0..1 ondalık (1 = çok bullish/dovish risk varlıklarına, 0 = çok bearish/hawkish),\n'
         f'  "sectors_negative": [bu listenin alt kümesi: {list(impact.sectors_negative)}],\n'
         f'  "sectors_positive": [bu listenin alt kümesi: {list(impact.sectors_positive)}]\n'
@@ -175,7 +216,8 @@ def _build_prompt(payload: dict, impact: SectorImpact) -> str:
         "1. narrative_md içindeki HER sayı INPUT JSON'da geçen bir sayı olmalı.\n"
         "2. sectors_* listelerindeki her isim YUKARIDA verilen listeden seçilmiş olmalı.\n"
         "3. Türkçe yaz; emoji veya markdown sembolü kullanma.\n"
-        "4. Çıktı sadece JSON. Hiçbir ek metin ekleme.\n"
+        "4. \"Piyasa bekliyordu\" tarzı ifadeyi YALNIZCA INPUT'ta before_market/after_market varsa kullan.\n"
+        "5. Çıktı sadece JSON. Hiçbir ek metin ekleme.\n"
     )
 
 
@@ -250,23 +292,25 @@ async def generate_narrative(event_id: str) -> NarrativeResult:
         result.rejection_reason = f"category {category} missing in sector map"
         return result
 
-    # Best-effort market snapshots: only meaningful when an open KXFED meeting
-    # is "linked" to the release. v0: try the next-meeting ticker globally, and
-    # let the LLM omit before/after if we couldn't supply both.
-    before_after_meeting = None
-    try:
-        async with engine.begin() as conn:
-            row = (await conn.execute(text(
-                "SELECT meeting_ticker FROM macro_market_pricing "
-                "ORDER BY snapshot_ts DESC LIMIT 1"
-            ))).mappings().first()
-        before_after_meeting = row["meeting_ticker"] if row else None
-    except Exception as e:
-        logger.debug(f"no kalshi snapshot lookup: {e}")
-
-    before, after = await _load_market_snapshots(
-        before_after_meeting, release.get("released_at"),
-    ) if release.get("released_at") else (None, None)
+    # Kalshi rate-distribution snapshots are only semantically valid for FOMC
+    # events — for CPI/NFP/PCE, the meeting-rate distribution does NOT track
+    # the print's expectation. Suppress before/after for non-FOMC.
+    et_upper = (release.get("event_type") or "").upper()
+    before, after = (None, None)
+    if et_upper in _FOMC_EVENT_TYPES and release.get("released_at"):
+        before_after_meeting = None
+        try:
+            async with engine.begin() as conn:
+                row = (await conn.execute(text(
+                    "SELECT meeting_ticker FROM macro_market_pricing "
+                    "ORDER BY snapshot_ts DESC LIMIT 1"
+                ))).mappings().first()
+            before_after_meeting = row["meeting_ticker"] if row else None
+        except Exception as e:
+            logger.debug(f"no kalshi snapshot lookup: {e}")
+        before, after = await _load_market_snapshots(
+            before_after_meeting, release.get("released_at"),
+        )
 
     payload: dict = {
         "event_id": event_id,
