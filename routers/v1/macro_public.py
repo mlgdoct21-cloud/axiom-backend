@@ -341,6 +341,40 @@ async def recent_releases(
     }
 
 
+@router.get("/upcoming")
+async def upcoming(
+    response: Response,
+    days: int = Query(30, ge=1, le=180),
+    limit: int = Query(6, ge=1, le=50),
+):
+    """Next N events from the merged calendar (FRED release/dates + manual
+    YAML for FOMC). Drives the dashboard's 'Sırada' chip — no auth.
+
+    Cache-Control is short (5 min) — calendar is stable, but we want a
+    fresh read after admin /calendar/refresh.
+    """
+    response.headers["Cache-Control"] = "public, max-age=300, stale-while-revalidate=600"
+    from services.macro_calendar import upcoming_events
+    now = datetime.now(timezone.utc)
+    events = await upcoming_events(now, days=days)
+    # Filter to strictly-future (drop the post-release tail that the
+    # admin endpoint includes). Cap to `limit`.
+    future = [e for e in events if e.scheduled_at >= now][:limit]
+    return {
+        "now": now.isoformat(),
+        "count": len(future),
+        "events": [
+            {
+                "event_type": e.event_type,
+                "label": e.label,
+                "scheduled_at": e.scheduled_at.isoformat(),
+                "sources_to_accelerate": list(e.sources_to_accelerate),
+            }
+            for e in future
+        ],
+    }
+
+
 @router.get("/history/{event_type}")
 async def history(
     event_type: str,
