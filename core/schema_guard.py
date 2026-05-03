@@ -228,6 +228,19 @@ _POSTGRES_GUARDS = [
         "macro_releases.last_broadcast_at backfill",
         "UPDATE macro_releases SET last_broadcast_at = created_at WHERE last_broadcast_at IS NULL",
     ),
+    # alembic 010 — Stripe billing handles on users.
+    (
+        "users.stripe_customer_id",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(64)",
+    ),
+    (
+        "users.stripe_subscription_id",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id VARCHAR(64)",
+    ),
+    (
+        "users.subscription_status",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(32)",
+    ),
 ]
 
 

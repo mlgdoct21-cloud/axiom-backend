@@ -47,6 +47,11 @@ numpy==1.26.4
 # via Telegram sendPhoto. Headless (Agg backend) on Railway.
 matplotlib==3.8.4
 
+# Stripe billing — /upgrade Telegram command opens a Stripe Checkout
+# session keyed by telegram_id metadata; webhook flips users.tier on
+# subscription.created / .updated / .deleted.
+stripe==9.0.0
+
 # Technical Analysis (Phase 2.2) - Install when TradingView API available
 # pandas-ta==0.3.14b0
 # mplfinance==0.12.9

@@ -582,12 +582,20 @@ async def process_tier_command(chat_id, user_id):
 
 
 async def process_upgrade_command(chat_id, user_id):
-    """Show tier comparison + how to upgrade. Until Stripe billing is wired,
-    upgrades happen via direct admin contact (env: UPGRADE_CONTACT)."""
+    """Show tier comparison + checkout buttons (Stripe) or admin-contact
+    fallback (when Stripe env vars aren't set)."""
     tier = await _get_user_tier(user_id)
     current_label = _TIER_LABELS.get(tier, tier.upper())
-    contact = html.escape(_UPGRADE_CONTACT)
-    msg = (
+
+    # Check if Stripe is configured before building the message; affects the
+    # call-to-action footer + whether we attach the inline keyboard.
+    try:
+        from services.stripe_billing import is_configured as _stripe_configured
+        stripe_ready = _stripe_configured()
+    except Exception:
+        stripe_ready = False
+
+    body = (
         f"💳 <b>Plan Yükseltme</b>\n"
         f"Mevcut planınız: {current_label}\n\n"
 
@@ -604,11 +612,32 @@ async def process_upgrade_command(chat_id, user_id):
         f"  • PREMIUM tüm özellikler\n"
         f"  • Sınırsız /report + /haber\n"
         f"  • Erken yeni özellik erişimi\n\n"
+    )
 
+    if stripe_ready:
+        # Generate both checkout URLs upfront so the buttons are deep links —
+        # one tap takes the user straight to Stripe-hosted checkout in their
+        # mobile browser. Fall back to admin contact for whichever fails.
+        from services.stripe_billing import create_checkout_session
+        premium_res = await create_checkout_session(str(user_id), "premium")
+        advance_res = await create_checkout_session(str(user_id), "advance")
+        keyboard_rows = []
+        if premium_res.url:
+            keyboard_rows.append([{"text": "💎 PREMIUM ($2/ay)", "url": premium_res.url}])
+        if advance_res.url:
+            keyboard_rows.append([{"text": "🚀 ADVANCE ($5/ay)", "url": advance_res.url}])
+        if keyboard_rows:
+            body += "⚡ Aşağıdaki butona tıklayarak güvenli ödeme sayfasına geçebilirsin."
+            send_message_with_keyboard(chat_id, body, {"inline_keyboard": keyboard_rows})
+            return
+        # Both failed — drop through to admin-contact fallback.
+
+    contact = html.escape(_UPGRADE_CONTACT)
+    body += (
         f"⚡ <b>Yükseltmek için</b>: {contact} ile iletişime geçin.\n"
         f"<i>(Otomatik ödeme yakında — Stripe entegrasyonu beta'da.)</i>"
     )
-    send_telegram_message(chat_id, msg)
+    send_telegram_message(chat_id, body)
 
 
 async def process_tags_command(chat_id, user_id):

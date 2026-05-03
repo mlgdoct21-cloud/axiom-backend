@@ -22,6 +22,12 @@ class User(Base):
     # Free → macro broadcasts gated by 5-min delay + watermark prefix.
     # Premium / advance → instant, no watermark.
     tier = Column(String(20), nullable=False, default="free")
+    # Stripe billing handles — populated by services/stripe_billing on the
+    # first checkout session and updated by webhook events. Both nullable
+    # because free-tier users never touch Stripe.
+    stripe_customer_id = Column(String(64), nullable=True)
+    stripe_subscription_id = Column(String(64), nullable=True)
+    subscription_status = Column(String(32), nullable=True)  # active|past_due|canceled|...
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
