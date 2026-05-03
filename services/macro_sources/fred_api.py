@@ -30,6 +30,7 @@ SERIES = {
     "fred_cpi": "CPIAUCSL",        # CPI-U All Items SA, monthly index
     "fred_core_cpi": "CPILFESL",   # CPI-U Less Food & Energy (Core), SA, monthly index
     "fred_nfp": "PAYEMS",          # Total Nonfarm Payrolls SA, thousands
+    "fred_pce": "PCEPI",           # Headline PCE Price Index SA, monthly index
     "fred_core_pce": "PCEPILFE",   # Core PCE Price Index SA, monthly index
 }
 

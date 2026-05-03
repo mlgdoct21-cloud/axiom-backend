@@ -129,6 +129,22 @@ async def trigger_broadcast(
     return await broadcast_release(event_id)
 
 
+@router.post("/reaction/{event_id:path}")
+async def trigger_market_reaction(
+    event_id: str,
+    x_internal_secret: Optional[str] = Header(None),
+):
+    """Force-capture T+0 + T+5min market reaction for an existing release.
+    Useful for: (a) backfilling a release that landed before this feature
+    deployed, (b) debugging FMP wiring. Returns immediately — the actual
+    capture runs as a background task and will write rows when complete.
+    """
+    _check_auth(x_internal_secret)
+    from services.macro_market_reaction import trigger_reaction
+    trigger_reaction(event_id)
+    return {"event_id": event_id, "queued": True, "note": "T+0 immediate, T+5min after 300s"}
+
+
 @router.post("/expected/{event_id:path}")
 async def set_expected(
     event_id: str,

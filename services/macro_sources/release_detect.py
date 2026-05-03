@@ -37,6 +37,7 @@ _FRED_EVENT_TYPE = {
     "fred_cpi": "CPI",
     "fred_core_cpi": "CORE_CPI",
     "fred_nfp": "NFP",
+    "fred_pce": "PCE",
     "fred_core_pce": "CORE_PCE",
 }
 

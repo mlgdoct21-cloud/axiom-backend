@@ -195,6 +195,23 @@ _POSTGRES_GUARDS = [
         "ix_macro_market_pricing_meeting_ts",
         "CREATE INDEX IF NOT EXISTS ix_macro_market_pricing_meeting_ts ON macro_market_pricing(meeting_ticker, snapshot_ts DESC)",
     ),
+    # alembic 007 — market reaction snapshots (DXY/SPY/US10Y T+0 + T+5min).
+    (
+        "macro_release_market_snapshots table",
+        """CREATE TABLE IF NOT EXISTS macro_release_market_snapshots (
+            id BIGSERIAL PRIMARY KEY,
+            event_id VARCHAR(64) NOT NULL,
+            t_offset_seconds INTEGER NOT NULL,
+            dxy NUMERIC(10,4),
+            spy NUMERIC(12,4),
+            us10y NUMERIC(8,4),
+            taken_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )""",
+    ),
+    (
+        "ix_market_snapshots_event_offset",
+        "CREATE INDEX IF NOT EXISTS ix_market_snapshots_event_offset ON macro_release_market_snapshots(event_id, t_offset_seconds)",
+    ),
 ]
 
 

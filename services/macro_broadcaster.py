@@ -200,6 +200,30 @@ def _short_label(et: str) -> str:
     return _SHORT_LABEL.get(et, et)
 
 
+def _render_market_reaction(reaction: Optional[dict]) -> Optional[str]:
+    """'📉 Piyasa tepkisi (T+5dk): DXY +0.4% | SPY -0.6% | US10Y +6bp'.
+    Returns None when neither delta is computable.
+    """
+    if not reaction:
+        return None
+    dxy = reaction.get("dxy_change_pct")
+    spy = reaction.get("spy_change_pct")
+    us10y = reaction.get("us10y_change_bp")
+    if dxy is None and spy is None and us10y is None:
+        return None
+    parts = []
+    if dxy is not None:
+        sign = "+" if dxy >= 0 else ""
+        parts.append(f"DXY {sign}{dxy:.2f}%")
+    if spy is not None:
+        sign = "+" if spy >= 0 else ""
+        parts.append(f"SPY {sign}{spy:.2f}%")
+    if us10y is not None:
+        sign = "+" if us10y >= 0 else ""
+        parts.append(f"US10Y {sign}{us10y:.0f}bp")
+    return f"📉 Piyasa tepkisi (T+5dk): {' | '.join(parts)}"
+
+
 def _render_gauge(score: Optional[float]) -> Optional[str]:
     """ASCII gauge for a 0..1 sentiment score: ━━━●━━━━ 0.42.
     Returns None when there's nothing to render (no score yet).
@@ -272,6 +296,10 @@ def _format_message(release: dict, core: Optional[dict] = None) -> str:
     if sectors:
         parts.append("")
         parts.append(sectors)
+    market_line = _render_market_reaction(release.get("market_reaction"))
+    if market_line:
+        parts.append("")
+        parts.append(f"<i>{market_line}</i>")
     if sentiment or gauge:
         parts.append("")
         if sentiment:
