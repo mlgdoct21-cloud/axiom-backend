@@ -231,8 +231,32 @@ async def process_start_command(chat_id, user_id, username):
     )
     send_telegram_message(chat_id, welcome_msg)
 
+async def _enforce_tier_quota(chat_id, user_id, command: str) -> bool:
+    """Returns True when the user is over today's quota (caller should
+    skip work + the message is already sent)."""
+    from services.tier_quota import check_and_consume
+    tier = await _get_user_tier(user_id)
+    q = check_and_consume(user_id, tier, command)
+    if not q.allowed:
+        upgrade_hint = (
+            "PREMIUM ile günde 30/50, ADVANCE ile sınırsız: /upgrade"
+            if q.tier == "free" else
+            "ADVANCE ile sınırsız: /upgrade"
+        )
+        send_telegram_message(
+            chat_id,
+            f"🛑 Günlük <b>{html.escape(command)}</b> limitiniz doldu "
+            f"({q.used}/{q.limit}).\n\n{upgrade_hint}",
+        )
+        return True
+    return False
+
+
 async def process_haber_command(chat_id, user_id):
     """Anlık haber talebini karşılar."""
+    # Tier quota — Free 10/day, Premium 50/day, Advance unlimited.
+    if await _enforce_tier_quota(chat_id, user_id, "/haber"):
+        return
     # Rate limit kontrolü — her kullanıcı her 30 saniyede bir /haber yapabilir
     remaining = _check_rate_limit(user_id, "/haber", _HEAVY_CMD_COOLDOWN_SEC)
     if remaining is not None:
@@ -432,6 +456,10 @@ async def process_report_command(chat_id, user_id, symbol: str):
         )
         return
 
+    # Tier quota — Free 5/day, Premium 30/day, Advance unlimited.
+    if await _enforce_tier_quota(chat_id, user_id, "/report"):
+        return
+
     # Sembol formatı doğrulaması — URL parametre injection'ı engeller
     if not _is_valid_symbol(symbol):
         send_telegram_message(
@@ -571,11 +599,23 @@ async def _get_user_tier(user_id) -> str:
 
 
 async def process_tier_command(chat_id, user_id):
-    """Show the caller their current tier — terse one-line reply."""
+    """Show the caller their current tier + today's quota usage."""
+    from services.tier_quota import peek
     tier = await _get_user_tier(user_id)
     label = _TIER_LABELS.get(tier, tier.upper())
+    report_q = peek(user_id, tier, "/report")
+    haber_q = peek(user_id, tier, "/haber")
+
+    def _line(name: str, q) -> str:
+        if q.limit is None:
+            return f"  {name}: <b>{q.used}</b> kullanım (sınırsız)"
+        return f"  {name}: <b>{q.used}/{q.limit}</b>"
+
     msg = (
         f"📋 <b>Mevcut planınız:</b> {label}\n\n"
+        f"<b>Bugünkü kullanım:</b>\n"
+        f"{_line('/report', report_q)}\n"
+        f"{_line('/haber', haber_q)}\n\n"
         f"Yükseltmek için: /upgrade"
     )
     send_telegram_message(chat_id, msg)
