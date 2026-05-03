@@ -30,28 +30,52 @@ from core.logger import get_logger
 
 logger = get_logger("macro.market_reaction")
 
-# Yahoo Finance v8 chart endpoint — same URL the web client hits, no auth.
-_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+# Stooq CSV (free, no auth) is reliable for FX/futures/ETFs; Yahoo's chart
+# API is reliable for indices that stooq lacks (^TNX). We try the primary
+# source for each symbol, fall back to the secondary, and persist whatever
+# we got — partial rows are fine.
+_STOOQ_URL = "https://stooq.com/q/l/"
+_YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 _USER_AGENT = "Mozilla/5.0 (compatible; AxiomMacro/0.1)"
-_HTTP_TIMEOUT = httpx.Timeout(8.0, connect=5.0)
-
-# Symbols that resolve to actual values via Yahoo:
-# - DX-Y.NYB → ICE US Dollar Index spot (~98)
-# - SPY      → SPY ETF (proxy for S&P 500)
-# - ^TNX     → 10-Year Treasury Yield Index, value in % (4.25 = 4.25%)
-_DXY_SYMBOL = "DX-Y.NYB"
-_SPY_SYMBOL = "SPY"
-_US10Y_SYMBOL = "^TNX"
+_HTTP_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 
 # Offsets we capture. Add T+30 / T+60 here later if useful.
 _SNAPSHOT_OFFSETS = (0, 300)
 
 
-async def _fetch_quote(client: httpx.AsyncClient, symbol: str) -> Optional[float]:
+async def _fetch_stooq(client: httpx.AsyncClient, ticker: str) -> Optional[float]:
+    """Pull last-close price from stooq's CSV endpoint. Returns None for the
+    'N/D' rows stooq emits when it has no data for a ticker."""
+    try:
+        r = await client.get(
+            _STOOQ_URL,
+            params={"s": ticker, "f": "sd2t2ohlcv", "h": "", "e": "csv"},
+            headers={"User-Agent": _USER_AGENT},
+        )
+        if r.status_code != 200 or not r.text:
+            return None
+        lines = r.text.strip().splitlines()
+        if len(lines) < 2:
+            return None
+        # CSV: Symbol,Date,Time,Open,High,Low,Close,Volume
+        cols = lines[1].split(",")
+        if len(cols) < 7 or cols[6] in ("N/D", ""):
+            return None
+        try:
+            v = float(cols[6])
+        except ValueError:
+            return None
+        return v if v and v == v else None
+    except Exception as e:
+        logger.debug(f"stooq {ticker} failed: {e}")
+        return None
+
+
+async def _fetch_yahoo_chart(client: httpx.AsyncClient, symbol: str) -> Optional[float]:
     """Pull `meta.regularMarketPrice` from Yahoo's chart API for one symbol."""
     try:
         r = await client.get(
-            _CHART_URL.format(symbol=symbol),
+            _YAHOO_CHART_URL.format(symbol=symbol),
             params={"interval": "1d", "range": "5d"},
             headers={"User-Agent": _USER_AGENT},
         )
@@ -70,20 +94,41 @@ async def _fetch_quote(client: httpx.AsyncClient, symbol: str) -> Optional[float
             v = float(price)
         except (TypeError, ValueError):
             return None
-        # NaN guard
         return v if v == v else None
     except Exception as e:
         logger.debug(f"yahoo chart {symbol} failed: {e}")
         return None
 
 
+async def _fetch_dxy(client: httpx.AsyncClient) -> Optional[float]:
+    """DXY: stooq DX.F (Dollar Index futures) → Yahoo DX-Y.NYB fallback."""
+    v = await _fetch_stooq(client, "dx.f")
+    if v is not None:
+        return v
+    return await _fetch_yahoo_chart(client, "DX-Y.NYB")
+
+
+async def _fetch_spy(client: httpx.AsyncClient) -> Optional[float]:
+    """SPY: stooq spy.us → Yahoo SPY fallback."""
+    v = await _fetch_stooq(client, "spy.us")
+    if v is not None:
+        return v
+    return await _fetch_yahoo_chart(client, "SPY")
+
+
+async def _fetch_us10y(client: httpx.AsyncClient) -> Optional[float]:
+    """10-yr yield: Yahoo ^TNX is the only reliable free source (stooq has
+    no equivalent). Returns yield as % (4.25 means 4.25%)."""
+    return await _fetch_yahoo_chart(client, "^TNX")
+
+
 async def _capture_snapshot(event_id: str, t_offset_seconds: int) -> bool:
     """Take one DXY/SPY/US10Y snapshot for the given event and persist."""
     async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
         dxy, spy, us10y = await asyncio.gather(
-            _fetch_quote(client, _DXY_SYMBOL),
-            _fetch_quote(client, _SPY_SYMBOL),
-            _fetch_quote(client, _US10Y_SYMBOL),
+            _fetch_dxy(client),
+            _fetch_spy(client),
+            _fetch_us10y(client),
         )
     if dxy is None and spy is None and us10y is None:
         logger.warning(f"market reaction T+{t_offset_seconds} all None for {event_id}")
