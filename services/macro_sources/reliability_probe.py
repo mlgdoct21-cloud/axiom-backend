@@ -52,6 +52,7 @@ SOURCE_INTERVAL: dict[str, timedelta] = {
     "fred_cpi": timedelta(minutes=60),
     "fred_core_cpi": timedelta(minutes=60),
     "fred_nfp": timedelta(minutes=60),
+    "fred_unrate": timedelta(minutes=60),
     "fred_pce": timedelta(minutes=60),
     "fred_core_pce": timedelta(minutes=60),
     "kalshi_fed": timedelta(minutes=60),
@@ -59,7 +60,7 @@ SOURCE_INTERVAL: dict[str, timedelta] = {
 
 # All FRED sources we probe in one batched call. Order is stable for
 # deterministic probe rows.
-_FRED_SOURCES = ("fred_cpi", "fred_core_cpi", "fred_nfp", "fred_pce", "fred_core_pce")
+_FRED_SOURCES = ("fred_cpi", "fred_core_cpi", "fred_nfp", "fred_unrate", "fred_pce", "fred_core_pce")
 
 # Number of historical observations to fetch per probe. 13 lets the public
 # endpoint compute YoY (current vs 12-mo-prior) and the previous-period
@@ -83,6 +84,7 @@ _STATES: dict[str, _SourceState] = {
     "fred_cpi": _SourceState(name="fred_cpi"),
     "fred_core_cpi": _SourceState(name="fred_core_cpi"),
     "fred_nfp": _SourceState(name="fred_nfp"),
+    "fred_unrate": _SourceState(name="fred_unrate"),
     "fred_pce": _SourceState(name="fred_pce"),
     "fred_core_pce": _SourceState(name="fred_core_pce"),
     "kalshi_fed": _SourceState(name="kalshi_fed"),

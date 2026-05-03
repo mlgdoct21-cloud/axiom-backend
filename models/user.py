@@ -18,6 +18,10 @@ class User(Base):
     report_hours = Column(String(100), default="08:00")
     # Kullanıcının serbest girdiği takip kelimeleri (Örn: "AAPL,Tesla,Nvidia")
     custom_follows = Column(String(1000), default="")
+    # Subscription tier: free | premium | advance.
+    # Free → macro broadcasts gated by 5-min delay + watermark prefix.
+    # Premium / advance → instant, no watermark.
+    tier = Column(String(20), nullable=False, default="free")
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

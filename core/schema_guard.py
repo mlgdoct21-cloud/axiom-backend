@@ -212,6 +212,11 @@ _POSTGRES_GUARDS = [
         "ix_market_snapshots_event_offset",
         "CREATE INDEX IF NOT EXISTS ix_market_snapshots_event_offset ON macro_release_market_snapshots(event_id, t_offset_seconds)",
     ),
+    # alembic 008 — user subscription tier (free / premium / advance).
+    (
+        "users.tier",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS tier VARCHAR(20) NOT NULL DEFAULT 'free'",
+    ),
 ]
 
 

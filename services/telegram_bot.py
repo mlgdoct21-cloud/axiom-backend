@@ -661,6 +661,9 @@ async def start_telegram_bot():
                             if cq_data.startswith("tag_"):
                                 tag = cq_data[4:]  # "tag_BTC" → "BTC"
                                 await process_tag_callback(cq_id, cq_chat_id, cq_message_id, cq_user_id, tag)
+                            elif cq_data.startswith("macro_hist:") or cq_data.startswith("macro_stocks:"):
+                                from services.macro_callback import handle_callback
+                                await handle_callback(cq_id, cq_chat_id, cq_data)
 
                     except Exception as cmd_err:
                         logger.error(f"Komut işleme hatası (update_id={update.get('update_id')}): {cmd_err}")

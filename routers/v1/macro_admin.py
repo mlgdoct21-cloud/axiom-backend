@@ -129,6 +129,34 @@ async def trigger_broadcast(
     return await broadcast_release(event_id)
 
 
+@router.post("/user/tier")
+async def set_user_tier(
+    telegram_id: str = Query(..., description="User's telegram_id (string)"),
+    tier: str = Query(..., description="free | premium | advance"),
+    x_internal_secret: Optional[str] = Header(None),
+):
+    """Flip a user's subscription tier — used for ops + dev testing.
+    Validates tier is one of the allowed values; idempotent UPDATE.
+    """
+    _check_auth(x_internal_secret)
+    if tier not in ("free", "premium", "advance"):
+        raise HTTPException(status_code=400, detail="tier must be free|premium|advance")
+    sql = text(
+        "UPDATE users SET tier = :tier WHERE telegram_id = :tid "
+        "RETURNING id, telegram_id, username, tier"
+    )
+    async with engine.begin() as conn:
+        row = (await conn.execute(sql, {"tier": tier, "tid": telegram_id})).mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"user {telegram_id} not found")
+    return {
+        "id": row["id"],
+        "telegram_id": row["telegram_id"],
+        "username": row["username"],
+        "tier": row["tier"],
+    }
+
+
 @router.post("/reaction/{event_id:path}")
 async def trigger_market_reaction(
     event_id: str,

@@ -33,9 +33,18 @@ _CACHE_HEADER = "public, max-age=60, stale-while-revalidate=120"
 # so we look up the paired Core release by date.
 _PCT_DELTA_EVENTS = frozenset({"CPI", "PCE", "CORE_CPI", "CORE_PCE"})
 
-# Headline → Core paired event_type for the same period (both are indices,
-# both report MoM%/YoY% the same way).
-_CORE_PAIR = {"CPI": "CORE_CPI", "PCE": "CORE_PCE"}
+# Headline → paired sibling event_type for the same period:
+#  - CPI / PCE pair with their Core stripped-out indices (same shape).
+#  - NFP pairs with UNRATE — different shape (jobs added vs unemployment %)
+#    but they're released together every Employment Situation report and
+#    we want them rendered side-by-side in the modal & Telegram.
+_CORE_PAIR = {"CPI": "CORE_CPI", "PCE": "CORE_PCE", "NFP": "UNRATE"}
+
+# NFP convention: report monthly *change* in jobs (in thousands).
+#   actual_value = total nonfarm payrolls in thousands (e.g. 158637)
+#   prior_value  = previous month's total
+#   change_k     = actual - prior  (e.g. +137 means "+137K jobs added")
+_NFP_EVENTS = frozenset({"NFP"})
 
 
 def _coerce_jsonb_list(v) -> list:
@@ -151,6 +160,20 @@ async def _enrich_release(conn, r) -> dict:
     yoy_pct: Optional[float] = None
     prior_mom_pct: Optional[float] = None
     prior_yoy_pct: Optional[float] = None
+    change_k: Optional[float] = None
+    prior_change_k: Optional[float] = None
+    if et in _NFP_EVENTS and actual is not None and prior is not None:
+        change_k = round(actual - prior, 1)
+        # Previous month's NFP change → look up T-1 actual + T-2 actual.
+        if released_at is not None:
+            from datetime import timedelta
+            prev_target = released_at - timedelta(days=20)
+            prev_actual = await _fetch_history_value(conn, et, src, prev_target)
+            if prev_actual is not None:
+                prev_prior_target = released_at - timedelta(days=50)
+                prev_prior = await _fetch_history_value(conn, et, src, prev_prior_target)
+                if prev_prior is not None:
+                    prior_change_k = round(prev_actual - prev_prior, 1)
     if et in _PCT_DELTA_EVENTS:
         mom_pct = _pct(actual, prior)
         # 12-mo-prior: query historical row from ~365 days before released_at.
@@ -201,6 +224,8 @@ async def _enrich_release(conn, r) -> dict:
         "yoy_pct": yoy_pct,
         "prior_mom_pct": prior_mom_pct,
         "prior_yoy_pct": prior_yoy_pct,
+        "change_k": change_k,
+        "prior_change_k": prior_change_k,
         "expected_mom_pct": expected_mom_pct,
         "expected_yoy_pct": expected_yoy_pct,
         "surprise_mom_pp": surprise_mom_pp,

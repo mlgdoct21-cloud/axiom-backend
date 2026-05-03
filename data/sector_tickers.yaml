@@ -1,0 +1,21 @@
+# AXIOM Macro Intelligence — Sector → Top US Tickers
+#
+# Used by macro_broadcaster's "Etkilenen hisseler" inline keyboard callback.
+# Keys mirror sector_impact_map.yaml exactly. Tickers are top-5 US large-caps
+# by sector weight; not exhaustive, just the names users would recognise.
+# Update when sector composition shifts (rare — annual rebalance).
+
+energy:        [XOM, CVX, COP, SLB, EOG]
+financials:    [JPM, BAC, WFC, GS, MS]
+tech:          [AAPL, MSFT, NVDA, GOOGL, META]
+growth_stocks: [TSLA, NVDA, NFLX, ADBE, CRM]
+real_estate:   [SPG, AMT, PLD, CCI, EQIX]
+consumer_discretionary: [AMZN, HD, MCD, NKE, SBUX]
+consumer_staples: [WMT, PG, COST, KO, PEP]
+utilities:     [NEE, DUK, SO, AEP, EXC]
+materials:     [LIN, APD, SHW, ECL, NEM]
+commodities:   [GLD, USO, DBA, GDX, COPX]   # ETFs since underlying are futures
+industrials:   [CAT, BA, HON, UPS, RTX]
+defensives:    [KO, PG, JNJ, WMT, MCD]
+em_exposure:   [BABA, TSM, NIO, MELI, BIDU]
+small_caps:    [IWM]  # Russell 2000 ETF — single proxy
