@@ -14,6 +14,7 @@ expose. The macro_narrative phase will fill in publication dates from the
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Optional
@@ -103,6 +104,7 @@ async def record_fred_observation(
             row = (await conn.execute(sql, params)).first()
         if row is not None:
             logger.info(f"new release: {event_id} actual={actual} prior={prior}")
+            _trigger_narrative(event_id)
             return True
         return False
     except Exception as e:
@@ -169,6 +171,19 @@ async def record_fed_rss_events(events: list[ReleaseEvent]) -> int:
                 if row is not None:
                     inserted += 1
                     logger.info(f"new release: {ev.event_id} type={ev.event_type}")
+                    _trigger_narrative(ev.event_id)
     except Exception as e:
         logger.error(f"record_fed_rss_events failed: {e}")
     return inserted
+
+
+def _trigger_narrative(event_id: str) -> None:
+    """Fire-and-forget narrative generation. Imported lazily to keep
+    macro_narrative ↔ release_detect import order safe (narrative reads from
+    the same engine import release_detect uses).
+    """
+    try:
+        from services.macro_narrative import generate_narrative_safe
+        asyncio.create_task(generate_narrative_safe(event_id))
+    except Exception as e:
+        logger.error(f"narrative trigger failed for {event_id}: {e}")

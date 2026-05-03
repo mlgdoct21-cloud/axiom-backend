@@ -13,6 +13,7 @@ from sqlalchemy import text
 from core.database import engine
 from core.logger import get_logger
 from services.macro_calendar import upcoming_events
+from services.macro_narrative import generate_narrative
 from services.macro_sources.reliability_probe import (
     probe_once,
     rolling_health_report,
@@ -85,3 +86,30 @@ async def calendar_view(
         for r in rows
     ]
     return {"now": now.isoformat(), "days": days, "upcoming": upcoming, "recent": recent}
+
+
+@router.post("/narrative/{event_id}")
+async def regenerate_narrative(
+    event_id: str,
+    force: bool = Query(False, description="If true, NULL the existing narrative_md before regen"),
+    x_internal_secret: Optional[str] = Header(None),
+):
+    """Manual narrative (re)generation. With ?force=true, clears the existing
+    narrative first so the idempotent UPDATE inside generate_narrative writes."""
+    _check_auth(x_internal_secret)
+    if force:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("UPDATE macro_releases SET narrative_md = NULL, sentiment_score = NULL "
+                     "WHERE event_id = :eid"),
+                {"eid": event_id},
+            )
+    res = await generate_narrative(event_id)
+    return {
+        "event_id": res.event_id,
+        "written": res.written,
+        "used_fallback": res.used_fallback,
+        "rejection_reason": res.rejection_reason,
+        "narrative_md": res.narrative_md,
+        "sentiment_score": res.sentiment_score,
+    }
