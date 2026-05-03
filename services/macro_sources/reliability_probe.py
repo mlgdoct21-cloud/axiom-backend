@@ -66,7 +66,7 @@ _FRED_SOURCES = ("fred_cpi", "fred_core_cpi", "fred_nfp", "fred_core_pce")
 # probe backfills the 12 history rows quietly; subsequent probes are
 # idempotent (ON CONFLICT DO NOTHING) and almost always insert just the
 # newest row when a fresh observation lands.
-_FRED_FETCH_LIMIT = 13
+_FRED_FETCH_LIMIT = 15
 
 
 @dataclass
