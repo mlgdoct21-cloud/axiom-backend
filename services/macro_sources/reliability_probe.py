@@ -23,6 +23,7 @@ from sqlalchemy import text
 
 from core.database import engine
 from core.logger import get_logger
+from services.macro_calendar import effective_interval
 from services.macro_sources.fed_rss import fetch_fed_rss
 from services.macro_sources.fred_api import SERIES as FRED_SERIES, fetch_fred_multi
 from services.macro_sources.kalshi_fed import fetch_kalshi_fed
@@ -35,8 +36,10 @@ from services.macro_sources.release_detect import (
 logger = get_logger("macro.reliability_probe")
 
 # Outer tick — supervisor wakes this often. Per-source intervals below decide
-# whether each source actually fires on a given tick.
-TICK_INTERVAL = timedelta(minutes=5)
+# whether each source actually fires on a given tick. 30s tick gives the
+# adaptive calendar enough resolution to honour HOT_INTERVAL=10s during the
+# ±30 min release window without falling further than ~30s behind.
+TICK_INTERVAL = timedelta(seconds=30)
 RETRY_INTERVAL = timedelta(seconds=60)
 
 # Per-source minimum spacing. FRED quota is 50,000/day with key — generous,
@@ -195,7 +198,8 @@ def _is_due(name: str, now: datetime) -> bool:
     state = _STATES[name]
     if state.last_probed_at is None:
         return True
-    return (now - state.last_probed_at) >= SOURCE_INTERVAL[name]
+    interval = effective_interval(name, now, default=SOURCE_INTERVAL[name])
+    return (now - state.last_probed_at) >= interval
 
 
 def _mark(name: str, now: datetime) -> None:

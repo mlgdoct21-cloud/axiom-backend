@@ -1,0 +1,99 @@
+# AXIOM Macro Intelligence — Upcoming release calendar
+#
+# Drives adaptive polling: when wall-clock is within ±30 min of an event's
+# scheduled_at, every source listed in `sources_to_accelerate` polls every
+# 10 s instead of its default cadence (see services/macro_calendar.py).
+#
+# All times are UTC (ISO 8601 with offset).
+# - FOMC decision: 18:00 UTC standard, 19:00 UTC after DST shifts (varies)
+# - BLS CPI / NFP releases: 12:30 UTC (DST), 13:30 UTC (standard)
+#
+# Manual entries for now — Q3 task: auto-populate from FRED `releases/dates`.
+# Maintain at least 2 months of look-ahead.
+
+events:
+  # --- May 2026 ---
+  - event_type: NFP
+    label: "Apr 2026 Employment Situation"
+    scheduled_at: 2026-05-08T12:30:00Z
+    sources_to_accelerate: [fred_nfp]
+  - event_type: CPI
+    label: "Apr 2026 CPI-U"
+    scheduled_at: 2026-05-13T12:30:00Z
+    sources_to_accelerate: [fred_cpi]
+
+  # --- June 2026 ---
+  - event_type: NFP
+    label: "May 2026 Employment Situation"
+    scheduled_at: 2026-06-05T12:30:00Z
+    sources_to_accelerate: [fred_nfp]
+  - event_type: CPI
+    label: "May 2026 CPI-U"
+    scheduled_at: 2026-06-11T12:30:00Z
+    sources_to_accelerate: [fred_cpi]
+  - event_type: FOMC_DECISION
+    label: "FOMC June 2026 Decision"
+    scheduled_at: 2026-06-17T18:00:00Z
+    sources_to_accelerate: [fed_rss, kalshi_fed]
+
+  # --- July 2026 ---
+  - event_type: NFP
+    label: "Jun 2026 Employment Situation"
+    scheduled_at: 2026-07-02T12:30:00Z
+    sources_to_accelerate: [fred_nfp]
+  - event_type: CPI
+    label: "Jun 2026 CPI-U"
+    scheduled_at: 2026-07-15T12:30:00Z
+    sources_to_accelerate: [fred_cpi]
+  - event_type: FOMC_DECISION
+    label: "FOMC July 2026 Decision"
+    scheduled_at: 2026-07-29T18:00:00Z
+    sources_to_accelerate: [fed_rss, kalshi_fed]
+
+  # --- August 2026 ---
+  - event_type: NFP
+    label: "Jul 2026 Employment Situation"
+    scheduled_at: 2026-08-07T12:30:00Z
+    sources_to_accelerate: [fred_nfp]
+  - event_type: CPI
+    label: "Jul 2026 CPI-U"
+    scheduled_at: 2026-08-12T12:30:00Z
+    sources_to_accelerate: [fred_cpi]
+
+  # --- September 2026 ---
+  - event_type: NFP
+    label: "Aug 2026 Employment Situation"
+    scheduled_at: 2026-09-04T12:30:00Z
+    sources_to_accelerate: [fred_nfp]
+  - event_type: CPI
+    label: "Aug 2026 CPI-U"
+    scheduled_at: 2026-09-10T12:30:00Z
+    sources_to_accelerate: [fred_cpi]
+  - event_type: FOMC_DECISION
+    label: "FOMC September 2026 Decision"
+    scheduled_at: 2026-09-16T18:00:00Z
+    sources_to_accelerate: [fed_rss, kalshi_fed]
+
+  # --- October 2026 ---
+  - event_type: NFP
+    label: "Sep 2026 Employment Situation"
+    scheduled_at: 2026-10-02T12:30:00Z
+    sources_to_accelerate: [fred_nfp]
+  - event_type: CPI
+    label: "Sep 2026 CPI-U"
+    scheduled_at: 2026-10-15T12:30:00Z
+    sources_to_accelerate: [fred_cpi]
+  - event_type: FOMC_DECISION
+    label: "FOMC October 2026 Decision"
+    scheduled_at: 2026-10-28T18:00:00Z
+    sources_to_accelerate: [fed_rss, kalshi_fed]
+
+  # --- November 2026 (post-DST end Nov 1) ---
+  - event_type: NFP
+    label: "Oct 2026 Employment Situation"
+    scheduled_at: 2026-11-06T13:30:00Z
+    sources_to_accelerate: [fred_nfp]
+  - event_type: CPI
+    label: "Oct 2026 CPI-U"
+    scheduled_at: 2026-11-13T13:30:00Z
+    sources_to_accelerate: [fred_cpi]
