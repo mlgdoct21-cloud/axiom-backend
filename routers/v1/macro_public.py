@@ -47,6 +47,14 @@ def _row_to_release(r) -> dict:
 async def latest_release(response: Response):
     """Single most-recent release that has a narrative_md filled in.
 
+    Sort intent: a rich CPI/NFP narrative ("Önceki dönem 327.46 iken bu dönem
+    330.293 geldi…") is more useful than a bare fed_rss title even if the
+    fed_rss row is more recent. So we rank `actual_value IS NOT NULL` rows
+    first, then by recency. 180-day window prevents an ancient rich row from
+    sticking forever; FRED's `released_at` stores the observation-period start
+    (e.g. March CPI sits on 2026-03-01) not the publication date, so a tight
+    60-day window would falsely exclude perfectly fresh prints.
+
     Returns 200 with `release: null` rather than 404 when there's nothing yet,
     so the dashboard chip can render an "Henüz yeni release yok" state without
     triggering an error path.
@@ -57,7 +65,10 @@ async def latest_release(response: Response):
                actual_value, prior_value, narrative_md, sentiment_score, source_url
         FROM macro_releases
         WHERE narrative_md IS NOT NULL
-        ORDER BY released_at DESC NULLS LAST, created_at DESC
+          AND released_at >= NOW() - INTERVAL '180 days'
+        ORDER BY (actual_value IS NOT NULL) DESC,
+                 released_at DESC NULLS LAST,
+                 created_at DESC
         LIMIT 1
     """)
     async with engine.begin() as conn:
