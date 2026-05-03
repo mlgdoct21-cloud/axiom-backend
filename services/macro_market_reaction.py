@@ -29,10 +29,13 @@ from core.logger import get_logger
 
 logger = get_logger("macro.market_reaction")
 
-# FMP /stable/quote symbols. Indices need the leading caret.
-_DXY_SYMBOL = "^DXY"
-_SPY_SYMBOL = "SPY"
-_US10Y_SYMBOL = "^TNX"  # CBOE 10-Year Treasury Yield Index, value in %
+# FMP /stable/quote symbols. Index-style tickers vary in FMP support so we
+# try the caret form first and fall back to the bare ticker / common
+# alternatives — this keeps the line lit even if FMP rotates which form
+# they accept.
+_DXY_CANDIDATES = ("^DXY", "DXY", "DX-Y.NYB", "USDX")
+_SPY_CANDIDATES = ("SPY",)
+_US10Y_CANDIDATES = ("^TNX", "TNX", "US10Y")
 
 _FMP_QUOTE_URL = "https://financialmodelingprep.com/stable/quote"
 _HTTP_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
@@ -49,9 +52,22 @@ async def _fetch_quote(client: httpx.AsyncClient, symbol: str, api_key: str) -> 
             return None
         body = r.json()
         if isinstance(body, list) and body:
-            return float(body[0].get("price") or 0) or None
+            price = body[0].get("price")
+            if price is not None and price != 0:
+                return float(price)
     except Exception as e:
         logger.debug(f"market reaction quote {symbol} failed: {e}")
+    return None
+
+
+async def _fetch_quote_first_match(
+    client: httpx.AsyncClient, candidates: tuple, api_key: str,
+) -> Optional[float]:
+    """Try each candidate symbol in order; return the first non-null price."""
+    for sym in candidates:
+        price = await _fetch_quote(client, sym, api_key)
+        if price is not None:
+            return price
     return None
 
 
@@ -63,9 +79,9 @@ async def _capture_snapshot(event_id: str, t_offset_seconds: int) -> bool:
         return False
     async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
         dxy, spy, us10y = await asyncio.gather(
-            _fetch_quote(client, _DXY_SYMBOL, api_key),
-            _fetch_quote(client, _SPY_SYMBOL, api_key),
-            _fetch_quote(client, _US10Y_SYMBOL, api_key),
+            _fetch_quote_first_match(client, _DXY_CANDIDATES, api_key),
+            _fetch_quote_first_match(client, _SPY_CANDIDATES, api_key),
+            _fetch_quote_first_match(client, _US10Y_CANDIDATES, api_key),
         )
     if dxy is None and spy is None and us10y is None:
         return False
