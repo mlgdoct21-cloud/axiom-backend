@@ -13,6 +13,7 @@ from sqlalchemy import text
 from core.database import engine
 from core.logger import get_logger
 from services.macro_calendar import upcoming_events
+from services.macro_broadcaster import broadcast_release
 from services.macro_narrative import generate_narrative
 from services.macro_sources.reliability_probe import (
     probe_once,
@@ -113,3 +114,16 @@ async def regenerate_narrative(
         "narrative_md": res.narrative_md,
         "sentiment_score": res.sentiment_score,
     }
+
+
+@router.post("/broadcast/{event_id}")
+async def trigger_broadcast(
+    event_id: str,
+    x_internal_secret: Optional[str] = Header(None),
+):
+    """Manual Telegram broadcast for an existing release. Useful for debug or
+    re-sending after a Telegram outage. Idempotent guard lives upstream in
+    generate_narrative (broadcast only auto-fires on a NEW narrative_md write)
+    — calling this manually intentionally bypasses that gate."""
+    _check_auth(x_internal_secret)
+    return await broadcast_release(event_id)

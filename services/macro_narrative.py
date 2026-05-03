@@ -360,6 +360,8 @@ async def generate_narrative(event_id: str) -> NarrativeResult:
             result.written = written
             result.narrative_md = narrative_md
             result.sentiment_score = sentiment
+            if written:
+                _trigger_broadcast(event_id)
             return result
         logger.warning(
             f"narrative reject for {event_id}: nums={num_unknown} sectors={sec_unknown}"
@@ -375,7 +377,20 @@ async def generate_narrative(event_id: str) -> NarrativeResult:
     result.written = written
     result.used_fallback = True
     result.narrative_md = fallback_md
+    if written:
+        _trigger_broadcast(event_id)
     return result
+
+
+def _trigger_broadcast(event_id: str) -> None:
+    """Fire-and-forget Telegram broadcast. Lazy import keeps the macro_narrative
+    ↔ macro_broadcaster cycle safe (broadcaster also uses the engine).
+    """
+    try:
+        from services.macro_broadcaster import broadcast_release_safe
+        asyncio.create_task(broadcast_release_safe(event_id))
+    except Exception as e:
+        logger.error(f"broadcast trigger failed for {event_id}: {e}")
 
 
 async def generate_narrative_safe(event_id: str) -> None:
