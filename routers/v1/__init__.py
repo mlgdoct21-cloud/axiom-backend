@@ -14,6 +14,7 @@ from .daily_digest import router as daily_digest_router
 from .dashboard_summary import router as dashboard_summary_router
 from .etf_admin import router as etf_admin_router
 from .macro_admin import router as macro_admin_router
+from .macro_public import router as macro_public_router
 
 router = APIRouter(prefix="/api/v1", tags=["v1"])
 
@@ -31,3 +32,4 @@ router.include_router(daily_digest_router, tags=["daily-digest"])
 router.include_router(dashboard_summary_router, tags=["dashboard-summary"])
 router.include_router(etf_admin_router, tags=["admin"])
 router.include_router(macro_admin_router, tags=["admin"])
+router.include_router(macro_public_router, tags=["macro"])
