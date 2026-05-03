@@ -160,6 +160,8 @@ def _categorise(release: dict) -> Optional[str]:
         if delta_pct < -_HOT_THRESHOLD_PCT:
             return "CPI_COOL"
         return "CPI_HOT" if delta_pct >= 0 else "CPI_COOL"
+    if et == "CORE_CPI":
+        return "CORE_CPI_HOT" if delta_pct >= 0 else "CORE_CPI_COOL"
     if et == "NFP":
         if delta_pct > _HOT_THRESHOLD_PCT:
             return "NFP_HOT"
@@ -168,6 +170,8 @@ def _categorise(release: dict) -> Optional[str]:
         return "NFP_HOT" if delta_pct >= 0 else "NFP_COOL"
     if et == "PCE":
         return "PCE_HOT" if delta_pct >= 0 else "PCE_COOL"
+    if et == "CORE_PCE":
+        return "CORE_PCE_HOT" if delta_pct >= 0 else "CORE_PCE_COOL"
     return None
 
 

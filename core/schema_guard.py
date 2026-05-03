@@ -140,6 +140,15 @@ _POSTGRES_GUARDS = [
         "macro_releases.sectors_negative",
         "ALTER TABLE macro_releases ADD COLUMN IF NOT EXISTS sectors_negative JSONB NOT NULL DEFAULT '[]'::jsonb",
     ),
+    # alembic 006 — admin-entered consensus % readings (MoM + YoY).
+    (
+        "macro_releases.expected_mom_pct",
+        "ALTER TABLE macro_releases ADD COLUMN IF NOT EXISTS expected_mom_pct NUMERIC(8,4)",
+    ),
+    (
+        "macro_releases.expected_yoy_pct",
+        "ALTER TABLE macro_releases ADD COLUMN IF NOT EXISTS expected_yoy_pct NUMERIC(8,4)",
+    ),
     # Macro source reliability — append-only probe log. Hafta 1 verification
     # criterion (>=99% uptime, p95<3s) is computed by rolling SELECT over the
     # last N hours of rows. ~2000 rows/source/week at 5-min cadence.

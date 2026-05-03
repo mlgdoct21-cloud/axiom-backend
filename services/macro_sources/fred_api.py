@@ -27,8 +27,10 @@ FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 
 # Canonical series. Add more without changing call sites.
 SERIES = {
-    "fred_cpi": "CPIAUCSL",       # CPI-U All Items SA, monthly index
-    "fred_nfp": "PAYEMS",         # Total Nonfarm Payrolls SA, thousands
+    "fred_cpi": "CPIAUCSL",        # CPI-U All Items SA, monthly index
+    "fred_core_cpi": "CPILFESL",   # CPI-U Less Food & Energy (Core), SA, monthly index
+    "fred_nfp": "PAYEMS",          # Total Nonfarm Payrolls SA, thousands
+    "fred_core_pce": "PCEPILFE",   # Core PCE Price Index SA, monthly index
 }
 
 _USER_AGENT = "AXIOM-Macro/0.1 (+https://axiom-dashboard-sigma.vercel.app)"
@@ -44,6 +46,7 @@ class FREDSeriesResult:
     latest_value: Optional[str] = None     # raw string ("." means missing)
     prior_date: Optional[str] = None       # filled when fetch limit >= 2
     prior_value: Optional[str] = None
+    observations: list = field(default_factory=list)  # full descending list
     payload_bytes: int = 0
     http_status: Optional[int] = None
     error: Optional[str] = None
@@ -98,6 +101,7 @@ async def fetch_fred_series(series_id: str, *, limit: int = 1) -> FREDSeriesResu
 
     obs = body.get("observations") or []
     out.data_points = body.get("count", len(obs))
+    out.observations = obs
     if obs:
         latest = obs[0]
         out.latest_date = latest.get("date")

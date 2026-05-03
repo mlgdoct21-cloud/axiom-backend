@@ -35,7 +35,9 @@ logger = get_logger("macro.release_detect")
 # FRED source name → macro_releases.event_type canonical label.
 _FRED_EVENT_TYPE = {
     "fred_cpi": "CPI",
+    "fred_core_cpi": "CORE_CPI",
     "fred_nfp": "NFP",
+    "fred_core_pce": "CORE_PCE",
 }
 
 
@@ -62,11 +64,16 @@ async def record_fred_observation(
     latest_date: Optional[str],
     latest_value: Optional[str],
     prior_value: Optional[str],
+    *,
+    trigger_narrative: bool = True,
 ) -> bool:
     """Insert one FRED observation as a `macro_releases` row.
 
     Returns True only when a new row was inserted (deterministic event_id +
     ON CONFLICT DO NOTHING). Missing observations ("." values) are skipped.
+
+    `trigger_narrative=False` for backfill — we only want narrative + Telegram
+    fan-out for the freshest observation, not for 12 months of history.
     """
     event_type = _FRED_EVENT_TYPE.get(source)
     if not event_type or not latest_date:
@@ -104,12 +111,43 @@ async def record_fred_observation(
             row = (await conn.execute(sql, params)).first()
         if row is not None:
             logger.info(f"new release: {event_id} actual={actual} prior={prior}")
-            _trigger_narrative(event_id)
+            if trigger_narrative:
+                _trigger_narrative(event_id)
             return True
         return False
     except Exception as e:
         logger.error(f"record_fred_observation failed for {event_id}: {e}")
         return False
+
+
+async def backfill_fred_series(
+    source: str,
+    observations: list[dict],
+) -> int:
+    """Bulk insert N historical FRED observations for one series, no narrative
+    fire — used to seed YoY comparisons. `observations` are FRED's raw dict
+    items {date, value} ordered newest-first. The newest one is treated as
+    'fresh' (narrative will fire) and the rest are pure backfill.
+
+    Returns count of newly inserted rows.
+    """
+    inserted = 0
+    for i, obs in enumerate(observations):
+        if not obs:
+            continue
+        # Each insert needs its own prior_value (next item in the desc list)
+        prior_raw = observations[i + 1]["value"] if (i + 1) < len(observations) else None
+        is_fresh = (i == 0)
+        ok = await record_fred_observation(
+            source=source,
+            latest_date=obs.get("date"),
+            latest_value=obs.get("value"),
+            prior_value=prior_raw,
+            trigger_narrative=is_fresh,
+        )
+        if ok:
+            inserted += 1
+    return inserted
 
 
 async def record_kalshi_snapshot(snap: KalshiSnapshot) -> bool:

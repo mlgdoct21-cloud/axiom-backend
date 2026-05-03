@@ -27,7 +27,9 @@ from services.macro_calendar import effective_interval
 from services.macro_sources.fed_rss import fetch_fed_rss
 from services.macro_sources.fred_api import SERIES as FRED_SERIES, fetch_fred_multi
 from services.macro_sources.kalshi_fed import fetch_kalshi_fed
+from services.macro_sources.fred_api import fetch_fred_series
 from services.macro_sources.release_detect import (
+    backfill_fred_series,
     record_fed_rss_events,
     record_fred_observation,
     record_kalshi_snapshot,
@@ -48,9 +50,23 @@ RETRY_INTERVAL = timedelta(seconds=60)
 SOURCE_INTERVAL: dict[str, timedelta] = {
     "fed_rss": timedelta(minutes=5),
     "fred_cpi": timedelta(minutes=60),
+    "fred_core_cpi": timedelta(minutes=60),
     "fred_nfp": timedelta(minutes=60),
+    "fred_core_pce": timedelta(minutes=60),
     "kalshi_fed": timedelta(minutes=60),
 }
+
+# All FRED sources we probe in one batched call. Order is stable for
+# deterministic probe rows.
+_FRED_SOURCES = ("fred_cpi", "fred_core_cpi", "fred_nfp", "fred_core_pce")
+
+# Number of historical observations to fetch per probe. 13 lets the public
+# endpoint compute YoY (current vs 12-mo-prior) and the previous-period
+# MoM% display ("prior" column) without a second FRED call. The first
+# probe backfills the 12 history rows quietly; subsequent probes are
+# idempotent (ON CONFLICT DO NOTHING) and almost always insert just the
+# newest row when a fresh observation lands.
+_FRED_FETCH_LIMIT = 13
 
 
 @dataclass
@@ -64,7 +80,9 @@ class _SourceState:
 _STATES: dict[str, _SourceState] = {
     "fed_rss": _SourceState(name="fed_rss"),
     "fred_cpi": _SourceState(name="fred_cpi"),
+    "fred_core_cpi": _SourceState(name="fred_core_cpi"),
     "fred_nfp": _SourceState(name="fred_nfp"),
+    "fred_core_pce": _SourceState(name="fred_core_pce"),
     "kalshi_fed": _SourceState(name="kalshi_fed"),
 }
 
@@ -111,46 +129,40 @@ def _approx_payload_size(events) -> Optional[int]:
     return sum(len(e.raw_summary or "") + len(e.title or "") for e in events) or None
 
 
-async def _probe_fred_all() -> list[dict]:
-    """Per-series GET for all FRED series; returns one probe row per series.
+async def _probe_fred_all(due_sources: tuple[str, ...] = _FRED_SOURCES) -> list[dict]:
+    """Per-series GET for due FRED series; returns one probe row per series.
 
     Each call independent — one series down doesn't taint the others.
+    Fetches `_FRED_FETCH_LIMIT` observations so YoY / prior-MoM% computations
+    have enough history without an extra round trip.
     """
-    series_ids = [FRED_SERIES["fred_cpi"], FRED_SERIES["fred_nfp"]]
-    t0 = time.monotonic()
-    # limit=2 so release detection has both latest and prior observations.
-    result = await fetch_fred_multi(series_ids, limit=2)
-    total_latency_ms = int((time.monotonic() - t0) * 1000)
-
     rows: list[dict] = []
-    for source_name, series_id in (("fred_cpi", FRED_SERIES["fred_cpi"]),
-                                   ("fred_nfp", FRED_SERIES["fred_nfp"])):
-        per = result.series.get(series_id)
-        # latency_ms is the per-series wall time approximation; we issued
-        # them sequentially so split the total in half. Good enough for
-        # uptime tracking; precise per-call timing lives inside fred_api.
-        per_latency = total_latency_ms // 2
+    for source_name in due_sources:
+        series_id = FRED_SERIES.get(source_name)
+        if not series_id:
+            continue
+        t0 = time.monotonic()
+        per = await fetch_fred_series(series_id, limit=_FRED_FETCH_LIMIT)
+        latency_ms = int((time.monotonic() - t0) * 1000)
         success = bool(per and per.success)
         rows.append({
             "source": source_name,
             "success": success,
-            "latency_ms": per_latency,
+            "latency_ms": latency_ms,
             "http_status": per.http_status if per else None,
-            "not_modified": False,  # FRED has no ETag
+            "not_modified": False,
             "payload_bytes": per.payload_bytes if per else 0,
             "events_extracted": per.data_points if success else None,
             "error_msg": per.error if per else None,
         })
 
-        # Persist into macro_releases when we have a fresh observation (idempotent).
-        if success and per and per.latest_date:
+        # Persist into macro_releases — backfill historical rows quietly,
+        # narrative+broadcast only fire for the freshest observation.
+        if success and per and per.observations:
             try:
-                await record_fred_observation(
-                    source=source_name,
-                    latest_date=per.latest_date,
-                    latest_value=per.latest_value,
-                    prior_value=per.prior_value,
-                )
+                inserted = await backfill_fred_series(source_name, per.observations)
+                if inserted:
+                    logger.info(f"fred {source_name}: {inserted} new release(s) recorded")
             except Exception as e:
                 logger.error(f"fred release persist failed for {source_name}: {e}")
     return rows
@@ -222,9 +234,9 @@ async def probe_once(*, force: bool = False) -> dict:
         _mark("fed_rss", now)
         fired.append(row)
 
-    fred_due = [s for s in ("fred_cpi", "fred_nfp") if force or _is_due(s, now)]
+    fred_due = tuple(s for s in _FRED_SOURCES if force or _is_due(s, now))
     if fred_due:
-        rows = await _probe_fred_all()
+        rows = await _probe_fred_all(fred_due)
         for row in rows:
             await _record(row)
             _log_row(row)

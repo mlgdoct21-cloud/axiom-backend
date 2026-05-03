@@ -121,6 +121,85 @@ def _render_headline_metric(release: dict) -> Optional[str]:
     return f"📈 MoM <b>{sign}{pct:.2f}%</b>"
 
 
+def _fmt_pct(v: Optional[float]) -> str:
+    if v is None:
+        return "—"
+    sign = "+" if v > 0 else ""
+    return f"{sign}{float(v):.2f}%"
+
+
+def _render_metric_row(label: str, prior: Optional[float], expected: Optional[float], actual: Optional[float]) -> Optional[str]:
+    """One row of the prior | expected | actual block. None when nothing
+    is computable (all three missing).
+    """
+    if prior is None and expected is None and actual is None:
+        return None
+    return (
+        f"<b>{html.escape(label)}</b>  "
+        f"Önceki {_fmt_pct(prior)} · Beklenti {_fmt_pct(expected)} · "
+        f"Gelen {_fmt_pct(actual)}"
+    )
+
+
+def _render_metrics_block(headline: dict, core: Optional[dict]) -> Optional[str]:
+    """4-row prior | expected | actual table, headline + paired Core if any.
+    Skips rows that are entirely empty."""
+    et = (headline.get("event_type") or "").upper()
+    if et not in _PCT_DELTA_EVENTS:
+        return None
+    head_label_mom = f"{_short_label(et)} MoM"
+    head_label_yoy = f"{_short_label(et)} YoY"
+    rows = []
+    r = _render_metric_row(
+        head_label_mom,
+        headline.get("prior_mom_pct"),
+        headline.get("expected_mom_pct"),
+        headline.get("mom_pct"),
+    )
+    if r:
+        rows.append(r)
+    if core:
+        r = _render_metric_row(
+            f"{_short_label((core.get('event_type') or '').upper())} MoM",
+            core.get("prior_mom_pct"),
+            core.get("expected_mom_pct"),
+            core.get("mom_pct"),
+        )
+        if r:
+            rows.append(r)
+    r = _render_metric_row(
+        head_label_yoy,
+        headline.get("prior_yoy_pct"),
+        headline.get("expected_yoy_pct"),
+        headline.get("yoy_pct"),
+    )
+    if r:
+        rows.append(r)
+    if core:
+        r = _render_metric_row(
+            f"{_short_label((core.get('event_type') or '').upper())} YoY",
+            core.get("prior_yoy_pct"),
+            core.get("expected_yoy_pct"),
+            core.get("yoy_pct"),
+        )
+        if r:
+            rows.append(r)
+    return "\n".join(rows) if rows else None
+
+
+_SHORT_LABEL = {
+    "CPI": "CPI",
+    "PCE": "PCE",
+    "CORE_CPI": "Çekirdek CPI",
+    "CORE_PCE": "Çekirdek PCE",
+    "NFP": "NFP",
+}
+
+
+def _short_label(et: str) -> str:
+    return _SHORT_LABEL.get(et, et)
+
+
 def _render_gauge(score: Optional[float]) -> Optional[str]:
     """ASCII gauge for a 0..1 sentiment score: ━━━●━━━━ 0.42.
     Returns None when there's nothing to render (no score yet).
@@ -165,7 +244,7 @@ def _coerce_list(v) -> list:
     return []
 
 
-def _format_message(release: dict) -> str:
+def _format_message(release: dict, core: Optional[dict] = None) -> str:
     et = (release.get("event_type") or "").upper()
     emoji = _EMOJI.get(et, "📰")
     headline = _HEADLINE.get(et, et or "Makro Veri")
@@ -181,9 +260,13 @@ def _format_message(release: dict) -> str:
     parts = [
         f"{emoji} <b>{html.escape(headline)}</b>",
     ]
-    metric = _render_headline_metric(release)
-    if metric:
-        parts.append(metric)
+    period = _format_period(release.get("released_at"))
+    if period:
+        parts.append(f"📅 {period}")
+    metrics_block = _render_metrics_block(release, core)
+    if metrics_block:
+        parts.append("")
+        parts.append(metrics_block)
     parts.append("")
     parts.append(html.escape(narrative))
     if sectors:
@@ -214,16 +297,19 @@ def _to_float(v) -> Optional[float]:
 
 
 async def _load_release(event_id: str) -> Optional[dict]:
-    sql = text("""
-        SELECT event_id, event_type, source, released_at,
-               actual_value, prior_value,
-               narrative_md, sentiment_score, source_url,
-               sectors_positive, sectors_negative
-        FROM macro_releases WHERE event_id = :eid
-    """)
+    """Load the row + delegate to macro_public's enricher so the broadcaster
+    sees the same MoM/YoY/expected/prior derivatives as the dashboard.
+    """
+    from routers.v1.macro_public import _enrich_release, _fetch_paired_core, _SELECT_COLS
+    sql = text(f"SELECT {_SELECT_COLS} FROM macro_releases WHERE event_id = :eid")
     async with engine.begin() as conn:
         row = (await conn.execute(sql, {"eid": event_id})).mappings().first()
-    return dict(row) if row else None
+        if not row:
+            return None
+        enriched = await _enrich_release(conn, row)
+        core = await _fetch_paired_core(conn, row)
+    enriched["_core_release"] = core
+    return enriched
 
 
 async def broadcast_release(event_id: str) -> dict:
@@ -244,7 +330,8 @@ async def broadcast_release(event_id: str) -> dict:
         logger.warning(f"macro broadcast: empty narrative for {event_id}")
         return {"sent": 0, "failed": 0, "no_narrative": True}
 
-    message = _format_message(release)
+    core = release.pop("_core_release", None)
+    message = _format_message(release, core=core)
 
     try:
         async with AsyncSessionLocal() as session:

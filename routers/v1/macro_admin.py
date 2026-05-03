@@ -127,3 +127,46 @@ async def trigger_broadcast(
     — calling this manually intentionally bypasses that gate."""
     _check_auth(x_internal_secret)
     return await broadcast_release(event_id)
+
+
+@router.post("/expected/{event_id:path}")
+async def set_expected(
+    event_id: str,
+    expected_mom_pct: Optional[float] = Query(None, description="Consensus MoM % (e.g. 1.0)"),
+    expected_yoy_pct: Optional[float] = Query(None, description="Consensus YoY % (e.g. 3.4)"),
+    x_internal_secret: Optional[str] = Header(None),
+):
+    """Admin entry for the consensus % readings. Pass either or both;
+    omitting one leaves the existing value untouched. Returns the row's
+    new state. Idempotent — safe to call repeatedly to correct typos.
+
+    There's deliberately no public scrape source for consensus values
+    (Trading Economics paid, ForexFactory ToS-restricted) — admin entry
+    is the lean path until we add a paid feed.
+    """
+    _check_auth(x_internal_secret)
+    if expected_mom_pct is None and expected_yoy_pct is None:
+        raise HTTPException(status_code=400, detail="Provide expected_mom_pct or expected_yoy_pct")
+    sets = []
+    params: dict = {"eid": event_id}
+    if expected_mom_pct is not None:
+        sets.append("expected_mom_pct = :mom")
+        params["mom"] = expected_mom_pct
+    if expected_yoy_pct is not None:
+        sets.append("expected_yoy_pct = :yoy")
+        params["yoy"] = expected_yoy_pct
+    sql = text(
+        f"UPDATE macro_releases SET {', '.join(sets)} "
+        "WHERE event_id = :eid "
+        "RETURNING event_id, event_type, expected_mom_pct, expected_yoy_pct"
+    )
+    async with engine.begin() as conn:
+        row = (await conn.execute(sql, params)).mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"event_id {event_id} not found")
+    return {
+        "event_id": row["event_id"],
+        "event_type": row["event_type"],
+        "expected_mom_pct": float(row["expected_mom_pct"]) if row["expected_mom_pct"] is not None else None,
+        "expected_yoy_pct": float(row["expected_yoy_pct"]) if row["expected_yoy_pct"] is not None else None,
+    }

@@ -54,3 +54,29 @@ PCE_COOL:
   mechanism: "Cut bets accelerate; duration assets lead"
   sectors_positive: [tech, growth_stocks, real_estate, consumer_discretionary]
   sectors_negative: [energy, financials]
+
+# Core CPI / Core PCE — same sector logic as headline; the surprise here
+# matters more for Fed policy because food/energy noise is stripped.
+CORE_CPI_HOT:
+  description: "Core CPI prints above expectation; underlying inflation sticky"
+  mechanism: "Service-side inflation persists; rate-cut path delayed further"
+  sectors_negative: [tech, growth_stocks, real_estate, consumer_discretionary, utilities]
+  sectors_positive: [energy, financials, commodities, materials]
+
+CORE_CPI_COOL:
+  description: "Core CPI undershoots; underlying disinflation extends"
+  mechanism: "Service-side cooling supports cut bets; duration leads"
+  sectors_positive: [tech, growth_stocks, real_estate, consumer_discretionary, utilities]
+  sectors_negative: [energy, financials]
+
+CORE_PCE_HOT:
+  description: "Core PCE above expectation; Fed's preferred gauge sticky"
+  mechanism: "Highest Fed-policy weight; cuts pushed out more aggressively"
+  sectors_negative: [tech, growth_stocks, real_estate, consumer_discretionary]
+  sectors_positive: [energy, financials, commodities]
+
+CORE_PCE_COOL:
+  description: "Core PCE undershoots; Fed's preferred gauge confirms disinflation"
+  mechanism: "Strongest dovish signal of all releases; risk-on into duration"
+  sectors_positive: [tech, growth_stocks, real_estate, consumer_discretionary]
+  sectors_negative: [energy, financials]
