@@ -40,7 +40,27 @@ def _row_to_release(r) -> dict:
         "narrative_md": r["narrative_md"],
         "sentiment_score": float(r["sentiment_score"]) if r["sentiment_score"] is not None else None,
         "source_url": r["source_url"],
+        "sectors_positive": _coerce_jsonb_list(r["sectors_positive"] if "sectors_positive" in r else None),
+        "sectors_negative": _coerce_jsonb_list(r["sectors_negative"] if "sectors_negative" in r else None),
     }
+
+
+def _coerce_jsonb_list(v) -> list:
+    """JSONB columns can come back as list (asyncpg) or str (string driver).
+    Normalise to a plain list of strings; empty fallback on anything weird.
+    """
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return [str(x) for x in v if x]
+    if isinstance(v, str):
+        try:
+            import json as _json
+            parsed = _json.loads(v)
+            return [str(x) for x in parsed if x] if isinstance(parsed, list) else []
+        except Exception:
+            return []
+    return []
 
 
 @router.get("/latest")
@@ -62,7 +82,8 @@ async def latest_release(response: Response):
     response.headers["Cache-Control"] = _CACHE_HEADER
     sql = text("""
         SELECT event_id, event_type, country, source, released_at,
-               actual_value, prior_value, narrative_md, sentiment_score, source_url
+               actual_value, prior_value, narrative_md, sentiment_score, source_url,
+               sectors_positive, sectors_negative
         FROM macro_releases
         WHERE narrative_md IS NOT NULL
           AND released_at >= NOW() - INTERVAL '180 days'
@@ -89,7 +110,8 @@ async def recent_releases(
     response.headers["Cache-Control"] = _CACHE_HEADER
     sql = text("""
         SELECT event_id, event_type, country, source, released_at,
-               actual_value, prior_value, narrative_md, sentiment_score, source_url
+               actual_value, prior_value, narrative_md, sentiment_score, source_url,
+               sectors_positive, sectors_negative
         FROM macro_releases
         WHERE released_at >= NOW() - make_interval(days => :days)
         ORDER BY released_at DESC NULLS LAST, created_at DESC
@@ -112,7 +134,8 @@ async def release_detail(event_id: str, response: Response):
     response.headers["Cache-Control"] = _CACHE_HEADER
     sql = text("""
         SELECT event_id, event_type, country, source, released_at,
-               actual_value, prior_value, narrative_md, sentiment_score, source_url
+               actual_value, prior_value, narrative_md, sentiment_score, source_url,
+               sectors_positive, sectors_negative
         FROM macro_releases
         WHERE event_id = :eid
     """)

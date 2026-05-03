@@ -65,12 +65,64 @@ def _sentiment_chip(score: Optional[float]) -> str:
     return " 🟡 Karışık"
 
 
+_GAUGE_CELLS = 8
+
+
+def _render_gauge(score: Optional[float]) -> Optional[str]:
+    """ASCII gauge for a 0..1 sentiment score: ━━━●━━━━ 0.42.
+    Returns None when there's nothing to render (no score yet).
+    """
+    if score is None:
+        return None
+    s = max(0.0, min(1.0, float(score)))
+    pos = int(round(s * (_GAUGE_CELLS - 1)))
+    cells = ["━"] * _GAUGE_CELLS
+    cells[pos] = "●"
+    return f"{''.join(cells)} {s:.2f}"
+
+
+def _render_sectors(positive, negative) -> Optional[str]:
+    """Two-line sector chip block. Returns None when both lists are empty.
+    Inputs may be JSON strings (Postgres JSONB round-tripped) or lists.
+    """
+    pos = _coerce_list(positive)
+    neg = _coerce_list(negative)
+    if not pos and not neg:
+        return None
+    lines = []
+    if pos:
+        lines.append(f"↑ {html.escape(', '.join(pos))}")
+    if neg:
+        lines.append(f"↓ {html.escape(', '.join(neg))}")
+    return "\n".join(lines)
+
+
+def _coerce_list(v) -> list:
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return [str(x) for x in v if x]
+    if isinstance(v, str):
+        try:
+            import json as _json
+            parsed = _json.loads(v)
+            return [str(x) for x in parsed if x] if isinstance(parsed, list) else []
+        except Exception:
+            return []
+    return []
+
+
 def _format_message(release: dict) -> str:
     et = (release.get("event_type") or "").upper()
     emoji = _EMOJI.get(et, "📰")
     headline = _HEADLINE.get(et, et or "Makro Veri")
     narrative = (release.get("narrative_md") or "").strip()
-    sentiment = _sentiment_chip(_to_float(release.get("sentiment_score")))
+    score = _to_float(release.get("sentiment_score"))
+    sentiment = _sentiment_chip(score)
+    gauge = _render_gauge(score)
+    sectors = _render_sectors(
+        release.get("sectors_positive"), release.get("sectors_negative"),
+    )
     src_url = release.get("source_url") or ""
 
     parts = [
@@ -78,13 +130,21 @@ def _format_message(release: dict) -> str:
         "",
         html.escape(narrative),
     ]
-    if sentiment:
+    if sectors:
         parts.append("")
-        parts.append(f"<i>Piyasa tonu:{sentiment}</i>")
+        parts.append(sectors)
+    if sentiment or gauge:
+        parts.append("")
+        if sentiment:
+            parts.append(f"<i>Piyasa tonu:{sentiment}</i>")
+        if gauge:
+            parts.append(f"<code>{gauge}</code>")
     if src_url:
         safe = html.escape(src_url, quote=True)
         parts.append("")
         parts.append(f"🔗 <a href='{safe}'>Resmi kaynak</a>")
+    parts.append("")
+    parts.append("<i>⚠️ Yatırım tavsiyesi değildir.</i>")
     return "\n".join(parts)
 
 
@@ -100,7 +160,8 @@ def _to_float(v) -> Optional[float]:
 async def _load_release(event_id: str) -> Optional[dict]:
     sql = text("""
         SELECT event_id, event_type, source, released_at,
-               narrative_md, sentiment_score, source_url
+               narrative_md, sentiment_score, source_url,
+               sectors_positive, sectors_negative
         FROM macro_releases WHERE event_id = :eid
     """)
     async with engine.begin() as conn:

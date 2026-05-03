@@ -18,6 +18,7 @@ admin /narrative endpoint can force re-gen by NULLing the column manually.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -97,17 +98,32 @@ async def _load_market_snapshots(meeting_ticker: Optional[str], around: datetime
     return (dict(b) if b else None, dict(a) if a else None)
 
 
-async def _persist(event_id: str, narrative_md: str, sentiment_score: Optional[float]) -> bool:
+async def _persist(
+    event_id: str,
+    narrative_md: str,
+    sentiment_score: Optional[float],
+    sectors_positive: Optional[list] = None,
+    sectors_negative: Optional[list] = None,
+) -> bool:
     """Idempotent UPDATE — only fills when narrative_md IS NULL."""
     sql = text("""
         UPDATE macro_releases
-        SET narrative_md = :narr, sentiment_score = :sent
+        SET narrative_md = :narr,
+            sentiment_score = :sent,
+            sectors_positive = CAST(:pos AS JSONB),
+            sectors_negative = CAST(:neg AS JSONB)
         WHERE event_id = :eid AND narrative_md IS NULL
     """)
     async with engine.begin() as conn:
         result = await conn.execute(
             sql,
-            {"narr": narrative_md, "sent": sentiment_score, "eid": event_id},
+            {
+                "narr": narrative_md,
+                "sent": sentiment_score,
+                "pos": json.dumps(list(sectors_positive or [])),
+                "neg": json.dumps(list(sectors_negative or [])),
+                "eid": event_id,
+            },
         )
     return (result.rowcount or 0) > 0
 
@@ -356,7 +372,11 @@ async def generate_narrative(event_id: str) -> NarrativeResult:
                 sentiment = float(sentiment_raw) if sentiment_raw is not None else None
             except (TypeError, ValueError):
                 sentiment = None
-            written = await _persist(event_id, narrative_md, sentiment)
+            written = await _persist(
+                event_id, narrative_md, sentiment,
+                sectors_positive=sectors_pos,
+                sectors_negative=sectors_neg,
+            )
             result.written = written
             result.narrative_md = narrative_md
             result.sentiment_score = sentiment
@@ -373,7 +393,11 @@ async def generate_narrative(event_id: str) -> NarrativeResult:
         f"{impact.description} "
         f"Mekanizma: {impact.mechanism}."
     )
-    written = await _persist(event_id, fallback_md, None)
+    written = await _persist(
+        event_id, fallback_md, None,
+        sectors_positive=list(impact.sectors_positive),
+        sectors_negative=list(impact.sectors_negative),
+    )
     result.written = written
     result.used_fallback = True
     result.narrative_md = fallback_md

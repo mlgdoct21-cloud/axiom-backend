@@ -130,6 +130,16 @@ _POSTGRES_GUARDS = [
         "ix_macro_releases_country",
         "CREATE INDEX IF NOT EXISTS ix_macro_releases_country ON macro_releases(country)",
     ),
+    # alembic 005 — sector chip persistence (Gemini already produces these,
+    # this just finally stores them for the broadcaster + dashboard to render).
+    (
+        "macro_releases.sectors_positive",
+        "ALTER TABLE macro_releases ADD COLUMN IF NOT EXISTS sectors_positive JSONB NOT NULL DEFAULT '[]'::jsonb",
+    ),
+    (
+        "macro_releases.sectors_negative",
+        "ALTER TABLE macro_releases ADD COLUMN IF NOT EXISTS sectors_negative JSONB NOT NULL DEFAULT '[]'::jsonb",
+    ),
     # Macro source reliability — append-only probe log. Hafta 1 verification
     # criterion (>=99% uptime, p95<3s) is computed by rolling SELECT over the
     # last N hours of rows. ~2000 rows/source/week at 5-min cadence.
