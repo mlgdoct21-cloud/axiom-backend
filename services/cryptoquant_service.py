@@ -888,6 +888,35 @@ async def get_onchain_snapshot(symbol: str = "BTC") -> dict:
     return snapshot
 
 
+async def get_btc_spot_price() -> Optional[float]:
+    """Latest BTC close price via CryptoQuant /btc/market-data/price-ohlcv.
+    Used by ETF flow scheduler + anywhere we need a robust BTC spot.
+    Returns None silently on error so callers can fallback to FMP/CoinGecko."""
+    if not _is_configured():
+        return None
+    raw = await _cq_get(
+        "/btc/market-data/price-ohlcv",
+        {
+            "market": "spot",
+            "exchange": "binance",
+            "symbol": "btc_usdt",
+            "window": "hour",
+            "limit": 1,
+        },
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    val = latest.get("close") or latest.get("price")
+    try:
+        return float(val) if val else None
+    except (TypeError, ValueError):
+        return None
+
+
 async def refresh_all_metrics() -> None:
     """Force-refresh all metrics. Called by scheduler."""
     logger.info("CryptoQuant: refreshing all metrics...")

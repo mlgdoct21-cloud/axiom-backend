@@ -27,7 +27,24 @@ STARTUP_REFRESH_THRESHOLD = timedelta(hours=23)  # Startup'ta cache 23h+ eskiyse
 
 
 async def _fetch_spot_price(symbol: str) -> Optional[float]:
-    """Coin spot price (FMP'den)."""
+    """Coin spot price — CryptoQuant primary (Pro plan, kurumsal-kalite),
+    FMP fallback (free tier, sometimes 402'd on indices).
+
+    BTC için her iki kaynak da denenir; ETH için CryptoQuant'ta benzer
+    endpoint var (/eth/market-data/price-ohlcv) ama Pro plan'da open
+    olduğu doğrulanmadı, FMP'ye düşülür.
+    """
+    # 1. CryptoQuant (BTC only şimdilik)
+    if symbol == "BTC":
+        try:
+            from services.cryptoquant_service import get_btc_spot_price
+            cq_price = await get_btc_spot_price()
+            if cq_price and cq_price > 0:
+                return cq_price
+        except Exception as e:
+            logger.debug(f"CryptoQuant spot price unavailable, falling back: {e}")
+
+    # 2. FMP fallback
     try:
         import os
         import aiohttp
