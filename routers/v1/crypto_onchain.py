@@ -10,11 +10,14 @@ Admin (BOT_INTERNAL_SECRET):
   POST /api/v1/admin/crypto/refresh        — bust cache + refresh
 """
 import os
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Query, Header, HTTPException
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
+from core.database import engine
 from services.cryptoquant_service import get_onchain_snapshot, _is_configured, refresh_all_metrics
 from services.cryptoquant_alerts import sweep_and_dispatch, morning_briefing
 
@@ -31,6 +34,50 @@ async def onchain_snapshot(symbol: str = Query(default="BTC", max_length=10)):
         )
     data = await get_onchain_snapshot(symbol)
     return JSONResponse(content=data)
+
+
+@router.get("/crypto/alerts/history")
+async def alert_history(days: int = Query(default=7, ge=1, le=30)):
+    """Returns the last N days of fired alerts (all users aggregated, no PII).
+    Used by the 'Son 7 Gün Alarmlar' dashboard widget — public, surfaces what
+    the system has been signaling so prospective users see real activity.
+    """
+    sql = text("""
+        SELECT alert_key, severity, title, sent_at, sent_date
+        FROM cryptoquant_alert_log
+        WHERE sent_at > NOW() - make_interval(days => :days)
+        ORDER BY sent_at DESC
+        LIMIT 100
+    """)
+    try:
+        async with engine.begin() as conn:
+            rows = (await conn.execute(sql, {"days": days})).fetchall()
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+    # De-duplicate by (alert_key, sent_date) so 5 user-fan-outs of the same
+    # alert show as one entry — what we care about is "what fired", not
+    # "to how many users". Latest sent_at wins per group.
+    seen: dict = {}
+    for r in rows:
+        key = (r[0], r[4].isoformat())
+        if key not in seen:
+            seen[key] = {
+                "alert_key": r[0],
+                "severity": r[1],
+                "title": r[2],
+                "sent_at": r[3].isoformat(),
+                "sent_date": r[4].isoformat(),
+                "fanout_count": 1,
+            }
+        else:
+            seen[key]["fanout_count"] += 1
+
+    items = list(seen.values())
+    return JSONResponse(
+        content={"days": days, "count": len(items), "items": items},
+        headers={"Cache-Control": "public, max-age=300"},
+    )
 
 
 def _check_auth(x_internal_secret: Optional[str]) -> None:
