@@ -6,6 +6,10 @@ premium/advance subscribers when one of 5 critical thresholds breaches.
 Uses 6-hour per-alert cooldown to prevent spam (the same metric crossing
 the same threshold should not fire repeatedly).
 
+Cooldown + daily budget state is persisted in Postgres
+(cryptoquant_alert_cooldown + cryptoquant_alert_log) so multi-replica
+deploy doesn't double-send and Railway restarts don't lose state.
+
 Also exposes morning_briefing() — a daily 09:00 TR digest with the
 current Axiom Score, top 3 movers, and a 1-paragraph Turkish narrative.
 """
@@ -13,8 +17,10 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+from sqlalchemy import text
 from sqlalchemy.future import select
-from core.database import AsyncSessionLocal
+
+from core.database import AsyncSessionLocal, engine
 from core.logger import get_logger
 from models.user import User
 from services.cryptoquant_service import get_onchain_snapshot
@@ -22,14 +28,7 @@ from services.telegram_bot import send_telegram_message
 
 logger = get_logger("cryptoquant_alerts")
 
-# ── Cooldown state — in-memory (restart resets, ok for now) ──────────────────
-# {alert_key: unix_ts_resume_at}
-_alert_cooldowns: dict[str, float] = {}
 _ALERT_COOLDOWN = timedelta(hours=6)
-
-# Daily-budget per user (in-memory, restart resets at UTC midnight)
-# {(date_str, user_id): count}
-_alerts_sent_today: dict[tuple[str, int], int] = {}
 
 
 def _today_utc_str() -> str:
@@ -44,15 +43,66 @@ def _get_daily_budget(tier: str) -> int:
     return 0  # free: no alerts
 
 
-def _is_in_cooldown(alert_key: str) -> bool:
-    import time
-    ts = _alert_cooldowns.get(alert_key, 0)
-    return time.time() < ts
+# ── DB-backed cooldown ───────────────────────────────────────────────────────
+
+async def _is_in_cooldown(alert_key: str) -> bool:
+    sql = text(
+        "SELECT 1 FROM cryptoquant_alert_cooldown "
+        "WHERE alert_key = :k AND expires_at > NOW() LIMIT 1"
+    )
+    try:
+        async with engine.begin() as conn:
+            row = (await conn.execute(sql, {"k": alert_key})).fetchone()
+            return row is not None
+    except Exception as e:
+        logger.warning(f"cooldown read error {alert_key}: {e}")
+        return False  # fail-open: better to fire than miss
 
 
-def _set_cooldown(alert_key: str) -> None:
-    import time
-    _alert_cooldowns[alert_key] = time.time() + _ALERT_COOLDOWN.total_seconds()
+async def _set_cooldown(alert_key: str) -> None:
+    expires_at = datetime.now(timezone.utc) + _ALERT_COOLDOWN
+    sql = text("""
+        INSERT INTO cryptoquant_alert_cooldown (alert_key, expires_at, updated_at)
+        VALUES (:k, :e, NOW())
+        ON CONFLICT (alert_key) DO UPDATE
+        SET expires_at = EXCLUDED.expires_at, updated_at = NOW()
+    """)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(sql, {"k": alert_key, "e": expires_at})
+    except Exception as e:
+        logger.warning(f"cooldown write error {alert_key}: {e}")
+
+
+# ── DB-backed daily budget ───────────────────────────────────────────────────
+
+async def _count_alerts_today(telegram_id: str) -> int:
+    sql = text(
+        "SELECT COUNT(*) FROM cryptoquant_alert_log "
+        "WHERE telegram_id = :tid AND sent_date = (NOW() AT TIME ZONE 'UTC')::date"
+    )
+    try:
+        async with engine.begin() as conn:
+            row = (await conn.execute(sql, {"tid": str(telegram_id)})).fetchone()
+            return int(row[0]) if row else 0
+    except Exception as e:
+        logger.warning(f"alert count error {telegram_id}: {e}")
+        return 0  # fail-open
+
+
+async def _log_alert_sent(telegram_id: str, alert_key: str, severity: Optional[str], title: Optional[str]) -> None:
+    sql = text("""
+        INSERT INTO cryptoquant_alert_log (telegram_id, alert_key, severity, title, sent_at, sent_date)
+        VALUES (:tid, :k, :sev, :t, NOW(), (NOW() AT TIME ZONE 'UTC')::date)
+    """)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(sql, {
+                "tid": str(telegram_id), "k": alert_key,
+                "sev": severity, "t": title,
+            })
+    except Exception as e:
+        logger.warning(f"alert log write error: {e}")
 
 
 # ── Alert definitions ─────────────────────────────────────────────────────────
@@ -167,14 +217,17 @@ async def sweep_and_dispatch() -> dict:
     if not triggered:
         return {"triggered": 0, "sent": 0}
 
-    # Filter out cooled-down alerts
-    fresh = [a for a in triggered if not _is_in_cooldown(a["key"])]
+    # Filter out cooled-down alerts (DB-backed)
+    fresh = []
+    for a in triggered:
+        if not await _is_in_cooldown(a["key"]):
+            fresh.append(a)
     if not fresh:
         return {"triggered": len(triggered), "sent": 0, "all_in_cooldown": True}
 
-    # Mark cooldowns first (atomic-ish so concurrent sweeps don't double-fire)
+    # Mark cooldowns first so concurrent sweeps don't double-fire
     for a in fresh:
-        _set_cooldown(a["key"])
+        await _set_cooldown(a["key"])
 
     # Load eligible users
     try:
@@ -185,12 +238,13 @@ async def sweep_and_dispatch() -> dict:
         return {"error": "user_query_failed"}
 
     eligible = []
-    today = _today_utc_str()
     for u in all_users:
         tier = (getattr(u, "tier", "free") or "free").lower()
         budget = _get_daily_budget(tier)
-        used = _alerts_sent_today.get((today, int(u.telegram_id)), 0)
-        if budget > 0 and used < budget:
+        if budget <= 0:
+            continue
+        used = await _count_alerts_today(u.telegram_id)
+        if used < budget:
             eligible.append((u, tier, budget, used))
 
     if not eligible:
@@ -202,13 +256,12 @@ async def sweep_and_dispatch() -> dict:
     for alert in fresh:
         msg = _format_alert(alert, snap)
         for u, tier, budget, _used in eligible:
-            uid = int(u.telegram_id)
-            current_used = _alerts_sent_today.get((today, uid), 0)
+            current_used = await _count_alerts_today(u.telegram_id)
             if current_used >= budget:
                 continue
             try:
                 send_telegram_message(int(u.telegram_id), msg)
-                _alerts_sent_today[(today, uid)] = current_used + 1
+                await _log_alert_sent(u.telegram_id, alert["key"], alert.get("severity"), alert.get("title"))
                 sent_count += 1
             except Exception as e:
                 logger.warning(f"alert send fail for {u.telegram_id}: {e}")

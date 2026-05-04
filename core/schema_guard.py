@@ -264,6 +264,39 @@ _POSTGRES_GUARDS = [
         "ix_cryptoquant_cache_expires",
         "CREATE INDEX IF NOT EXISTS ix_cryptoquant_cache_expires ON cryptoquant_cache(expires_at)",
     ),
+    # alembic 012 — alert log + cooldown persistence (multi-replica safe)
+    (
+        "cryptoquant_alert_log table",
+        """CREATE TABLE IF NOT EXISTS cryptoquant_alert_log (
+            id BIGSERIAL PRIMARY KEY,
+            telegram_id VARCHAR(32) NOT NULL,
+            alert_key VARCHAR(64) NOT NULL,
+            severity VARCHAR(16),
+            title VARCHAR(128),
+            sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            sent_date DATE NOT NULL
+        )""",
+    ),
+    (
+        "ix_cq_alert_log_user_date",
+        "CREATE INDEX IF NOT EXISTS ix_cq_alert_log_user_date ON cryptoquant_alert_log(telegram_id, sent_date)",
+    ),
+    (
+        "ix_cq_alert_log_sent_at",
+        "CREATE INDEX IF NOT EXISTS ix_cq_alert_log_sent_at ON cryptoquant_alert_log(sent_at)",
+    ),
+    (
+        "cryptoquant_alert_cooldown table",
+        """CREATE TABLE IF NOT EXISTS cryptoquant_alert_cooldown (
+            alert_key VARCHAR(64) PRIMARY KEY,
+            expires_at TIMESTAMPTZ NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )""",
+    ),
+    (
+        "ix_cq_alert_cooldown_expires",
+        "CREATE INDEX IF NOT EXISTS ix_cq_alert_cooldown_expires ON cryptoquant_alert_cooldown(expires_at)",
+    ),
 ]
 
 
