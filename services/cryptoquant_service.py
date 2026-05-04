@@ -82,10 +82,12 @@ def _yesterday_str() -> str:
 
 async def _cache_set(metric_key: str, symbol: str, window: str, data: dict, ttl: timedelta) -> None:
     expires_at = datetime.now(timezone.utc) + ttl
+    # NOTE: "window" is a PostgreSQL reserved keyword (window functions),
+    # so we must double-quote it everywhere we reference the column.
     sql = text("""
-        INSERT INTO cryptoquant_cache (metric_key, symbol, window, data, fetched_at, expires_at)
+        INSERT INTO cryptoquant_cache (metric_key, symbol, "window", data, fetched_at, expires_at)
         VALUES (:key, :sym, :win, :data::jsonb, NOW(), :exp)
-        ON CONFLICT (metric_key, symbol, window)
+        ON CONFLICT (metric_key, symbol, "window")
         DO UPDATE SET data = EXCLUDED.data, fetched_at = NOW(), expires_at = EXCLUDED.expires_at
     """)
     import json
@@ -102,7 +104,7 @@ async def _cache_set(metric_key: str, symbol: str, window: str, data: dict, ttl:
 async def _cache_get(metric_key: str, symbol: str, window: str) -> Optional[dict]:
     sql = text("""
         SELECT data FROM cryptoquant_cache
-        WHERE metric_key = :key AND symbol = :sym AND window = :win
+        WHERE metric_key = :key AND symbol = :sym AND "window" = :win
           AND expires_at > NOW()
         LIMIT 1
     """)
@@ -143,7 +145,7 @@ async def _fetch_whale_ratio() -> Optional[dict]:
     """BTC exchange whale ratio (all exchanges, last day). >= 0.85 = whale activity."""
     yesterday = _yesterday_str()
     raw = await _cq_get(
-        "/btc/flow-indicators/exchange-whale-ratio",
+        "/btc/flow-indicator/exchange-whale-ratio",
         {"exchange": "all_exchange", "window": "day", "from": yesterday, "limit": 3},
     )
     if not raw:
@@ -202,11 +204,13 @@ async def _fetch_miner_reserve() -> Optional[dict]:
 
 
 async def _fetch_stablecoin_inflow() -> Optional[dict]:
-    """USDT exchange inflow (all exchanges, last day). Rising = bullish (buying power)."""
+    """Stablecoin (all tokens) exchange inflow. Rising = bullish (buying power
+    coming on-chain). Path moved from /usdt/... to /stablecoin/... in CQ v1
+    namespace; token=all_token aggregates USDT+USDC+BUSD+DAI etc."""
     yesterday = _yesterday_str()
     raw = await _cq_get(
-        "/usdt/exchange-flows/inflow",
-        {"exchange": "all_exchange", "window": "day", "from": yesterday, "limit": 3},
+        "/stablecoin/exchange-flows/inflow",
+        {"token": "all_token", "exchange": "all_exchange", "window": "day", "from": yesterday, "limit": 3},
     )
     if not raw:
         return None
@@ -267,10 +271,11 @@ async def _fetch_open_interest() -> Optional[dict]:
 
 
 async def _fetch_sopr() -> Optional[dict]:
-    """SOPR (Spent Output Profit Ratio). >1 = profit-taking, <1 = panic selling."""
+    """SOPR (Spent Output Profit Ratio). >1 = profit-taking, <1 = panic selling.
+    NOTE: lives under /market-indicator/, not /network-indicator/ in CQ v1."""
     yesterday = _yesterday_str()
     raw = await _cq_get(
-        "/btc/network-indicators/sopr",
+        "/btc/market-indicator/sopr",
         {"window": "day", "from": yesterday, "limit": 3},
     )
     if not raw:
