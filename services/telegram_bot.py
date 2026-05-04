@@ -682,6 +682,9 @@ async def process_onchain_command(chat_id, user_id, symbol: str = "BTC"):
 
     sigs = snap.get("signals", {})
     overall_tr = snap.get("overall_tr", "❓ Veri Yok")
+    axiom_score = snap.get("axiom_score")
+    score_zone_tr = snap.get("score_zone_tr", "")
+    score_summary = snap.get("score_summary", "")
 
     def _line(emoji: str, label: str, key: str) -> str:
         s = sigs.get(key)
@@ -689,32 +692,53 @@ async def process_onchain_command(chat_id, user_id, symbol: str = "BTC"):
             return ""
         return f"{emoji} <b>{label}:</b> <code>{s['value_str']}</code>  {s['label_tr']}\n"
 
+    score_line = ""
+    if axiom_score is not None:
+        score_line = (
+            f"\n🎯 <b>AXIOM SKOR: {axiom_score}/100</b>  {score_zone_tr}\n"
+            f"<i>{score_summary}</i>\n"
+        )
+
     body = (
         f"🔗 <b>ON-CHAIN SNAPSHOT — {symbol}</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━{score_line}\n"
+        f"<b>Akıllı Para:</b>\n"
         f"{_line('📥', 'Borsa Akışı', 'exchange_netflow')}"
         f"{_line('🐋', 'Balina Oranı', 'whale_ratio')}"
-        f"{_line('⛏️', 'Madenci Baskı', 'miner_reserve')}"
+        f"{_line('⛏️', 'MPI (Madenci)', 'mpi')}"
         f"{_line('💵', 'USDT Girişi', 'stablecoin_inflow')}"
+        f"\n<b>Döngü Pusulası:</b>\n"
+        f"{_line('📐', 'MVRV', 'mvrv')}"
+        f"{_line('🧠', 'NUPL', 'nupl')}"
         f"{_line('📊', 'SOPR', 'sopr')}"
+        f"{_line('💎', 'Puell', 'puell')}"
     )
 
-    # Derivatives line (compact)
+    # Risk + derivatives line (compact)
     fr = sigs.get("funding_rates")
     oi = sigs.get("open_interest")
-    if fr or oi:
-        body += "\n<b>Türev Piyasa:</b>\n"
+    lev = sigs.get("leverage_ratio")
+    cb = sigs.get("coinbase_premium")
+    if fr or oi or lev or cb:
+        body += "\n<b>Risk & Türev:</b>\n"
+        if lev:
+            body += f"{_line('🌡️', 'Kaldıraç', 'leverage_ratio')}"
         if fr:
-            body += f"  ⚡ Funding (24s ort): <code>{fr['value_str']}</code>  {fr['label_tr']}\n"
+            body += f"{_line('⚡', 'Funding (24s)', 'funding_rates')}"
         if oi:
             body += f"  📈 Open Interest: <code>{oi['value_str']}</code>\n"
+        if cb:
+            body += f"{_line('🇺🇸', 'Coinbase Primi', 'coinbase_premium')}"
 
-    # Coinbase premium
-    cb = snap.get("coinbase_premium")
-    if cb:
-        cbv = cb.get("coinbase_premium", 0)
-        cb_label = "ABD kurumsal alıcı" if cbv > 0 else ("ABD kurumsal satıcı" if cbv < 0 else "Nötr")
-        body += f"  🇺🇸 Coinbase Primi: <code>{cbv:+.2f}</code>  {cb_label}\n"
+    # Realized price + hashrate (passive context)
+    rp = sigs.get("realized_price")
+    hr = sigs.get("hash_rate")
+    if rp or hr:
+        body += "\n<b>Bağlam:</b>\n"
+        if rp:
+            body += f"  📐 Piyasa Ortalama Maliyet: <code>{rp['value_str']}</code>\n"
+        if hr:
+            body += f"{_line('⛓️', 'Hash Rate', 'hash_rate')}"
 
     body += (
         f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"

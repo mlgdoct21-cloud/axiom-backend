@@ -301,6 +301,134 @@ async def _fetch_sopr() -> Optional[dict]:
     }
 
 
+async def _fetch_mvrv() -> Optional[dict]:
+    """MVRV ratio. >3.7 = market top zone, <1 = bottom/opportunity zone."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/btc/market-indicator/mvrv",
+        {"window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    return {
+        "mvrv": float(latest.get("mvrv", 0)),
+        "date": latest.get("date"),
+    }
+
+
+async def _fetch_nupl() -> Optional[dict]:
+    """NUPL (Net Unrealized Profit/Loss). Network-wide investor sentiment.
+    >0.75 = euphoria, 0.5-0.75 = belief, 0.25-0.5 = optimism, 0-0.25 = hope/fear, <0 = capitulation."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/btc/network-indicator/nupl",
+        {"window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    # NUPL field name varies; try common keys
+    val = latest.get("nupl") or latest.get("net_unrealized_profit_loss") or 0
+    return {"nupl": float(val), "date": latest.get("date")}
+
+
+async def _fetch_mpi() -> Optional[dict]:
+    """MPI (Miner Position Index). >2 = miners selling unusually, <0 = accumulating."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/btc/flow-indicator/mpi",
+        {"window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    val = latest.get("mpi") or latest.get("miner_position_index") or 0
+    return {"mpi": float(val), "date": latest.get("date")}
+
+
+async def _fetch_puell_multiple() -> Optional[dict]:
+    """Puell Multiple. Miner revenue vs 365-day average. >4 = miner top, <0.5 = miner bottom."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/btc/network-indicator/puell-multiple",
+        {"window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    val = latest.get("puell_multiple") or latest.get("puell") or 0
+    return {"puell": float(val), "date": latest.get("date")}
+
+
+async def _fetch_leverage_ratio() -> Optional[dict]:
+    """Estimated Leverage Ratio (all exchanges). >0.30 = critical, >0.36 = liquidation flush risk."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/btc/market-indicator/estimated-leverage-ratio",
+        {"exchange": "all_exchange", "window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    val = latest.get("estimated_leverage_ratio") or latest.get("elr") or 0
+    return {"leverage_ratio": float(val), "date": latest.get("date")}
+
+
+async def _fetch_realized_price() -> Optional[dict]:
+    """Realized Price — average price coins last moved at. Acts as long-term cost basis."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/btc/market-indicator/realized-price",
+        {"window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    val = latest.get("realized_price") or 0
+    return {"realized_price": float(val), "date": latest.get("date")}
+
+
+async def _fetch_hash_rate() -> Optional[dict]:
+    """BTC network hash rate (EH/s). 7-day change indicates network security trend."""
+    date_from = (datetime.now(timezone.utc) - timedelta(days=8)).strftime("%Y%m%d")
+    raw = await _cq_get(
+        "/btc/network-data/hashrate",
+        {"window": "day", "from": date_from, "limit": 8},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if len(rows) < 2:
+        return None
+    latest = float(rows[-1].get("hashrate") or rows[-1].get("hash_rate") or 0)
+    oldest = float(rows[0].get("hashrate") or rows[0].get("hash_rate") or 1)
+    change_7d = ((latest - oldest) / oldest * 100) if oldest else 0
+    return {
+        "hash_rate": latest,
+        "change_7d_pct": round(change_7d, 2),
+        "date": rows[-1].get("date"),
+    }
+
+
 async def _fetch_coinbase_premium() -> Optional[dict]:
     """Coinbase premium index (latest hourly). Positive = US institutional buyers active."""
     date_from = (datetime.now(timezone.utc) - timedelta(hours=4)).strftime("%Y%m%dT%H:%M:%S")
@@ -443,7 +571,216 @@ def _interpret_signals(snapshot: dict) -> dict:
             "label_tr": label,
         }
 
-    # Overall signal
+    # Coinbase Premium
+    cb = snapshot.get("coinbase_premium")
+    if cb:
+        v = cb["coinbase_premium"]
+        if v > 5:
+            sig, label = "BULLISH", "🟢 ABD Kurumsal Alım"
+        elif v < -5:
+            sig, label = "BEARISH", "🔴 ABD Kurumsal Satış"
+        else:
+            sig, label = "NEUTRAL", "🟡 Nötr"
+        signals["coinbase_premium"] = {
+            "value_str": f"{v:+.2f}",
+            "signal": sig,
+            "label_tr": label,
+        }
+
+    # MVRV
+    mvrv = snapshot.get("mvrv")
+    if mvrv:
+        v = mvrv["mvrv"]
+        if v > 3.7:
+            sig, label = "BEARISH", "⚠️ Tarihsel Tepe Bölgesi"
+        elif v > 2.4:
+            sig, label = "NEUTRAL", "🟡 Aşırı Değerli"
+        elif v < 1.0:
+            sig, label = "BULLISH", "💎 Tarihsel Dip Bölgesi"
+        elif v < 1.5:
+            sig, label = "BULLISH", "🟢 Adil-altı"
+        else:
+            sig, label = "NEUTRAL", "🟡 Adil Değer"
+        signals["mvrv"] = {
+            "value_str": f"{v:.2f}",
+            "signal": sig,
+            "label_tr": label,
+        }
+
+    # NUPL
+    nupl = snapshot.get("nupl")
+    if nupl:
+        v = nupl["nupl"]
+        if v > 0.75:
+            sig, label = "BEARISH", "⚠️ Aşırı Coşku (Tepe)"
+        elif v > 0.5:
+            sig, label = "NEUTRAL", "🟡 İyimserlik"
+        elif v < 0:
+            sig, label = "BULLISH", "💎 Kapitülasyon (Dip)"
+        elif v < 0.25:
+            sig, label = "BULLISH", "🟢 Korku/Umut"
+        else:
+            sig, label = "NEUTRAL", "🟡 İnanç"
+        signals["nupl"] = {
+            "value_str": f"{v:.3f}",
+            "signal": sig,
+            "label_tr": label,
+        }
+
+    # MPI (Miner Position Index)
+    mpi = snapshot.get("mpi")
+    if mpi:
+        v = mpi["mpi"]
+        if v > 2:
+            sig, label = "BEARISH", "🔴 Madenci Aşırı Satış"
+        elif v > 0.5:
+            sig, label = "NEUTRAL", "🟡 Hafif Madenci Satışı"
+        elif v < -0.5:
+            sig, label = "BULLISH", "🟢 Madenci Birikim"
+        else:
+            sig, label = "BULLISH", "🟢 Madenci Güveni"
+        signals["mpi"] = {
+            "value_str": f"{v:+.2f}",
+            "signal": sig,
+            "label_tr": label,
+        }
+
+    # Puell Multiple
+    puell = snapshot.get("puell")
+    if puell:
+        v = puell["puell"]
+        if v > 4:
+            sig, label = "BEARISH", "⚠️ Madenci Aşırı Karlı (Sat zamanı)"
+        elif v < 0.5:
+            sig, label = "BULLISH", "💎 Madenci Kapitülasyon (Dip)"
+        elif v < 1.0:
+            sig, label = "BULLISH", "🟢 Madenci Düşük Karda"
+        else:
+            sig, label = "NEUTRAL", "🟡 Normal Madenci Karı"
+        signals["puell"] = {
+            "value_str": f"{v:.2f}",
+            "signal": sig,
+            "label_tr": label,
+        }
+
+    # Estimated Leverage Ratio
+    lev = snapshot.get("leverage_ratio")
+    if lev:
+        v = lev["leverage_ratio"]
+        if v > 0.36:
+            sig, label = "BEARISH", "🔴 Kritik Kaldıraç (Tasfiye Riski)"
+        elif v > 0.30:
+            sig, label = "NEUTRAL", "🟠 Yüksek Kaldıraç"
+        elif v < 0.20:
+            sig, label = "BULLISH", "🟢 Düşük Risk"
+        else:
+            sig, label = "NEUTRAL", "🟡 Normal"
+        signals["leverage_ratio"] = {
+            "value_str": f"{v:.3f}",
+            "signal": sig,
+            "label_tr": label,
+        }
+
+    # Realized Price (passive — context only, no signal weight)
+    rp = snapshot.get("realized_price")
+    if rp:
+        v = rp["realized_price"]
+        signals["realized_price"] = {
+            "value_str": f"${v:,.0f}",
+            "signal": "NEUTRAL",
+            "label_tr": "📐 Piyasa Ortalama Maliyeti",
+        }
+
+    # Hash Rate (passive — long-term security indicator)
+    hr = snapshot.get("hash_rate")
+    if hr:
+        chg = hr["change_7d_pct"]
+        eh = hr["hash_rate"] / 1e18 if hr["hash_rate"] > 1e15 else hr["hash_rate"]
+        if chg > 5:
+            sig, label = "BULLISH", "🟢 Ağ Güçleniyor"
+        elif chg < -5:
+            sig, label = "NEUTRAL", "🟡 Hash Düşüşü"
+        else:
+            sig, label = "NEUTRAL", "🟡 Stabil"
+        signals["hash_rate"] = {
+            "value_str": f"{eh:.0f} EH/s ({chg:+.1f}%)",
+            "signal": sig,
+            "label_tr": label,
+        }
+
+    # ── Axiom Skor: weighted 0-100 composite ─────────────────────────────────
+    # Sinyal başına ±max ağırlık. Toplam max range 136 (-68 ile +68).
+    # Skor = 50 + (signed_total / 136) * 50, clamp [0, 100].
+    weights = {
+        "exchange_netflow":  25,  # en yüksek aksiyonlanabilir sinyal
+        "whale_ratio":       20,
+        "mpi":               18,
+        "stablecoin_inflow": 15,
+        "leverage_ratio":    15,
+        "funding_rates":     13,
+        "nupl":              12,
+        "sopr":              10,
+        "coinbase_premium":   8,
+    }
+
+    breakdown = []
+    signed_total = 0.0
+    max_total = 0.0
+    for key, max_w in weights.items():
+        s = signals.get(key)
+        if not s:
+            continue
+        max_total += max_w
+        if s["signal"] == "BULLISH":
+            contrib = max_w
+        elif s["signal"] == "BEARISH":
+            contrib = -max_w
+        else:
+            contrib = 0
+        signed_total += contrib
+        breakdown.append({
+            "metric": key,
+            "label_tr": s["label_tr"],
+            "value_str": s["value_str"],
+            "weight": max_w,
+            "contribution": contrib,
+            "signal": s["signal"],
+        })
+
+    if max_total == 0:
+        axiom_score = None
+        score_zone = "UNKNOWN"
+        score_zone_tr = "❓ Veri Yok"
+        score_summary = "On-chain veri henüz oluşmadı."
+    else:
+        # Normalize signed_total ∈ [-max_total, +max_total] → [0, 100]
+        axiom_score = round(50 + (signed_total / max_total) * 50, 1)
+        axiom_score = max(0, min(100, axiom_score))
+
+        if axiom_score >= 86:
+            score_zone, score_zone_tr = "OPPORTUNITY", "💎 Fırsat"
+        elif axiom_score >= 71:
+            score_zone, score_zone_tr = "SAFE", "🟢 Güvenli"
+        elif axiom_score >= 51:
+            score_zone, score_zone_tr = "CAUTION", "🟡 Dikkatli"
+        elif axiom_score >= 31:
+            score_zone, score_zone_tr = "RISKY", "🟠 Riskli"
+        else:
+            score_zone, score_zone_tr = "DANGER", "🔴 Tehlikeli"
+
+        # Build human summary from top contributors
+        positives = sorted([b for b in breakdown if b["contribution"] > 0],
+                           key=lambda x: -x["contribution"])[:3]
+        negatives = sorted([b for b in breakdown if b["contribution"] < 0],
+                           key=lambda x: x["contribution"])[:3]
+        parts = []
+        if positives:
+            parts.append("Güç: " + ", ".join(p["label_tr"] for p in positives))
+        if negatives:
+            parts.append("Baskı: " + ", ".join(n["label_tr"] for n in negatives))
+        score_summary = " · ".join(parts) if parts else "Tüm sinyaller nötr bölgede."
+
+    # Overall signal (legacy — count-based, korunuyor backward compatibility için)
     bearish = sum(1 for s in signals.values() if s["signal"] == "BEARISH")
     bullish = sum(1 for s in signals.values() if s["signal"] == "BULLISH")
     total = len(signals)
@@ -460,7 +797,16 @@ def _interpret_signals(snapshot: dict) -> dict:
         overall = "MIXED"
         overall_tr = "🟡 Karışık Sinyal"
 
-    return {"signals": signals, "overall": overall, "overall_tr": overall_tr}
+    return {
+        "signals": signals,
+        "overall": overall,
+        "overall_tr": overall_tr,
+        "axiom_score": axiom_score,
+        "score_zone": score_zone,
+        "score_zone_tr": score_zone_tr,
+        "score_summary": score_summary,
+        "score_breakdown": breakdown,  # premium-only render
+    }
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -478,11 +824,9 @@ async def get_onchain_snapshot(symbol: str = "BTC") -> dict:
     if cached and cached.get("_snapshot_full"):
         return cached
 
-    # Fetch all metrics in parallel
-    (
-        netflow, whale_ratio, miner_outflow, miner_reserve,
-        stablecoin_inflow, funding_rates, open_interest, sopr, cb_premium,
-    ) = await asyncio.gather(
+    # Fetch all metrics in parallel (16 endpoints — gather is fan-out limited
+    # only by aiohttp's connection pool; CryptoQuant tolerates this volume)
+    results = await asyncio.gather(
         _fetch_exchange_netflow(),
         _fetch_whale_ratio(),
         _fetch_miner_outflow(),
@@ -492,7 +836,19 @@ async def get_onchain_snapshot(symbol: str = "BTC") -> dict:
         _fetch_open_interest(),
         _fetch_sopr(),
         _fetch_coinbase_premium(),
+        _fetch_mvrv(),
+        _fetch_nupl(),
+        _fetch_mpi(),
+        _fetch_puell_multiple(),
+        _fetch_leverage_ratio(),
+        _fetch_realized_price(),
+        _fetch_hash_rate(),
     )
+    (
+        netflow, whale_ratio, miner_outflow, miner_reserve,
+        stablecoin_inflow, funding_rates, open_interest, sopr, cb_premium,
+        mvrv, nupl, mpi, puell, leverage_ratio, realized_price, hash_rate,
+    ) = results
 
     raw = {
         "symbol": symbol,
@@ -505,6 +861,13 @@ async def get_onchain_snapshot(symbol: str = "BTC") -> dict:
         "open_interest": open_interest,
         "sopr": sopr,
         "coinbase_premium": cb_premium,
+        "mvrv": mvrv,
+        "nupl": nupl,
+        "mpi": mpi,
+        "puell": puell,
+        "leverage_ratio": leverage_ratio,
+        "realized_price": realized_price,
+        "hash_rate": hash_rate,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "_snapshot_full": True,
     }
