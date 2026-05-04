@@ -297,6 +297,26 @@ _POSTGRES_GUARDS = [
         "ix_cq_alert_cooldown_expires",
         "CREATE INDEX IF NOT EXISTS ix_cq_alert_cooldown_expires ON cryptoquant_alert_cooldown(expires_at)",
     ),
+    # alembic 013 — Axiom Skor günlük tarihçe (T5: dün vs bugün karşılaştırma)
+    (
+        "axiom_score_history table",
+        """CREATE TABLE IF NOT EXISTS axiom_score_history (
+            id BIGSERIAL PRIMARY KEY,
+            symbol VARCHAR(16) NOT NULL,
+            score NUMERIC(5,2) NOT NULL,
+            score_zone VARCHAR(16) NOT NULL,
+            recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            recorded_date DATE NOT NULL
+        )""",
+    ),
+    (
+        "uq_axiom_score_history_sym_date",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_axiom_score_history_sym_date ON axiom_score_history(symbol, recorded_date)",
+    ),
+    (
+        "ix_axiom_score_history_recorded_at",
+        "CREATE INDEX IF NOT EXISTS ix_axiom_score_history_recorded_at ON axiom_score_history(recorded_at)",
+    ),
 ]
 
 

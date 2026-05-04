@@ -90,6 +90,39 @@ async def _count_alerts_today(telegram_id: str) -> int:
         return 0  # fail-open
 
 
+async def _record_score_snapshot(symbol: str, score: float, zone: str) -> None:
+    """Save today's score so tomorrow's briefing can show 'dün 65 → bugün 73'."""
+    sql = text("""
+        INSERT INTO axiom_score_history (symbol, score, score_zone, recorded_at, recorded_date)
+        VALUES (:sym, :s, :z, NOW(), (NOW() AT TIME ZONE 'UTC')::date)
+        ON CONFLICT (symbol, recorded_date)
+        DO UPDATE SET score = EXCLUDED.score, score_zone = EXCLUDED.score_zone, recorded_at = NOW()
+    """)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(sql, {"sym": symbol, "s": score, "z": zone})
+    except Exception as e:
+        logger.warning(f"score history write error: {e}")
+
+
+async def _yesterday_score(symbol: str) -> Optional[dict]:
+    """Returns yesterday's row or None if missing (e.g. first day)."""
+    sql = text("""
+        SELECT score, score_zone, recorded_date FROM axiom_score_history
+        WHERE symbol = :sym AND recorded_date < (NOW() AT TIME ZONE 'UTC')::date
+        ORDER BY recorded_date DESC
+        LIMIT 1
+    """)
+    try:
+        async with engine.begin() as conn:
+            row = (await conn.execute(sql, {"sym": symbol})).fetchone()
+            if row:
+                return {"score": float(row[0]), "zone": row[1], "date": row[2].isoformat()}
+    except Exception as e:
+        logger.warning(f"score history read error: {e}")
+    return None
+
+
 async def _log_alert_sent(telegram_id: str, alert_key: str, severity: Optional[str], title: Optional[str]) -> None:
     sql = text("""
         INSERT INTO cryptoquant_alert_log (telegram_id, alert_key, severity, title, sent_at, sent_date)
@@ -293,7 +326,10 @@ def _format_alert(alert: dict, snap: dict) -> str:
 
 async def morning_briefing() -> dict:
     """Compose + fan out a daily morning briefing to premium/advance users.
-    Triggered by scheduler at 06:00 UTC (09:00 TR)."""
+    Triggered by scheduler at 06:00 UTC (09:00 TR).
+
+    Side effect: today's BTC score is persisted to axiom_score_history so
+    tomorrow's briefing can compute the day-over-day delta."""
     try:
         snap = await get_onchain_snapshot("BTC")
     except Exception as e:
@@ -303,7 +339,14 @@ async def morning_briefing() -> dict:
     if not snap or snap.get("error"):
         return {"error": snap.get("error", "no_snapshot")}
 
-    msg = _format_briefing(snap)
+    # Pull yesterday's score (if any) BEFORE writing today's, otherwise
+    # ON CONFLICT update would overwrite the comparison reference.
+    yesterday = await _yesterday_score("BTC")
+
+    if snap.get("axiom_score") is not None:
+        await _record_score_snapshot("BTC", snap["axiom_score"], snap.get("score_zone", "UNKNOWN"))
+
+    msg = _format_briefing(snap, yesterday=yesterday)
 
     try:
         async with AsyncSessionLocal() as session:
@@ -330,7 +373,7 @@ async def morning_briefing() -> dict:
     return {"sent": sent, "failed": fail, "eligible": len(paying)}
 
 
-def _format_briefing(snap: dict) -> str:
+def _format_briefing(snap: dict, yesterday: Optional[dict] = None) -> str:
     score = snap.get("axiom_score")
     zone = snap.get("score_zone_tr", "")
     summary = snap.get("score_summary", "")
@@ -363,7 +406,16 @@ def _format_briefing(snap: dict) -> str:
     ]
 
     if score is not None:
-        lines.append(f"🎯 <b>AXIOM SKOR: {score:.0f}/100</b>  {zone}")
+        # Day-over-day delta line
+        delta_line = ""
+        if yesterday and yesterday.get("score") is not None:
+            y_score = yesterday["score"]
+            delta = score - y_score
+            arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "▬")
+            delta_str = f"{arrow} {abs(delta):.0f} puan" if delta != 0 else "değişmedi"
+            delta_line = f"  (dün {y_score:.0f} → bugün {score:.0f}, {delta_str})"
+
+        lines.append(f"🎯 <b>AXIOM SKOR: {score:.0f}/100</b>  {zone}{delta_line}")
         if summary:
             lines.append(f"<i>{summary}</i>")
         lines.append("")
