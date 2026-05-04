@@ -165,8 +165,13 @@ async def _fetch_whale_ratio() -> Optional[dict]:
     if not rows:
         return None
     latest = rows[-1]
+    # CryptoQuant returns the field as 'exchange_whale_ratio'; fall back to
+    # 'whale_ratio' for older payloads.
+    val = latest.get("exchange_whale_ratio")
+    if val is None:
+        val = latest.get("whale_ratio", 0)
     return {
-        "whale_ratio": float(latest.get("whale_ratio", 0)),
+        "whale_ratio": float(val),
         "date": latest.get("date", yesterday),
     }
 
@@ -691,11 +696,13 @@ def _interpret_signals(snapshot: dict) -> dict:
             "label_tr": "📐 Piyasa Ortalama Maliyeti",
         }
 
-    # Hash Rate (passive — long-term security indicator)
+    # Hash Rate (passive — long-term security indicator). CQ returns raw
+    # network hash count which doesn't cleanly map to EH/s without extra
+    # math; we display only the 7-day delta which is what actually matters
+    # for the "is the network getting stronger?" read.
     hr = snapshot.get("hash_rate")
     if hr:
         chg = hr["change_7d_pct"]
-        eh = hr["hash_rate"] / 1e18 if hr["hash_rate"] > 1e15 else hr["hash_rate"]
         if chg > 5:
             sig, label = "BULLISH", "🟢 Ağ Güçleniyor"
         elif chg < -5:
@@ -703,7 +710,7 @@ def _interpret_signals(snapshot: dict) -> dict:
         else:
             sig, label = "NEUTRAL", "🟡 Stabil"
         signals["hash_rate"] = {
-            "value_str": f"{eh:.0f} EH/s ({chg:+.1f}%)",
+            "value_str": f"{chg:+.1f}% (7G)",
             "signal": sig,
             "label_tr": label,
         }
