@@ -31,7 +31,14 @@ from core.logger import get_logger
 logger = get_logger("cryptoquant_service")
 
 _BASE_URL = "https://api.cryptoquant.com/v1"
-_API_KEY: str = os.getenv("CRYPTOQUANT_API_KEY", "").strip()
+
+
+def _api_key() -> str:
+    """Read fresh from env on every call so Railway env updates are picked
+    up without a hard restart (module-level cache would freeze the value
+    at import time)."""
+    return os.getenv("CRYPTOQUANT_API_KEY", "").strip()
+
 
 # Cache TTLs
 _TTL_EXCHANGE_FLOW = timedelta(hours=4)
@@ -41,15 +48,16 @@ _TTL_CYCLE = timedelta(hours=12)
 
 
 def _is_configured() -> bool:
-    return bool(_API_KEY)
+    return bool(_api_key())
 
 
 async def _cq_get(path: str, params: dict) -> Optional[dict]:
     """Single CryptoQuant API GET call. Returns parsed JSON or None on error."""
-    if not _is_configured():
+    key = _api_key()
+    if not key:
         return None
     url = f"{_BASE_URL}{path}"
-    headers = {"Authorization": f"Bearer {_API_KEY}"}
+    headers = {"Authorization": f"Bearer {key}"}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
@@ -84,9 +92,12 @@ async def _cache_set(metric_key: str, symbol: str, window: str, data: dict, ttl:
     expires_at = datetime.now(timezone.utc) + ttl
     # NOTE: "window" is a PostgreSQL reserved keyword (window functions),
     # so we must double-quote it everywhere we reference the column.
+    # NOTE: Use CAST(:data AS jsonb) instead of :data::jsonb — asyncpg's
+    # parameter parser treats a second ":" inside the literal as another
+    # bind, raising "syntax error at or near :".
     sql = text("""
         INSERT INTO cryptoquant_cache (metric_key, symbol, "window", data, fetched_at, expires_at)
-        VALUES (:key, :sym, :win, :data::jsonb, NOW(), :exp)
+        VALUES (:key, :sym, :win, CAST(:data AS jsonb), NOW(), :exp)
         ON CONFLICT (metric_key, symbol, "window")
         DO UPDATE SET data = EXCLUDED.data, fetched_at = NOW(), expires_at = EXCLUDED.expires_at
     """)
