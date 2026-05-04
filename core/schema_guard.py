@@ -242,13 +242,15 @@ _POSTGRES_GUARDS = [
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(32)",
     ),
     # alembic 011 — CryptoQuant on-chain metric cache.
+    # NOTE: "window" is a PostgreSQL reserved keyword (window functions);
+    # column name + index references must be double-quoted.
     (
         "cryptoquant_cache table",
         """CREATE TABLE IF NOT EXISTS cryptoquant_cache (
             id BIGSERIAL PRIMARY KEY,
             metric_key VARCHAR(64) NOT NULL,
             symbol VARCHAR(16) NOT NULL,
-            window VARCHAR(16) NOT NULL,
+            "window" VARCHAR(16) NOT NULL,
             data JSONB NOT NULL,
             fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             expires_at TIMESTAMPTZ NOT NULL
@@ -256,7 +258,7 @@ _POSTGRES_GUARDS = [
     ),
     (
         "uq_cryptoquant_cache_key_sym_win",
-        "CREATE UNIQUE INDEX IF NOT EXISTS uq_cryptoquant_cache_key_sym_win ON cryptoquant_cache(metric_key, symbol, window)",
+        'CREATE UNIQUE INDEX IF NOT EXISTS uq_cryptoquant_cache_key_sym_win ON cryptoquant_cache(metric_key, symbol, "window")',
     ),
     (
         "ix_cryptoquant_cache_expires",
