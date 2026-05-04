@@ -317,6 +317,25 @@ _POSTGRES_GUARDS = [
         "ix_axiom_score_history_recorded_at",
         "CREATE INDEX IF NOT EXISTS ix_axiom_score_history_recorded_at ON axiom_score_history(recorded_at)",
     ),
+    # alembic 014 — Telegram deep-link login token (T7)
+    (
+        "telegram_login_token table",
+        """CREATE TABLE IF NOT EXISTS telegram_login_token (
+            token VARCHAR(64) PRIMARY KEY,
+            telegram_id VARCHAR(32) NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            expires_at TIMESTAMPTZ NOT NULL,
+            used_at TIMESTAMPTZ
+        )""",
+    ),
+    (
+        "ix_telegram_login_token_expires",
+        "CREATE INDEX IF NOT EXISTS ix_telegram_login_token_expires ON telegram_login_token(expires_at)",
+    ),
+    (
+        "ix_telegram_login_token_telegram_id",
+        "CREATE INDEX IF NOT EXISTS ix_telegram_login_token_telegram_id ON telegram_login_token(telegram_id)",
+    ),
 ]
 
 

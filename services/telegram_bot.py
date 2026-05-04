@@ -266,7 +266,8 @@ async def process_start_command(chat_id, user_id, username, start_payload: str =
         "/takiplistem — Takip listeni gör\n\n"
         "💳 <b>Üyelik:</b>\n"
         "/tier — Mevcut planını gör\n"
-        "/upgrade — PREMIUM / ADVANCE planlarına yükselt"
+        "/upgrade — PREMIUM / ADVANCE planlarına yükselt\n"
+        "/login — Dashboard'a tek-tıkla giriş linki"
     )
     send_telegram_message(chat_id, welcome_msg)
 
@@ -749,6 +750,46 @@ async def process_onchain_command(chat_id, user_id, symbol: str = "BTC"):
     send_telegram_message(chat_id, body)
 
 
+async def process_login_command(chat_id, user_id, username):
+    """Generate one-time deep-link token + DM dashboard URL.
+
+    Production-correct alternative to direct /auth/login (which requires
+    X-Bot-Secret). User clicks link → dashboard exchanges token → JWT.
+    Token TTL 5 minutes, one-time use enforced server-side.
+    """
+    from services.telegram_login_token import create_token
+
+    # Ensure user is registered
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(User).where(User.telegram_id == str(user_id)))
+            user = result.scalars().first()
+            if not user:
+                user = User(telegram_id=str(user_id), username=username)
+                session.add(user)
+                await session.commit()
+    except Exception as e:
+        logger.error(f"DB error (/login) user={user_id}: {e}")
+        send_telegram_message(chat_id, "⚠️ Veritabanı hatası, daha sonra tekrar deneyin.")
+        return
+
+    token = await create_token(str(user_id))
+    if not token:
+        send_telegram_message(chat_id, "⚠️ Token üretilemedi, lütfen tekrar deneyin.")
+        return
+
+    dashboard_url = os.getenv("DASHBOARD_URL", "https://axiom-dashboard-sigma.vercel.app").rstrip("/")
+    deep_link = f"{dashboard_url}/auth/telegram?token={token}"
+
+    msg = (
+        "🔐 <b>Dashboard Giriş Linki</b>\n\n"
+        f'<a href="{deep_link}">👉 Dashboard\'a giriş yap</a>\n\n'
+        "Bu link <b>5 dakika</b> geçerlidir ve <b>tek kullanımlıktır</b>.\n"
+        "Linki kimseyle paylaşmayın — Axiom hesabınıza erişim sağlar."
+    )
+    send_telegram_message(chat_id, msg)
+
+
 async def process_tier_command(chat_id, user_id):
     """Show the caller their current tier + today's quota usage."""
     from services.tier_quota import peek
@@ -980,6 +1021,8 @@ async def start_telegram_bot():
                             elif text.lower().startswith("/onchain"):
                                 arg = text[len("/onchain"):].strip()
                                 await process_onchain_command(chat_id, user_id, arg or "BTC")
+                            elif text.lower().startswith("/login"):
+                                await process_login_command(chat_id, user_id, username)
 
                         # Inline keyboard callback'leri
                         elif "callback_query" in update:

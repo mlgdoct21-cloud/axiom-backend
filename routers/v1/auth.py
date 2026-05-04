@@ -3,6 +3,7 @@
 import os
 import hmac
 from fastapi import APIRouter, Depends, HTTPException, Header, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import timedelta
 from typing import Optional
@@ -13,6 +14,7 @@ from schemas.user_schema import UserCreate, UserLogin, UserResponse
 from schemas.error_schema import ErrorResponse
 from services.user import UserService
 from services.auth import AuthService
+from services.telegram_login_token import consume_token
 from core.logger import get_logger
 
 logger = get_logger("auth_router")
@@ -270,3 +272,66 @@ async def get_current_user(
     Requires: Authorization header with Bearer token (e.g., `Authorization: Bearer <jwt>`)
     """
     return UserResponse.from_orm(current_user)
+
+
+# ── Telegram deep-link login (T7) ────────────────────────────────────────────
+
+class TelegramTokenLogin(BaseModel):
+    token: str
+
+
+@router.post(
+    "/telegram-token",
+    status_code=status.HTTP_200_OK,
+    responses={
+        401: {"description": "Invalid or expired token"},
+        404: {"description": "User not found"},
+    },
+)
+async def telegram_token_login(
+    body: TelegramTokenLogin,
+    db: AsyncSession = Depends(get_db),
+):
+    """Exchange a one-time Telegram-issued token for JWT.
+
+    Flow:
+    1. User runs `/login` in the bot → bot issues short-lived token
+    2. User clicks deep-link → dashboard /auth/telegram?token=<x>
+    3. Dashboard POSTs token here → we consume + return JWT pair
+
+    No X-Bot-Secret needed — token itself is the proof of possession.
+    """
+    if not body.token or len(body.token) > 64:
+        raise HTTPException(status_code=400, detail="Invalid token format")
+
+    telegram_id = await consume_token(body.token)
+    if not telegram_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token invalid, expired, or already used",
+        )
+
+    user = await UserService.get_user_by_telegram_id(db, telegram_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not user.is_active:
+        raise HTTPException(status_code=401, detail="User account is inactive")
+
+    access_token = AuthService.create_access_token(
+        data={"sub": str(user.id), "telegram_id": user.telegram_id}
+    )
+    refresh_token = AuthService.create_refresh_token(
+        data={"sub": str(user.id), "telegram_id": user.telegram_id}
+    )
+
+    logger.info(f"Telegram-token login: {telegram_id}")
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "telegram_id": user.telegram_id,
+            "username": user.username,
+        },
+    }
