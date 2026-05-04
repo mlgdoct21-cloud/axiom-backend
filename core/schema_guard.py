@@ -241,6 +241,27 @@ _POSTGRES_GUARDS = [
         "users.subscription_status",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(32)",
     ),
+    # alembic 011 — CryptoQuant on-chain metric cache.
+    (
+        "cryptoquant_cache table",
+        """CREATE TABLE IF NOT EXISTS cryptoquant_cache (
+            id BIGSERIAL PRIMARY KEY,
+            metric_key VARCHAR(64) NOT NULL,
+            symbol VARCHAR(16) NOT NULL,
+            window VARCHAR(16) NOT NULL,
+            data JSONB NOT NULL,
+            fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            expires_at TIMESTAMPTZ NOT NULL
+        )""",
+    ),
+    (
+        "uq_cryptoquant_cache_key_sym_win",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_cryptoquant_cache_key_sym_win ON cryptoquant_cache(metric_key, symbol, window)",
+    ),
+    (
+        "ix_cryptoquant_cache_expires",
+        "CREATE INDEX IF NOT EXISTS ix_cryptoquant_cache_expires ON cryptoquant_cache(expires_at)",
+    ),
 ]
 
 
