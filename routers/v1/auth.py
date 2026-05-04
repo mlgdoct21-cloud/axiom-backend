@@ -29,7 +29,16 @@ def _verify_bot_secret(x_bot_secret: Optional[str]) -> None:
 
     Production'da BOT_INTERNAL_SECRET zorunlu. Geliştirmede setlenmemişse
     sadece uyarı verir (geriye uyumluluk için).
+
+    EXPLICIT BYPASS: ALLOW_PUBLIC_DASHBOARD_LOGIN=true env var dashboard
+    kullanıcılarının doğrudan Telegram ID ile login olmasına izin verir.
+    Bu geçici bir flag — Day 21+'de Telegram deep-link auth flow'u (bot
+    `/login` komutu → tek-kullanımlık token → dashboard /auth/telegram)
+    eklendiğinde bu bypass kapatılmalıdır.
     """
+    if os.getenv("ALLOW_PUBLIC_DASHBOARD_LOGIN", "").strip().lower() in ("true", "1", "yes"):
+        return  # Dashboard login geçici olarak public — Day 21'de kapatılacak
+
     if not BOT_INTERNAL_SECRET:
         if ENVIRONMENT == "production":
             logger.error("BOT_INTERNAL_SECRET production'da set edilmemiş — /login kapalı")
