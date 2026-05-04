@@ -696,6 +696,41 @@ def _interpret_signals(snapshot: dict) -> dict:
             "label_tr": "📐 Piyasa Ortalama Maliyeti",
         }
 
+    # ETH-specific: exchange supply ratio (whale-ratio benzeri)
+    esr = snapshot.get("eth_supply_ratio")
+    if esr:
+        v = esr["supply_ratio"]
+        # ETH supply on exchanges typically 0.10-0.20 range; lower = accumulating
+        if v < 0.10:
+            sig, label = "BULLISH", "🟢 Borsa Arzı Düşük"
+        elif v < 0.13:
+            sig, label = "BULLISH", "🟢 Sağlıklı"
+        elif v > 0.18:
+            sig, label = "BEARISH", "⚠️ Borsa Arzı Yüksek"
+        else:
+            sig, label = "NEUTRAL", "🟡 Normal"
+        signals["eth_supply_ratio"] = {
+            "value_str": f"{v:.3f}",
+            "signal": sig,
+            "label_tr": label,
+        }
+
+    # ETH active addresses
+    aa = snapshot.get("eth_active_addresses")
+    if aa:
+        chg = aa["change_7d_pct"]
+        if chg > 5:
+            sig, label = "BULLISH", "🟢 Ağ Kullanımı Artıyor"
+        elif chg < -5:
+            sig, label = "BEARISH", "🔴 Ağ Kullanımı Düşüyor"
+        else:
+            sig, label = "NEUTRAL", "🟡 Stabil"
+        signals["eth_active_addresses"] = {
+            "value_str": f"{chg:+.1f}% (7G)",
+            "signal": sig,
+            "label_tr": label,
+        }
+
     # Hash Rate (passive — long-term security indicator). CQ returns raw
     # network hash count which doesn't cleanly map to EH/s without extra
     # math; we display only the 7-day delta which is what actually matters
@@ -718,16 +753,22 @@ def _interpret_signals(snapshot: dict) -> dict:
     # ── Axiom Skor: weighted 0-100 composite ─────────────────────────────────
     # Sinyal başına ±max ağırlık. Toplam max range 136 (-68 ile +68).
     # Skor = 50 + (signed_total / 136) * 50, clamp [0, 100].
+    # BTC kapsamı 9 sinyal; ETH'de PoS olduğu için miner/MVRV/SOPR yok,
+    # sadece 5 sinyal var. Symbol'e bakarak sadece mevcut sinyaller skora
+    # girer (max_total dinamik hesaplanır).
     weights = {
-        "exchange_netflow":  25,  # en yüksek aksiyonlanabilir sinyal
-        "whale_ratio":       20,
-        "mpi":               18,
-        "stablecoin_inflow": 15,
-        "leverage_ratio":    15,
-        "funding_rates":     13,
-        "nupl":              12,
-        "sopr":              10,
-        "coinbase_premium":   8,
+        "exchange_netflow":     25,  # en yüksek aksiyonlanabilir sinyal
+        "whale_ratio":          20,
+        "mpi":                  18,
+        "stablecoin_inflow":    15,
+        "leverage_ratio":       15,
+        "funding_rates":        13,
+        "nupl":                 12,
+        "sopr":                 10,
+        "coinbase_premium":      8,
+        # ETH-specific
+        "eth_supply_ratio":     20,  # whale_ratio'nun ETH karşılığı
+        "eth_active_addresses": 10,  # ağ canlılığı
     }
 
     breakdown = []
@@ -818,21 +859,8 @@ def _interpret_signals(snapshot: dict) -> dict:
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
-async def get_onchain_snapshot(symbol: str = "BTC") -> dict:
-    """
-    Returns full on-chain snapshot for the given symbol (currently BTC only).
-    Checks cache first; fetches from API if stale.
-    """
-    if not _is_configured():
-        return {"error": "cryptoquant_not_configured", "symbol": symbol}
-
-    # Try cache first (use exchange_netflow as proxy for freshness)
-    cached = await _cache_get("exchange_netflow", symbol, "day")
-    if cached and cached.get("_snapshot_full"):
-        return cached
-
-    # Fetch all metrics in parallel (16 endpoints — gather is fan-out limited
-    # only by aiohttp's connection pool; CryptoQuant tolerates this volume)
+async def _build_btc_snapshot() -> dict:
+    """16 paralel BTC metrik fetch — Pro plan'ın tamamından yararlanıyor."""
     results = await asyncio.gather(
         _fetch_exchange_netflow(),
         _fetch_whale_ratio(),
@@ -856,9 +884,8 @@ async def get_onchain_snapshot(symbol: str = "BTC") -> dict:
         stablecoin_inflow, funding_rates, open_interest, sopr, cb_premium,
         mvrv, nupl, mpi, puell, leverage_ratio, realized_price, hash_rate,
     ) = results
-
-    raw = {
-        "symbol": symbol,
+    return {
+        "symbol": "BTC",
         "exchange_netflow": netflow,
         "whale_ratio": whale_ratio,
         "miner_outflow": miner_outflow,
@@ -879,13 +906,157 @@ async def get_onchain_snapshot(symbol: str = "BTC") -> dict:
         "_snapshot_full": True,
     }
 
+
+async def _build_eth_snapshot() -> dict:
+    """ETH lite snapshot — Pro plan'da 5 sinyal aktif (PoS yapısı + ürün
+    kararları sebebiyle whale_ratio/MVRV/SOPR/funding/coinbase yok).
+    BTC ile aynı interpretation pipeline, daha az data point."""
+    results = await asyncio.gather(
+        _fetch_eth_netflow(),
+        _fetch_eth_exchange_supply_ratio(),
+        _fetch_eth_leverage_ratio(),
+        _fetch_eth_open_interest(),
+        _fetch_eth_active_addresses(),
+    )
+    netflow, supply_ratio, leverage, oi, active_addr = results
+    return {
+        "symbol": "ETH",
+        "exchange_netflow": netflow,
+        "eth_supply_ratio": supply_ratio,
+        "leverage_ratio": leverage,
+        "open_interest": oi,
+        "eth_active_addresses": active_addr,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "_snapshot_full": True,
+    }
+
+
+async def get_onchain_snapshot(symbol: str = "BTC") -> dict:
+    """
+    Returns on-chain snapshot for BTC (full, 9-signal Axiom Score) or
+    ETH (lite, 5-signal). Other symbols return error.
+    """
+    symbol = (symbol or "BTC").upper()
+    if not _is_configured():
+        return {"error": "cryptoquant_not_configured", "symbol": symbol}
+
+    if symbol not in ("BTC", "ETH"):
+        return {"error": "symbol_not_supported", "symbol": symbol,
+                "supported": ["BTC", "ETH"]}
+
+    # Try cache first
+    cached = await _cache_get("snapshot", symbol, "day")
+    if cached and cached.get("_snapshot_full"):
+        return cached
+
+    raw = await (_build_btc_snapshot() if symbol == "BTC" else _build_eth_snapshot())
     interpreted = _interpret_signals(raw)
     snapshot = {**raw, **interpreted}
 
-    # Cache with exchange_netflow TTL (shortest of exchange-flow metrics = 4h)
-    await _cache_set("exchange_netflow", symbol, "day", snapshot, _TTL_EXCHANGE_FLOW)
-
+    await _cache_set("snapshot", symbol, "day", snapshot, _TTL_EXCHANGE_FLOW)
     return snapshot
+
+
+# ── ETH-specific fetchers (Pro plan kapsamı: 6 sinyal — whale ratio,
+# MVRV, SOPR, funding, coinbase premium, MPI/Puell ETH'de yok) ───────────────
+
+async def _fetch_eth_netflow() -> Optional[dict]:
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/eth/exchange-flows/netflow",
+        {"exchange": "all_exchange", "window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    return {
+        "netflow_total": float(latest.get("netflow_total", 0)),
+        "inflow_total":  float(latest.get("inflow_total", 0)),
+        "outflow_total": float(latest.get("outflow_total", 0)),
+        "date": latest.get("date", yesterday),
+    }
+
+
+async def _fetch_eth_exchange_supply_ratio() -> Optional[dict]:
+    """ETH'de whale_ratio yok ama exchange-supply-ratio benzer sinyal verir
+    (borsalardaki ETH supply'in toplam supply'a oranı)."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/eth/flow-indicator/exchange-supply-ratio",
+        {"exchange": "all_exchange", "window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    val = latest.get("exchange_supply_ratio") or latest.get("supply_ratio") or 0
+    return {"supply_ratio": float(val), "date": latest.get("date")}
+
+
+async def _fetch_eth_leverage_ratio() -> Optional[dict]:
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/eth/market-indicator/estimated-leverage-ratio",
+        {"exchange": "all_exchange", "window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    val = latest.get("estimated_leverage_ratio") or latest.get("elr") or 0
+    return {"leverage_ratio": float(val), "date": latest.get("date")}
+
+
+async def _fetch_eth_open_interest() -> Optional[dict]:
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/eth/market-data/open-interest",
+        {"exchange": "all_exchange", "window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    prev = rows[-2] if len(rows) >= 2 else latest
+    oi = float(latest.get("open_interest", 0))
+    oi_prev = float(prev.get("open_interest", 1))
+    change_pct = ((oi - oi_prev) / oi_prev * 100) if oi_prev else 0
+    return {
+        "open_interest": oi,
+        "change_pct": round(change_pct, 2),
+        "date": latest.get("date"),
+    }
+
+
+async def _fetch_eth_active_addresses() -> Optional[dict]:
+    """ETH ağ canlılığı — günlük aktif cüzdan sayısı, 7G değişimi."""
+    date_from = (datetime.now(timezone.utc) - timedelta(days=8)).strftime("%Y%m%d")
+    raw = await _cq_get(
+        "/eth/network-data/addresses-count",
+        {"window": "day", "from": date_from, "limit": 8},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if len(rows) < 2:
+        return None
+    latest = float(rows[-1].get("addresses_count") or 0)
+    oldest = float(rows[0].get("addresses_count") or 1)
+    change = ((latest - oldest) / oldest * 100) if oldest else 0
+    return {
+        "active_addresses": latest,
+        "change_7d_pct": round(change, 2),
+        "date": rows[-1].get("date"),
+    }
 
 
 async def get_btc_spot_price() -> Optional[float]:
@@ -918,17 +1089,15 @@ async def get_btc_spot_price() -> Optional[float]:
 
 
 async def refresh_all_metrics() -> None:
-    """Force-refresh all metrics. Called by scheduler."""
-    logger.info("CryptoQuant: refreshing all metrics...")
+    """Force-refresh all metrics for BTC + ETH. Called by scheduler."""
+    logger.info("CryptoQuant: refreshing BTC + ETH snapshots...")
     try:
-        # Bust cache by deleting the proxy key
-        sql = text("""
-            DELETE FROM cryptoquant_cache
-            WHERE metric_key = 'exchange_netflow' AND symbol = 'BTC'
-        """)
+        sql = text("DELETE FROM cryptoquant_cache WHERE metric_key = 'snapshot'")
         async with engine.begin() as conn:
             await conn.execute(sql)
+        # Sequential to avoid simultaneous CryptoQuant rate-limit hits.
         await get_onchain_snapshot("BTC")
-        logger.info("CryptoQuant: refresh complete")
+        await get_onchain_snapshot("ETH")
+        logger.info("CryptoQuant: refresh complete (BTC + ETH)")
     except Exception as e:
         logger.error(f"CryptoQuant refresh error: {e}")
