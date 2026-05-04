@@ -259,6 +259,7 @@ async def process_start_command(chat_id, user_id, username, start_payload: str =
         "⚡ <b>Ne Yapmak İstiyorsun?</b>\n"
         "/haber — Anlık pazar güncellemeleri\n"
         "/report AAPL — Hisse insider raporu (AI analiz)\n"
+        "/onchain — BTC on-chain sinyaller (PREMIUM)\n"
         "/tags — İlgi alanlarını seç (BTC, Altın, BIST...)\n"
         "/takip AAPL — Sembol takip et\n"
         "/takipcikar AAPL — Takipten çıkar\n"
@@ -636,6 +637,94 @@ async def _get_user_tier(user_id) -> str:
         return "free"
 
 
+async def process_onchain_command(chat_id, user_id, symbol: str = "BTC"):
+    """On-chain snapshot from CryptoQuant — exchange flows, whale ratio,
+    miner pressure, derivatives sentiment. Premium-only (free users get
+    a teaser pointing to /upgrade)."""
+    cooldown = _check_rate_limit(user_id, "/onchain", _LIGHT_CMD_COOLDOWN_SEC)
+    if cooldown:
+        send_telegram_message(chat_id, f"⏳ Lütfen {cooldown}s bekle ve tekrar dene.")
+        return
+
+    symbol = (symbol or "BTC").strip().upper() or "BTC"
+    if not _is_valid_symbol(symbol):
+        send_telegram_message(chat_id, "❌ Geçersiz sembol. Şu an yalnızca <b>BTC</b> destekleniyor.")
+        return
+
+    tier = await _get_user_tier(user_id)
+    if tier == "free":
+        send_telegram_message(
+            chat_id,
+            "🔒 <b>On-chain sinyaller PREMIUM özelliktir.</b>\n\n"
+            "Borsa akışları, balina oranı, madenci baskısı, türev piyasa "
+            "duygusu — büyük oyuncuların ne yaptığını gerçek zamanlı görün.\n\n"
+            "Yükseltmek için: /upgrade"
+        )
+        return
+
+    from services.cryptoquant_service import get_onchain_snapshot, _is_configured
+    if not _is_configured():
+        send_telegram_message(chat_id, "⚠️ On-chain entegrasyonu şu an aktif değil. Daha sonra tekrar deneyin.")
+        return
+
+    send_telegram_message(chat_id, f"🔗 <b>{symbol}</b> on-chain snapshot hazırlanıyor...")
+
+    try:
+        snap = await get_onchain_snapshot(symbol)
+    except Exception as e:
+        logger.error(f"on-chain snapshot fetch error: {e}")
+        send_telegram_message(chat_id, "⚠️ Veri alınamadı. Birkaç dakika sonra tekrar deneyin.")
+        return
+
+    if not snap or snap.get("error"):
+        send_telegram_message(chat_id, "⚠️ Şu an on-chain veriye ulaşılamıyor (CryptoQuant). Birkaç dakika sonra tekrar deneyin.")
+        return
+
+    sigs = snap.get("signals", {})
+    overall_tr = snap.get("overall_tr", "❓ Veri Yok")
+
+    def _line(emoji: str, label: str, key: str) -> str:
+        s = sigs.get(key)
+        if not s:
+            return ""
+        return f"{emoji} <b>{label}:</b> <code>{s['value_str']}</code>  {s['label_tr']}\n"
+
+    body = (
+        f"🔗 <b>ON-CHAIN SNAPSHOT — {symbol}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{_line('📥', 'Borsa Akışı', 'exchange_netflow')}"
+        f"{_line('🐋', 'Balina Oranı', 'whale_ratio')}"
+        f"{_line('⛏️', 'Madenci Baskı', 'miner_reserve')}"
+        f"{_line('💵', 'USDT Girişi', 'stablecoin_inflow')}"
+        f"{_line('📊', 'SOPR', 'sopr')}"
+    )
+
+    # Derivatives line (compact)
+    fr = sigs.get("funding_rates")
+    oi = sigs.get("open_interest")
+    if fr or oi:
+        body += "\n<b>Türev Piyasa:</b>\n"
+        if fr:
+            body += f"  ⚡ Funding (24s ort): <code>{fr['value_str']}</code>  {fr['label_tr']}\n"
+        if oi:
+            body += f"  📈 Open Interest: <code>{oi['value_str']}</code>\n"
+
+    # Coinbase premium
+    cb = snap.get("coinbase_premium")
+    if cb:
+        cbv = cb.get("coinbase_premium", 0)
+        cb_label = "ABD kurumsal alıcı" if cbv > 0 else ("ABD kurumsal satıcı" if cbv < 0 else "Nötr")
+        body += f"  🇺🇸 Coinbase Primi: <code>{cbv:+.2f}</code>  {cb_label}\n"
+
+    body += (
+        f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>Genel Sinyal:</b> {overall_tr}\n\n"
+        f"<i>Veri kaynağı: CryptoQuant on-chain</i>"
+    )
+
+    send_telegram_message(chat_id, body)
+
+
 async def process_tier_command(chat_id, user_id):
     """Show the caller their current tier + today's quota usage."""
     from services.tier_quota import peek
@@ -864,6 +953,9 @@ async def start_telegram_bot():
                                 await process_upgrade_command(chat_id, user_id)
                             elif text.lower().startswith("/tier"):
                                 await process_tier_command(chat_id, user_id)
+                            elif text.lower().startswith("/onchain"):
+                                arg = text[len("/onchain"):].strip()
+                                await process_onchain_command(chat_id, user_id, arg or "BTC")
 
                         # Inline keyboard callback'leri
                         elif "callback_query" in update:
