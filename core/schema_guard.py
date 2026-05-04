@@ -336,6 +336,24 @@ _POSTGRES_GUARDS = [
         "ix_telegram_login_token_telegram_id",
         "CREATE INDEX IF NOT EXISTS ix_telegram_login_token_telegram_id ON telegram_login_token(telegram_id)",
     ),
+    # alembic 015 — Dashboard feature quota (sliding 24h)
+    (
+        "feature_quota_log table",
+        """CREATE TABLE IF NOT EXISTS feature_quota_log (
+            id BIGSERIAL PRIMARY KEY,
+            telegram_id VARCHAR(32) NOT NULL,
+            command VARCHAR(64) NOT NULL,
+            used_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )""",
+    ),
+    (
+        "ix_feature_quota_log_user_cmd_used",
+        "CREATE INDEX IF NOT EXISTS ix_feature_quota_log_user_cmd_used ON feature_quota_log(telegram_id, command, used_at)",
+    ),
+    (
+        "ix_feature_quota_log_used_at",
+        "CREATE INDEX IF NOT EXISTS ix_feature_quota_log_used_at ON feature_quota_log(used_at)",
+    ),
 ]
 
 

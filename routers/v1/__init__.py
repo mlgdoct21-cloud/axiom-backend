@@ -17,6 +17,7 @@ from .macro_admin import router as macro_admin_router
 from .macro_public import router as macro_public_router
 from .billing import router as billing_router
 from .crypto_onchain import router as crypto_onchain_router
+from .feature_quota import router as feature_quota_router
 
 router = APIRouter(prefix="/api/v1", tags=["v1"])
 
@@ -37,3 +38,4 @@ router.include_router(macro_admin_router, tags=["admin"])
 router.include_router(macro_public_router, tags=["macro"])
 router.include_router(billing_router, tags=["billing"])
 router.include_router(crypto_onchain_router, tags=["crypto"])
+router.include_router(feature_quota_router, tags=["feature-quota"])
