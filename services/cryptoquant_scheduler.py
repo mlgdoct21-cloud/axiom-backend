@@ -1,31 +1,27 @@
 """
-CryptoQuant Scheduler — background refresh loop.
+CryptoQuant Scheduler — background refresh + alert + briefing supervisor.
 
-Schedule:
-  - Startup: immediate fetch if cache is stale (> 3h old)
-  - Every 4 hours thereafter (exchange flow data refreshes daily,
-    but funding rates are 30-min, so we do a full refresh every 4h)
+Three concurrent loops:
+  1. Cache refresh — every 4h (data + scheduler restart on failure)
+  2. Alert sweep — every 30min (threshold breach → push to premium+)
+  3. Morning briefing — daily at 06:00 UTC = 09:00 TR
 """
 import asyncio
 from datetime import datetime, timezone, timedelta
 
 from core.logger import get_logger
 from services.cryptoquant_service import refresh_all_metrics, _is_configured
+from services.cryptoquant_alerts import sweep_and_dispatch, morning_briefing
 
 logger = get_logger("cryptoquant_scheduler")
 
 _REFRESH_INTERVAL = timedelta(hours=4)
-_STARTUP_THRESHOLD = timedelta(hours=3)
+_ALERT_SWEEP_INTERVAL = timedelta(minutes=30)
+_BRIEFING_HOUR_UTC = 6  # 09:00 İstanbul time
 
 
-async def cryptoquant_supervisor() -> None:
-    if not _is_configured():
-        logger.info("CryptoQuant API key not set — scheduler idle.")
-        return
-
-    logger.info("CryptoQuant scheduler starting...")
-
-    # Startup fetch
+async def _refresh_loop() -> None:
+    """Cache refresh every 4h."""
     try:
         await refresh_all_metrics()
     except Exception as e:
@@ -36,8 +32,59 @@ async def cryptoquant_supervisor() -> None:
             await asyncio.sleep(_REFRESH_INTERVAL.total_seconds())
             await refresh_all_metrics()
         except asyncio.CancelledError:
-            logger.info("CryptoQuant scheduler cancelled.")
-            break
+            raise
         except Exception as e:
-            logger.error(f"CryptoQuant scheduler error: {e}. Retrying in 15min.")
+            logger.error(f"CryptoQuant refresh loop error: {e}. Retrying in 15min.")
             await asyncio.sleep(900)
+
+
+async def _alert_loop() -> None:
+    """Threshold alert sweep every 30min."""
+    # 60s grace period at startup so refresh has a chance to populate cache
+    await asyncio.sleep(60)
+    while True:
+        try:
+            await sweep_and_dispatch()
+            await asyncio.sleep(_ALERT_SWEEP_INTERVAL.total_seconds())
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"CryptoQuant alert loop error: {e}. Retrying in 5min.")
+            await asyncio.sleep(300)
+
+
+async def _briefing_loop() -> None:
+    """Send morning briefing daily at 06:00 UTC. Sleeps until next 06:00."""
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            target = now.replace(hour=_BRIEFING_HOUR_UTC, minute=0, second=0, microsecond=0)
+            if now >= target:
+                target = target + timedelta(days=1)
+            wait_seconds = (target - now).total_seconds()
+            logger.info(f"Morning briefing scheduled in {wait_seconds/3600:.1f}h ({target.isoformat()})")
+            await asyncio.sleep(wait_seconds)
+            await morning_briefing()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Morning briefing loop error: {e}. Retrying in 1h.")
+            await asyncio.sleep(3600)
+
+
+async def cryptoquant_supervisor() -> None:
+    if not _is_configured():
+        logger.info("CryptoQuant API key not set — scheduler idle.")
+        return
+
+    logger.info("CryptoQuant scheduler starting (refresh + alerts + briefing)...")
+
+    try:
+        await asyncio.gather(
+            _refresh_loop(),
+            _alert_loop(),
+            _briefing_loop(),
+        )
+    except asyncio.CancelledError:
+        logger.info("CryptoQuant scheduler cancelled.")
+        raise
