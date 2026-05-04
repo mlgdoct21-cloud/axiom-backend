@@ -324,6 +324,33 @@ def _format_alert(alert: dict, snap: dict) -> str:
 
 # ── Morning briefing ──────────────────────────────────────────────────────────
 
+async def _next_macro_event() -> Optional[dict]:
+    """Returns the closest upcoming macro release (CPI/NFP/PCE/FOMC) so the
+    morning briefing can flag 'Sıradaki Önemli Olay' alongside on-chain data."""
+    try:
+        from services.macro_calendar import upcoming_events
+        events = await upcoming_events(datetime.now(timezone.utc), days=14)
+    except Exception as e:
+        logger.warning(f"briefing: macro upcoming lookup failed: {e}")
+        return None
+    # Find the first event strictly in the future
+    now = datetime.now(timezone.utc)
+    future = [e for e in events if e.scheduled_at > now]
+    if not future:
+        return None
+    nxt = future[0]
+    delta = nxt.scheduled_at - now
+    days_remaining = delta.days
+    hours_remaining = delta.seconds // 3600
+    return {
+        "event_type": nxt.event_type,
+        "label": nxt.label,
+        "scheduled_at": nxt.scheduled_at.isoformat(),
+        "days": days_remaining,
+        "hours": hours_remaining,
+    }
+
+
 async def morning_briefing() -> dict:
     """Compose + fan out a daily morning briefing to premium/advance users.
     Triggered by scheduler at 06:00 UTC (09:00 TR).
@@ -342,11 +369,12 @@ async def morning_briefing() -> dict:
     # Pull yesterday's score (if any) BEFORE writing today's, otherwise
     # ON CONFLICT update would overwrite the comparison reference.
     yesterday = await _yesterday_score("BTC")
+    next_macro = await _next_macro_event()
 
     if snap.get("axiom_score") is not None:
         await _record_score_snapshot("BTC", snap["axiom_score"], snap.get("score_zone", "UNKNOWN"))
 
-    msg = _format_briefing(snap, yesterday=yesterday)
+    msg = _format_briefing(snap, yesterday=yesterday, next_macro=next_macro)
 
     try:
         async with AsyncSessionLocal() as session:
@@ -373,7 +401,7 @@ async def morning_briefing() -> dict:
     return {"sent": sent, "failed": fail, "eligible": len(paying)}
 
 
-def _format_briefing(snap: dict, yesterday: Optional[dict] = None) -> str:
+def _format_briefing(snap: dict, yesterday: Optional[dict] = None, next_macro: Optional[dict] = None) -> str:
     score = snap.get("axiom_score")
     zone = snap.get("score_zone_tr", "")
     summary = snap.get("score_summary", "")
@@ -461,6 +489,27 @@ def _format_briefing(snap: dict, yesterday: Optional[dict] = None) -> str:
         "💬 <b>Axiom Yorumu:</b>",
         f"<i>{narrative}</i>",
         "",
+    ])
+
+    # "Sıradaki Önemli Olay" — macro takvim entegrasyonu
+    if next_macro:
+        et = next_macro["event_type"]
+        label = next_macro.get("label") or et
+        days = next_macro["days"]
+        hours = next_macro["hours"]
+        if days > 0:
+            when_str = f"{days} gün sonra"
+        elif hours > 1:
+            when_str = f"~{hours} saat sonra"
+        else:
+            when_str = "az sonra"
+        lines.extend([
+            f"📅 <b>Sıradaki Önemli Olay:</b> {label} — {when_str}",
+            "<i>Volatilite artabilir, kaldıraç dikkat.</i>",
+            "",
+        ])
+
+    lines.extend([
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         "/onchain — Detaylı snapshot",
     ])
