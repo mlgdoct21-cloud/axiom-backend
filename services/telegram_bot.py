@@ -134,6 +134,34 @@ def answer_callback_query(callback_query_id):
     except Exception:
         pass
 
+# getMe sonucunu cache'le — deep-link (t.me/<bot>?start=<payload>) için kullanılıyor.
+_BOT_USERNAME_CACHE: Optional[str] = None
+
+
+def get_bot_username() -> str:
+    """Telegram bot kullanıcı adını lazy-fetch ile döner; başarısızsa '' (caller
+    deep-link butonu eklemeyi atlar). getMe idempotent + auth'lu — ilk
+    çağrıda çağrılır, sonra modül-seviye cache."""
+    global _BOT_USERNAME_CACHE
+    if _BOT_USERNAME_CACHE:
+        return _BOT_USERNAME_CACHE
+    if not TELEGRAM_BOT_TOKEN:
+        return ""
+    try:
+        r = requests.get(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getMe",
+            timeout=5,
+        )
+        if r.status_code == 200:
+            uname = r.json().get("result", {}).get("username")
+            if uname:
+                _BOT_USERNAME_CACHE = uname
+                return uname
+    except Exception as e:
+        logger.warning(f"getMe baglanti hatasi: {e}")
+    return ""
+
+
 def edit_message_reply_markup(chat_id, message_id, keyboard):
     """Mevcut mesajın klavyesini günceller."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageReplyMarkup"
@@ -199,8 +227,13 @@ def build_tag_keyboard(user_tags_str: str) -> dict:
 
 # ── Komut işleyicileri ─────────────────────────────────────────────────────────
 
-async def process_start_command(chat_id, user_id, username):
-    """Kullanıcıyı veritabanına kaydeder ve hoş geldin mesajı atar."""
+async def process_start_command(chat_id, user_id, username, start_payload: str = ""):
+    """Kullanıcıyı veritabanına kaydeder ve hoş geldin mesajı atar.
+
+    `start_payload`: `/start <payload>` deep-link parametresi — örn.
+    `t.me/<bot>?start=upgrade_premium` butonu kullanıcıyı tıkladığında
+    gelen payload. `upgrade_premium` ise welcome'ı atlayıp doğrudan
+    /upgrade akışını tetikler (free broadcast'taki [💎 Anında al] butonu)."""
     try:
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(User).where(User.telegram_id == str(user_id)))
@@ -212,6 +245,11 @@ async def process_start_command(chat_id, user_id, username):
     except Exception as e:
         logger.error(f"DB hatası (/start) user={user_id}: {e}")
         send_telegram_message(chat_id, "⚠️ Veritabanı bağlantısı kurulamadı. Lütfen daha sonra tekrar /start yazın.")
+        return
+
+    # Deep-link payload routing — niyet net olduğunda welcome'ı atla.
+    if start_payload == "upgrade_premium":
+        await process_upgrade_command(chat_id, user_id)
         return
 
     welcome_msg = (
@@ -635,6 +673,13 @@ async def process_upgrade_command(chat_id, user_id):
     except Exception:
         stripe_ready = False
 
+    # TCMB anlık kuruyla TL yaklaşığı — fetch fail ise satır çıkmaz.
+    from services.tcmb_rate import format_try_approx
+    premium_try = await format_try_approx(1.99)
+    advance_try = await format_try_approx(4.99)
+    premium_price_label = f"$1.99/ay  ({premium_try})" if premium_try else "$1.99/ay"
+    advance_price_label = f"$4.99/ay  ({advance_try})" if advance_try else "$4.99/ay"
+
     body = (
         f"💳 <b>Plan Yükseltme</b>\n"
         f"Mevcut planınız: {current_label}\n\n"
@@ -643,12 +688,12 @@ async def process_upgrade_command(chat_id, user_id):
         f"  • Makro yayınları (5 dk gecikmeli)\n"
         f"  • Sınırlı /haber + /report kullanımı\n\n"
 
-        f"💎 <b>PREMIUM</b> — $2/ay\n"
+        f"💎 <b>PREMIUM</b> — {premium_price_label}\n"
         f"  • Anlık makro yayınları (gecikme yok)\n"
         f"  • Tüm tarihsel chart + sektör hisse listeleri\n"
         f"  • Dashboard tam erişim\n\n"
 
-        f"🚀 <b>ADVANCE</b> — $5/ay\n"
+        f"🚀 <b>ADVANCE</b> — {advance_price_label}\n"
         f"  • PREMIUM tüm özellikler\n"
         f"  • Sınırsız /report + /haber\n"
         f"  • Erken yeni özellik erişimi\n\n"
@@ -663,11 +708,16 @@ async def process_upgrade_command(chat_id, user_id):
         advance_res = await create_checkout_session(str(user_id), "advance")
         keyboard_rows = []
         if premium_res.url:
-            keyboard_rows.append([{"text": "💎 PREMIUM ($2/ay)", "url": premium_res.url}])
+            label = f"💎 PREMIUM ($1.99 {premium_try})" if premium_try else "💎 PREMIUM ($1.99/ay)"
+            keyboard_rows.append([{"text": label, "url": premium_res.url}])
         if advance_res.url:
-            keyboard_rows.append([{"text": "🚀 ADVANCE ($5/ay)", "url": advance_res.url}])
+            label = f"🚀 ADVANCE ($4.99 {advance_try})" if advance_try else "🚀 ADVANCE ($4.99/ay)"
+            keyboard_rows.append([{"text": label, "url": advance_res.url}])
         if keyboard_rows:
-            body += "⚡ Aşağıdaki butona tıklayarak güvenli ödeme sayfasına geçebilirsin."
+            footer = "⚡ Aşağıdaki butona tıklayarak güvenli ödeme sayfasına geçebilirsin."
+            if premium_try:
+                footer += "\n<i>TL tutarı TCMB anlık kuruyla yaklaşık; tahsilat USD üzerinden, bankan kendi kuruyla TL'ye çevirir.</i>"
+            body += footer
             send_message_with_keyboard(chat_id, body, {"inline_keyboard": keyboard_rows})
             return
         # Both failed — drop through to admin-contact fallback.
@@ -791,7 +841,10 @@ async def start_telegram_bot():
                             text = update["message"]["text"]
 
                             if text.startswith("/start"):
-                                await process_start_command(chat_id, user_id, username)
+                                # `/start upgrade_premium` → payload routing
+                                # (free broadcast'taki [💎 Anında al] butonu).
+                                _payload = text[len("/start"):].strip()
+                                await process_start_command(chat_id, user_id, username, _payload)
                             elif text.lower().startswith("/haber"):
                                 await process_haber_command(chat_id, user_id)
                             elif text.lower().startswith("/tags"):

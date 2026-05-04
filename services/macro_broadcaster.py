@@ -418,25 +418,37 @@ _FREE_WATERMARK = (
 _DELAYED_INFLIGHT: set = set()
 
 
-def _build_inline_keyboard(event_id: str) -> dict:
-    """Two-button keyboard under every macro broadcast — historical compare
-    + impacted stocks. Callback data is `macro_hist:<event_id>` /
+def _build_inline_keyboard(event_id: str, *, with_upgrade: bool = False) -> dict:
+    """Inline keyboard under every macro broadcast — historical compare
+    + impacted stocks. `with_upgrade=True` adds a third row with a Telegram
+    deep-link to /start upgrade_premium so free-tier users can convert in
+    one tap. callback_data is `macro_hist:<event_id>` /
     `macro_stocks:<event_id>` (handled in services/telegram_bot.py poll
     loop). Telegram caps callback_data at 64 bytes; FRED event_ids
     `fred:CPI:2026-03-01` are 19 chars so we're well under.
     """
-    return {
-        "inline_keyboard": [[
-            {"text": "📊 Tarihsel kıyaslama", "callback_data": f"macro_hist:{event_id}"},
-            {"text": "💼 Etkilenen hisseler", "callback_data": f"macro_stocks:{event_id}"},
-        ]]
-    }
+    rows = [[
+        {"text": "📊 Tarihsel kıyaslama", "callback_data": f"macro_hist:{event_id}"},
+        {"text": "💼 Etkilenen hisseler", "callback_data": f"macro_stocks:{event_id}"},
+    ]]
+    if with_upgrade:
+        # Lazy import — telegram_bot imports macro_broadcaster on its side,
+        # so we delay this to avoid a cycle.
+        from services.telegram_bot import get_bot_username
+        bot_username = get_bot_username()
+        if bot_username:
+            rows.append([{
+                "text": "💎 Anında al — gecikme yok",
+                "url": f"https://t.me/{bot_username}?start=upgrade_premium",
+            }])
+    return {"inline_keyboard": rows}
 
 
-async def _fanout(message: str, users: list, event_id: str) -> tuple[int, int]:
+async def _fanout(message: str, users: list, event_id: str, *, with_upgrade: bool = False) -> tuple[int, int]:
     """Send `message` to every user.telegram_id with an inline keyboard
-    attached. Returns (sent, failed)."""
-    keyboard = _build_inline_keyboard(event_id)
+    attached. `with_upgrade` toggles the third upgrade-deeplink row (free
+    fanout sets True). Returns (sent, failed)."""
+    keyboard = _build_inline_keyboard(event_id, with_upgrade=with_upgrade)
     sent = 0
     failed = 0
     for user in users:
@@ -453,10 +465,11 @@ async def _fanout(message: str, users: list, event_id: str) -> tuple[int, int]:
 
 async def _delayed_free_fanout(message: str, free_users: list, event_id: str) -> None:
     """Wait 5 minutes then push the watermarked message to all free-tier
-    users. Caught up by the strong-ref set so the sleep survives GC."""
+    users with an extra [💎 Anında al] upgrade button. Caught up by the
+    strong-ref set so the sleep survives GC."""
     try:
         await asyncio.sleep(_FREE_DELAY_SECONDS)
-        sent, failed = await _fanout(message, free_users, event_id)
+        sent, failed = await _fanout(message, free_users, event_id, with_upgrade=True)
         logger.info(
             f"📣 macro broadcast {event_id} [FREE +5min]: "
             f"{sent} sent / {failed} failed / {len(free_users)} free users"
