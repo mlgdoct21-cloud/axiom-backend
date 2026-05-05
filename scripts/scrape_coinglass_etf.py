@@ -37,6 +37,25 @@ USER_AGENT = (
 
 SPOT_PRICE_FALLBACK = {"BTC": 80_000.0, "ETH": 2_300.0}
 
+COINGECKO_IDS = {"BTC": "bitcoin", "ETH": "ethereum"}
+
+
+def _fetch_spot_price(symbol: str) -> float:
+    try:
+        r = httpx.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={"ids": COINGECKO_IDS[symbol], "vs_currencies": "usd"},
+            timeout=10.0,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            price = data.get(COINGECKO_IDS[symbol], {}).get("usd")
+            if isinstance(price, (int, float)) and price > 0:
+                return float(price)
+    except Exception as e:
+        print(f"[{symbol}] CoinGecko spot fetch failed: {e}", flush=True)
+    return SPOT_PRICE_FALLBACK[symbol]
+
 
 def _parse_compact(text: str) -> Optional[float]:
     """Parse CoinGlass cell text into a float. Handles +6.78K, -$24.21M, etc."""
@@ -84,25 +103,36 @@ def _scrape_symbol(page, symbol: str) -> Optional[dict]:
         print(f"[{symbol}] no complete coin row found", flush=True)
         return None
 
-    # Switch the unit toggle to USD and re-read.
-    try:
-        usd_btn = page.get_by_role("button", name=re.compile(r"^USD$"))
-        usd_btn.first.click(timeout=5_000)
-        page.wait_for_timeout(1_500)
-    except Exception as e:
-        print(f"[{symbol}] could not click USD toggle: {e}", flush=True)
-        return None
+    # Try to switch the unit toggle to USD and re-read. If the toggle isn't found
+    # (CoinGlass UI changes), fall back to coin_total * live spot price.
+    usd_total: Optional[float] = None
+    toggle_locators = [
+        page.get_by_role("button", name=re.compile(r"^\s*USD\s*$", re.I)).first,
+        page.get_by_role("tab", name=re.compile(r"^\s*USD\s*$", re.I)).first,
+        page.locator("button:has-text('USD')").first,
+        page.locator("[class*='toggle'] :text-is('USD')").first,
+    ]
+    for loc in toggle_locators:
+        try:
+            loc.click(timeout=3_000)
+            page.wait_for_timeout(1_500)
+            usd_row = _read_first_complete_row(page)
+            if usd_row and usd_row["date"] == coin_row["date"]:
+                usd_total = usd_row["total"]
+                break
+        except Exception:
+            continue
 
-    usd_row = _read_first_complete_row(page)
-    if usd_row is None or usd_row["date"] != coin_row["date"]:
-        print(f"[{symbol}] usd row missing or date mismatch ({coin_row['date']} vs "
-              f"{usd_row['date'] if usd_row else None})", flush=True)
-        return None
+    if usd_total is None:
+        spot = _fetch_spot_price(symbol)
+        usd_total = coin_row["total"] * spot
+        print(f"[{symbol}] USD toggle unavailable — derived usd={usd_total:+,.2f} "
+              f"from coin={coin_row['total']:+,.2f} × spot={spot:,.2f}", flush=True)
 
     return {
         "date": coin_row["date"],
         "coin_total": coin_row["total"],
-        "usd_total": usd_row["total"],
+        "usd_total": usd_total,
     }
 
 
@@ -132,7 +162,7 @@ def _push(symbol: str, payload: dict, backend_url: str, secret: str) -> bool:
         "net_flow_usd": payload["usd_total"],
         "net_flow_coins": payload["coin_total"],
         "source": "coinglass_playwright",
-        "spot_price": SPOT_PRICE_FALLBACK[symbol],
+        "spot_price": _fetch_spot_price(symbol),
     }
     print(f"[{symbol}] POST {url} body={body}", flush=True)
     try:
