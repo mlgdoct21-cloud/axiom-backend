@@ -137,8 +137,11 @@ def _scrape_symbol(page, symbol: str) -> Optional[dict]:
 
 
 def _read_first_complete_row(page) -> Optional[dict]:
-    """Find the first row whose 'Total' cell isn't '-'. Returns {date, total}."""
-    # CoinGlass renders rows as <tr> with first cell = date, last cell = total.
+    """Find the first row with a real (non-zero, not-today) 'Total' cell.
+    CoinGlass sometimes shows today's incomplete row as "0" instead of "-",
+    so a 0 value or today's UTC date is treated as incomplete and skipped."""
+    from datetime import datetime as _dt, timezone as _tz
+    today_iso = _dt.now(_tz.utc).strftime("%Y-%m-%d")
     rows = page.locator("table tbody tr").all()
     for row in rows[:10]:
         cells = row.locator("td").all()
@@ -147,9 +150,11 @@ def _read_first_complete_row(page) -> Optional[dict]:
         date_text = cells[0].inner_text().strip()
         if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_text):
             continue
+        if date_text == today_iso:
+            continue
         total_text = cells[-1].inner_text().strip()
         val = _parse_compact(total_text)
-        if val is None:
+        if val is None or val == 0.0:
             continue
         return {"date": date_text, "total": val}
     return None
