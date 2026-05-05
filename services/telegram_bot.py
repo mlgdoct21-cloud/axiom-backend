@@ -54,14 +54,19 @@ def _is_valid_symbol(symbol: str) -> bool:
 
 # ── Telegram API yardımcıları ──────────────────────────────────────────────────
 
-def send_telegram_message(chat_id, text):
-    """HTML formatında mesaj gönderir."""
+def send_telegram_message(chat_id, text, disable_web_page_preview: bool = False):
+    """HTML formatında mesaj gönderir.
+
+    disable_web_page_preview=True kullan: link Telegram tarafından pre-fetch
+    edilmemeli (örn. tek-kullanımlık /auth/telegram?token=... gibi linkler;
+    önizleme tarayıcıdan önce token'ı tüketir → kullanıcı tıkladığında 401).
+    """
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": chat_id,
         "text": text,
         "parse_mode": "HTML",
-        "disable_web_page_preview": False
+        "disable_web_page_preview": disable_web_page_preview,
     }
     try:
         r = requests.post(url, json=payload, timeout=15)
@@ -787,7 +792,10 @@ async def process_login_command(chat_id, user_id, username):
         "Bu link <b>5 dakika</b> geçerlidir ve <b>tek kullanımlıktır</b>.\n"
         "Linki kimseyle paylaşmayın — Axiom hesabınıza erişim sağlar."
     )
-    send_telegram_message(chat_id, msg)
+    # disable_web_page_preview=True: kritik. Telegram normalde URL'leri preview
+    # için pre-fetch eder; bu tek-kullanımlık token'ı kullanıcı tıklamadan
+    # tüketir → click-time 401. Bu flag preview'i kapatıp token'ı korur.
+    send_telegram_message(chat_id, msg, disable_web_page_preview=True)
 
 
 async def process_tier_command(chat_id, user_id):
