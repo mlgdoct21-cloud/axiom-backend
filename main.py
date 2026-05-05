@@ -127,8 +127,22 @@ app = FastAPI(
 # CORS Middleware — env var'dan dinamik origin listesi
 # ALLOWED_ORIGINS env var virgülle ayrılmış URL listesi olmalı.
 # Örn: "https://axiom-dashboard.vercel.app,https://www.axiomos.app"
-# Geliştirme ortamı için fallback: localhost portları.
-_default_origins = "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001"
+#
+# Production-safe default: includes the live Vercel prod domain
+# (`axiom-dashboard-sigma.vercel.app`) so the dashboard can call the API
+# even if ALLOWED_ORIGINS env is missing/wrong on Railway. Day 21 we hit
+# CORS preflight 400 ("Disallowed CORS origin") which silently broke the
+# Telegram /login deep-link auth (useAuth.checkAuth → /users/me preflight
+# fail → logout → /auth/login). Hardcoding the prod domain here makes the
+# system tolerant of env drift between Vercel and Railway.
+_default_origins = ",".join([
+    "https://axiom-dashboard-sigma.vercel.app",
+    "https://axiom-dashboard.vercel.app",
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+])
 _allowed_origins = [
     o.strip() for o in os.getenv("ALLOWED_ORIGINS", _default_origins).split(",") if o.strip()
 ]
