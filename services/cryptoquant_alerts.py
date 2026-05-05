@@ -374,6 +374,15 @@ async def morning_briefing() -> dict:
     if snap.get("axiom_score") is not None:
         await _record_score_snapshot("BTC", snap["axiom_score"], snap.get("score_zone", "UNKNOWN"))
 
+    # Side-effect snapshot for ETH so its sparkline also fills. The briefing
+    # message itself stays BTC-focused.
+    try:
+        eth_snap = await get_onchain_snapshot("ETH")
+        if eth_snap and eth_snap.get("axiom_score") is not None:
+            await _record_score_snapshot("ETH", eth_snap["axiom_score"], eth_snap.get("score_zone", "UNKNOWN"))
+    except Exception as e:
+        logger.warning(f"briefing: ETH snapshot record failed: {e}")
+
     msg = _format_briefing(snap, yesterday=yesterday, next_macro=next_macro)
 
     try:
