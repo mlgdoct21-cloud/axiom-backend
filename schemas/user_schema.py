@@ -47,6 +47,7 @@ class UserResponse(BaseModel):
     telegram_id: str
     username: Optional[str]
     is_active: bool
+    tier: str = "free"
     tags: str
     report_mode: str
     report_hours: str

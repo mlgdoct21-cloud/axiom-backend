@@ -6,12 +6,14 @@ JWT-authenticated quota gate for dashboard features (Whitepaper +
 On-Chain tabs). Frontend POSTs before rendering; if 402 → render
 upgrade overlay instead of feature.
 """
+from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.database import get_db
+from core.database import engine, get_db
 from core.security import get_current_user as get_authenticated_user
 from services.feature_quota import check_and_consume, peek
 
@@ -73,6 +75,60 @@ async def peek_quota(
         "command": result.command,
         "remaining": result.remaining,
     }
+
+
+@router.get("/summary")
+async def quota_summary(
+    current_user = Depends(get_authenticated_user),
+):
+    """Single-shot summary for the dashboard header badge.
+
+    Returns tier + per-command usage for every command in `_ALLOWED`,
+    plus the earliest reset time across all commands (when the oldest
+    used row expires from the 24h window). Premium/advance return
+    `limit: null` and `remaining: null` to signal unlimited."""
+    tier = (getattr(current_user, "tier", "free") or "free").lower()
+    if tier not in ("free", "premium", "advance"):
+        tier = "free"
+
+    quotas: dict[str, dict] = {}
+    for cmd in sorted(_ALLOWED):
+        result = await peek(current_user.telegram_id, tier, cmd)
+        quotas[cmd] = {
+            "used": result.used,
+            "limit": result.limit,
+            "remaining": result.remaining,
+            "allowed": result.allowed,
+        }
+
+    reset_at = await _earliest_reset(current_user.telegram_id)
+
+    return {
+        "tier": tier,
+        "quotas": quotas,
+        "reset_at": reset_at.isoformat() if reset_at else None,
+    }
+
+
+async def _earliest_reset(telegram_id: str) -> Optional[datetime]:
+    """Oldest used_at within the 24h window + 24h = reset moment.
+    None when there's nothing in the window."""
+    sql = text("""
+        SELECT MIN(used_at) FROM feature_quota_log
+        WHERE telegram_id = :tid
+          AND used_at > NOW() - INTERVAL '24 hours'
+    """)
+    try:
+        async with engine.begin() as conn:
+            row = (await conn.execute(sql, {"tid": str(telegram_id)})).fetchone()
+            if not row or row[0] is None:
+                return None
+            ts: datetime = row[0]
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            return ts + timedelta(hours=24)
+    except Exception:
+        return None
 
 
 def _paywall_response(payload: dict):

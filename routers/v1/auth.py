@@ -177,7 +177,8 @@ async def login(
             "user": {
                 "id": user.id,
                 "telegram_id": user.telegram_id,
-                "username": user.username
+                "username": user.username,
+                "tier": (getattr(user, "tier", "free") or "free"),
             }
         }
     except HTTPException:
@@ -333,5 +334,6 @@ async def telegram_token_login(
             "id": user.id,
             "telegram_id": user.telegram_id,
             "username": user.username,
+            "tier": (getattr(user, "tier", "free") or "free"),
         },
     }
