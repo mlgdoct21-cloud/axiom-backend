@@ -36,6 +36,45 @@ async def onchain_snapshot(symbol: str = Query(default="BTC", max_length=10)):
     return JSONResponse(content=data)
 
 
+@router.get("/crypto/score-history")
+async def score_history(
+    symbol: str = Query(default="BTC", max_length=10),
+    days: int = Query(default=90, ge=7, le=365),
+):
+    """Daily Axiom Score snapshots for the sparkline widget.
+
+    Returns up to `days` rows ascending by date. One row per (symbol, day);
+    morning briefing upserts via _record_score_snapshot.
+    """
+    sym = symbol.upper().strip()
+    sql = text("""
+        SELECT recorded_date, score, score_zone, recorded_at
+        FROM axiom_score_history
+        WHERE symbol = :sym
+          AND recorded_date >= (NOW() AT TIME ZONE 'UTC')::date - :days
+        ORDER BY recorded_date ASC
+    """)
+    try:
+        async with engine.begin() as conn:
+            rows = (await conn.execute(sql, {"sym": sym, "days": days})).fetchall()
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+    items = [
+        {
+            "date": r[0].isoformat(),
+            "score": float(r[1]),
+            "zone": r[2],
+            "recorded_at": r[3].isoformat(),
+        }
+        for r in rows
+    ]
+    return JSONResponse(
+        content={"symbol": sym, "days": days, "count": len(items), "items": items},
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
 @router.get("/crypto/alerts/history")
 async def alert_history(days: int = Query(default=7, ge=1, le=30)):
     """Returns the last N days of fired alerts (all users aggregated, no PII).
