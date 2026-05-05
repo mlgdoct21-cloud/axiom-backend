@@ -51,7 +51,7 @@ async def score_history(
         SELECT recorded_date, score, score_zone, recorded_at
         FROM axiom_score_history
         WHERE symbol = :sym
-          AND recorded_date >= (NOW() AT TIME ZONE 'UTC')::date - :days
+          AND recorded_date >= ((NOW() AT TIME ZONE 'UTC')::date - make_interval(days => :days))
         ORDER BY recorded_date ASC
     """)
     try:
