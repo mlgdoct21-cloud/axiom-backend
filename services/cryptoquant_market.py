@@ -109,7 +109,7 @@ async def _fetch_erc20_token(token: str) -> Optional[dict]:
         "netflow_7d": total_7d,
         "reserve": reserve,
         "reserve_usd": reserve_usd,
-        "netflow_to_reserve_pct": round(ratio, 3),
+        "netflow_to_reserve_pct": round(ratio, 3) if ratio is not None else None,
         "signal": signal,
         "label_tr": label,
         "date": nf_rows[-1].get("date"),
@@ -125,16 +125,20 @@ async def get_erc20_radar() -> dict:
     if cached:
         return cached
 
-    # Sequential to avoid rate-limit (1.0s between calls is safe)
+    # Sequential to avoid rate-limit. Her token try/except ile sarılı —
+    # tek bir token rate-limit'e takılırsa diğerleri devam etsin.
     results = []
     for cfg in _ERC20_TOKENS:
-        data = await _fetch_erc20_token(cfg["token"])
-        if data:
-            results.append({
-                "symbol": cfg["symbol"],
-                "name": cfg["name"],
-                **data,
-            })
+        try:
+            data = await _fetch_erc20_token(cfg["token"])
+            if data:
+                results.append({
+                    "symbol": cfg["symbol"],
+                    "name": cfg["name"],
+                    **data,
+                })
+        except Exception as e:
+            logger.warning(f"ERC20 fetch failed for {cfg['token']}: {e}")
         await asyncio.sleep(2.0)
 
     # Aggregate sinyal: STRONG_BULLISH=+2, BULLISH=+1, NEUTRAL=0, BEARISH=-1, STRONG_BEARISH=-2
