@@ -51,7 +51,7 @@ def _is_configured() -> bool:
     return bool(_api_key())
 
 
-async def _cq_get(path: str, params: dict, _retry: int = 1) -> Optional[dict]:
+async def _cq_get(path: str, params: dict, _retry: int = 2) -> Optional[dict]:
     """Single CryptoQuant API GET call. Returns parsed JSON or None on error.
     429 (rate limit) durumunda 5sn bekleyip 1 kez retry yapar."""
     key = _api_key()
@@ -67,8 +67,10 @@ async def _cq_get(path: str, params: dict, _retry: int = 1) -> Optional[dict]:
             ) as resp:
                 if resp.status == 429:
                     if _retry > 0:
-                        logger.warning(f"CryptoQuant 429 @ {path} — retry in 5s")
-                        await asyncio.sleep(5.0)
+                        # Exponential backoff: ilk retry 8s, ikinci 15s
+                        wait = 8.0 if _retry == 2 else 15.0
+                        logger.warning(f"CryptoQuant 429 @ {path} — retry {_retry} in {wait}s")
+                        await asyncio.sleep(wait)
                         return await _cq_get(path, params, _retry=_retry - 1)
                     logger.warning(f"CryptoQuant rate limit (final): {path}")
                     return None

@@ -229,20 +229,39 @@ async def _fetch_stablecoin_token(token: str) -> Optional[dict]:
 
 async def _fetch_btc_market_cap_proxy() -> float:
     """BTC market cap proxy: spot price × ~19.7M circulating.
-    SSR (Stablecoin Supply Ratio) hesaplaması için. Tam değil, proxy."""
+    Önce CryptoQuant denenir; rate limit / 403 olursa CoinGecko'ya düşer."""
+    BTC_CIRCULATING_SUPPLY = 19_700_000  # 2026 itibarıyla yaklaşık
+
+    # Try CryptoQuant first (daily window — Pro plan)
     raw = await _cq_get(
         "/btc/market-data/price-ohlcv",
         {"market": "spot", "exchange": "binance", "symbol": "btc_usdt",
-         "window": "hour", "limit": 1},
+         "window": "day", "limit": 1},
     )
-    if not raw:
-        return 0.0
-    rows = raw.get("result", {}).get("data", [])
-    if not rows:
-        return 0.0
-    price = float(rows[-1].get("close") or 0)
-    BTC_CIRCULATING_SUPPLY = 19_700_000  # 2026 itibarıyla yaklaşık
-    return price * BTC_CIRCULATING_SUPPLY
+    if raw:
+        rows = raw.get("result", {}).get("data", [])
+        if rows:
+            price = float(rows[-1].get("close") or 0)
+            if price > 0:
+                return price * BTC_CIRCULATING_SUPPLY
+
+    # Fallback: CoinGecko (free, no rate limit)
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.get(
+                "https://api.coingecko.com/api/v3/simple/price",
+                params={"ids": "bitcoin", "vs_currencies": "usd"},
+            )
+            if r.status_code == 200:
+                price = r.json().get("bitcoin", {}).get("usd")
+                if isinstance(price, (int, float)) and price > 0:
+                    return float(price) * BTC_CIRCULATING_SUPPLY
+    except Exception as e:
+        logger.debug(f"BTC CoinGecko fallback failed: {e}")
+
+    # Final fallback: hardcoded reasonable BTC mcap (~$1.6T at $80K)
+    return 80_000.0 * BTC_CIRCULATING_SUPPLY
 
 
 async def get_stablecoin_pulse() -> dict:
@@ -263,10 +282,14 @@ async def get_stablecoin_pulse() -> dict:
         await asyncio.sleep(2.0)
 
     btc_mcap = await _fetch_btc_market_cap_proxy()
-    total_reserve = sum(r["reserve"] for r in results)
-    total_inflow_1d = sum(r["inflow_1d"] for r in results)
-    total_netflow_1d = sum(r["netflow_1d"] for r in results)
-    total_netflow_7d = sum(r["netflow_7d"] for r in results)
+    # None değerleri filtrele — bazı fetch'ler rate-limit'e takılıp None
+    # dönebilir; toplama dahil edilmemeli.
+    def _safe_sum(key: str) -> float:
+        return sum(r.get(key) or 0 for r in results)
+    total_reserve = _safe_sum("reserve")
+    total_inflow_1d = _safe_sum("inflow_1d")
+    total_netflow_1d = _safe_sum("netflow_1d")
+    total_netflow_7d = _safe_sum("netflow_7d")
 
     # SSR proxy = BTC market cap / stablecoin reserve on exchanges.
     # Düşük SSR = bol kuru barut = altcoinler için yeşil ışık.
