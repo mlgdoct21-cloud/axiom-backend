@@ -51,8 +51,9 @@ def _is_configured() -> bool:
     return bool(_api_key())
 
 
-async def _cq_get(path: str, params: dict) -> Optional[dict]:
-    """Single CryptoQuant API GET call. Returns parsed JSON or None on error."""
+async def _cq_get(path: str, params: dict, _retry: int = 1) -> Optional[dict]:
+    """Single CryptoQuant API GET call. Returns parsed JSON or None on error.
+    429 (rate limit) durumunda 5sn bekleyip 1 kez retry yapar."""
     key = _api_key()
     if not key:
         return None
@@ -65,7 +66,11 @@ async def _cq_get(path: str, params: dict) -> Optional[dict]:
                 timeout=aiohttp.ClientTimeout(total=12),
             ) as resp:
                 if resp.status == 429:
-                    logger.warning(f"CryptoQuant rate limit: {path}")
+                    if _retry > 0:
+                        logger.warning(f"CryptoQuant 429 @ {path} — retry in 5s")
+                        await asyncio.sleep(5.0)
+                        return await _cq_get(path, params, _retry=_retry - 1)
+                    logger.warning(f"CryptoQuant rate limit (final): {path}")
                     return None
                 if resp.status != 200:
                     body = await resp.text()
@@ -559,7 +564,7 @@ def _interpret_signals(snapshot: dict) -> dict:
         else:
             sig, label = "NEUTRAL", "🟡 Dengeli"
         signals["funding_rates"] = {
-            "value_str": f"{avg*100:+.4f}% (ort 24s)",
+            "value_str": f"{avg*100:+.4f}% (günlük)",
             "signal": sig,
             "label_tr": label,
         }

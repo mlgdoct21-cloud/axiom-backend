@@ -135,7 +135,7 @@ async def get_erc20_radar() -> dict:
                 "name": cfg["name"],
                 **data,
             })
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(2.0)
 
     # Aggregate sinyal: STRONG_BULLISH=+2, BULLISH=+1, NEUTRAL=0, BEARISH=-1, STRONG_BEARISH=-2
     score_map = {"STRONG_BULLISH": 2, "BULLISH": 1, "NEUTRAL": 0, "BEARISH": -1, "STRONG_BEARISH": -2}
@@ -156,12 +156,15 @@ async def get_erc20_radar() -> dict:
 
     payload = {
         "tokens": results,
-        "aggregate_score_pct": aggregate_pct,
+        "aggregate_score_pct": aggregate_pct if results else None,
         "aggregate_label_tr": agg_label,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    await _cache_set("erc20_radar", "all", "day", payload, timedelta(hours=4))
+    # En az 3 token başarılıysa cache'le, yoksa partial veriyi tekrar çekmeye
+    # bırak (gelecek çağrı taze fetch'le tamamlamaya çalışsın).
+    if len(results) >= 3:
+        await _cache_set("erc20_radar", "all", "day", payload, timedelta(hours=4))
     return payload
 
 
@@ -257,7 +260,7 @@ async def get_stablecoin_pulse() -> dict:
         data = await _fetch_stablecoin_token(cfg["token"])
         if data:
             results.append({"symbol": cfg["symbol"], "name": cfg["name"], **data})
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(2.0)
 
     btc_mcap = await _fetch_btc_market_cap_proxy()
     total_reserve = sum(r["reserve"] for r in results)
@@ -315,7 +318,9 @@ async def get_stablecoin_pulse() -> dict:
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    await _cache_set("stablecoin_pulse", "all", "day", payload, timedelta(hours=4))
+    # En az 1 stablecoin başarılı + reserve > 0 ise cache'le
+    if results and total_reserve > 0:
+        await _cache_set("stablecoin_pulse", "all", "day", payload, timedelta(hours=4))
     return payload
 
 
@@ -393,9 +398,9 @@ async def get_altseason_score() -> dict:
         score_total += c
         weight_total += 20
 
-    # 3. ERC20 aggregate (20 ağırlık)
-    if radar and "aggregate_score_pct" in radar:
-        agg = radar["aggregate_score_pct"]
+    # 3. ERC20 aggregate (20 ağırlık) — radar'da hiç token yoksa skip
+    if radar and radar.get("aggregate_score_pct") is not None:
+        agg = float(radar["aggregate_score_pct"])
         # agg ∈ [-100, +100] → ağırlığa scale
         c = round((agg / 100) * 20, 1)
         components.append({
@@ -470,7 +475,9 @@ async def get_altseason_score() -> dict:
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    await _cache_set("altseason_score", "all", "day", payload, timedelta(hours=4))
+    # En az 3 component varsa cache'le (yoksa anlamlı skor değil)
+    if len(components) >= 3:
+        await _cache_set("altseason_score", "all", "day", payload, timedelta(hours=4))
     return payload
 
 
