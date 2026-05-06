@@ -241,11 +241,11 @@ async def _fetch_stablecoin_inflow() -> Optional[dict]:
 
 
 async def _fetch_funding_rates() -> Optional[dict]:
-    """BTC funding rates (Binance, last 24h hourly → avg + latest)."""
-    date_from = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y%m%dT%H:%M:%S")
+    """BTC funding rates (Binance, daily). Pro plan'da window=hour 403 dönüyor."""
+    date_from = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y%m%d")
     raw = await _cq_get(
         "/btc/market-data/funding-rates",
-        {"exchange": "binance", "window": "hour", "from": date_from, "limit": 24},
+        {"exchange": "binance", "window": "day", "from": date_from, "limit": 3},
     )
     if not raw:
         return None
@@ -257,7 +257,7 @@ async def _fetch_funding_rates() -> Optional[dict]:
         return None
     return {
         "latest": values[-1],
-        "avg_24h": sum(values) / len(values),
+        "avg_24h": values[-1],  # daily resolution → "son 24s" ≈ son günkü değer
         "ts": rows[-1].get("date"),
     }
 
@@ -435,11 +435,12 @@ async def _fetch_hash_rate() -> Optional[dict]:
 
 
 async def _fetch_coinbase_premium() -> Optional[dict]:
-    """Coinbase premium index (latest hourly). Positive = US institutional buyers active."""
-    date_from = (datetime.now(timezone.utc) - timedelta(hours=4)).strftime("%Y%m%dT%H:%M:%S")
+    """BTC Coinbase premium index (daily — Pro plan saatlik vermiyor).
+    Pozitif = ABD kurumsal alıcı aktif."""
+    yesterday = _yesterday_str()
     raw = await _cq_get(
         "/btc/market-data/coinbase-premium-index",
-        {"window": "hour", "from": date_from, "limit": 4},
+        {"window": "day", "from": yesterday, "limit": 3},
     )
     if not raw:
         return None
@@ -447,8 +448,12 @@ async def _fetch_coinbase_premium() -> Optional[dict]:
     if not rows:
         return None
     latest = rows[-1]
+    # Daily endpoint returns coinbase_premium_gap (USD diff) primarily
+    val = latest.get("coinbase_premium_gap")
+    if val is None:
+        val = latest.get("coinbase_premium_index", 0)
     return {
-        "coinbase_premium": float(latest.get("coinbase_premium_index", 0)),
+        "coinbase_premium": float(val),
         "ts": latest.get("date"),
     }
 
@@ -1188,11 +1193,11 @@ async def _fetch_eth_active_addresses() -> Optional[dict]:
 
 
 async def _fetch_eth_funding_rates() -> Optional[dict]:
-    """ETH funding rates (Binance, son 24s saatlik → ortalama + son)."""
-    date_from = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y%m%dT%H:%M:%S")
+    """ETH funding rates (Binance, daily — Pro plan saatlik vermiyor)."""
+    date_from = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y%m%d")
     raw = await _cq_get(
         "/eth/market-data/funding-rates",
-        {"exchange": "binance", "window": "hour", "from": date_from, "limit": 24},
+        {"exchange": "binance", "window": "day", "from": date_from, "limit": 3},
     )
     if not raw:
         return None
@@ -1204,7 +1209,7 @@ async def _fetch_eth_funding_rates() -> Optional[dict]:
         return None
     return {
         "latest": values[-1],
-        "avg_24h": sum(values) / len(values),
+        "avg_24h": values[-1],
         "ts": rows[-1].get("date"),
     }
 
@@ -1212,11 +1217,11 @@ async def _fetch_eth_funding_rates() -> Optional[dict]:
 # ── XRP fetchers (Pro plan'da 8 sinyal — derivatives ağırlıklı) ─────────────
 
 async def _fetch_xrp_funding_rates() -> Optional[dict]:
-    """XRP funding rates (Binance, son 24s)."""
-    date_from = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y%m%dT%H:%M:%S")
+    """XRP funding rates (Binance, daily — Pro plan saatlik vermiyor)."""
+    date_from = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y%m%d")
     raw = await _cq_get(
         "/xrp/market-data/funding-rates",
-        {"exchange": "binance", "window": "hour", "from": date_from, "limit": 24},
+        {"exchange": "binance", "window": "day", "from": date_from, "limit": 3},
     )
     if not raw:
         return None
@@ -1228,7 +1233,7 @@ async def _fetch_xrp_funding_rates() -> Optional[dict]:
         return None
     return {
         "latest": values[-1],
-        "avg_24h": sum(values) / len(values),
+        "avg_24h": values[-1],
         "ts": rows[-1].get("date"),
     }
 
@@ -1405,12 +1410,12 @@ async def _build_xrp_snapshot() -> dict:
 # ── ETH-specific (devam) ─────────────────────────────────────────────────────
 
 async def _fetch_eth_coinbase_premium() -> Optional[dict]:
-    """ETH Coinbase premium index (saatlik son veri).
+    """ETH Coinbase premium index (daily — Pro plan saatlik vermiyor).
     Pozitif = ABD kurumsal ETH alımı aktif."""
-    date_from = (datetime.now(timezone.utc) - timedelta(hours=4)).strftime("%Y%m%dT%H:%M:%S")
+    yesterday = _yesterday_str()
     raw = await _cq_get(
         "/eth/market-data/coinbase-premium-index",
-        {"window": "hour", "from": date_from, "limit": 4},
+        {"window": "day", "from": yesterday, "limit": 3},
     )
     if not raw:
         return None
@@ -1418,7 +1423,6 @@ async def _fetch_eth_coinbase_premium() -> Optional[dict]:
     if not rows:
         return None
     latest = rows[-1]
-    # ETH endpoint returns coinbase_premium_gap (USD) and coinbase_premium_index (%)
     val = latest.get("coinbase_premium_gap")
     if val is None:
         val = latest.get("coinbase_premium_index", 0)
@@ -1429,9 +1433,8 @@ async def _fetch_eth_coinbase_premium() -> Optional[dict]:
 
 
 async def get_btc_spot_price() -> Optional[float]:
-    """Latest BTC close price via CryptoQuant /btc/market-data/price-ohlcv.
-    Used by ETF flow scheduler + anywhere we need a robust BTC spot.
-    Returns None silently on error so callers can fallback to FMP/CoinGecko."""
+    """Latest BTC close price via CryptoQuant /btc/market-data/price-ohlcv (daily).
+    Pro plan saatlik vermiyor. ETF flow scheduler + spot price fallback için."""
     if not _is_configured():
         return None
     raw = await _cq_get(
@@ -1440,7 +1443,7 @@ async def get_btc_spot_price() -> Optional[float]:
             "market": "spot",
             "exchange": "binance",
             "symbol": "btc_usdt",
-            "window": "hour",
+            "window": "day",
             "limit": 1,
         },
     )

@@ -76,20 +76,32 @@ async def _fetch_erc20_token(token: str) -> Optional[dict]:
             reserve = float(rsv_rows[-1].get("reserve", 0))
             reserve_usd = float(rsv_rows[-1].get("reserve_usd", 0))
 
-    # Netflow-to-reserve ratio (auto-scales across token sizes)
-    ratio = (latest_1d / reserve * 100) if reserve else 0
+    # Netflow-to-reserve ratio (auto-scales across token sizes).
+    # Reserve fetch rate-limit'e takılmış olabilir → o zaman 7G netflow
+    # yönüne göre coarse sinyal üret.
+    ratio = (latest_1d / reserve * 100) if reserve else None
 
-    # Sinyal: reserve'in % kaçı çıkmış / girmiş
-    if ratio < -1.0:
-        signal, label = "STRONG_BULLISH", "💎 Güçlü Birikim"
-    elif ratio < -0.2:
-        signal, label = "BULLISH", "🟢 Birikim"
-    elif ratio > 1.0:
-        signal, label = "STRONG_BEARISH", "🔴 Güçlü Dağıtım"
-    elif ratio > 0.2:
-        signal, label = "BEARISH", "⚠️ Dağıtım"
+    if ratio is not None:
+        # Eşikler hafifletildi (LINK: -0.04%, UNI: -0.25% gibi tipik
+        # değerleri yakalamak için 0.2 → 0.05).
+        if ratio < -0.5:
+            signal, label = "STRONG_BULLISH", "💎 Güçlü Birikim"
+        elif ratio < -0.05:
+            signal, label = "BULLISH", "🟢 Birikim"
+        elif ratio > 0.5:
+            signal, label = "STRONG_BEARISH", "🔴 Güçlü Dağıtım"
+        elif ratio > 0.05:
+            signal, label = "BEARISH", "⚠️ Dağıtım"
+        else:
+            signal, label = "NEUTRAL", "🟡 Nötr"
     else:
-        signal, label = "NEUTRAL", "🟡 Nötr"
+        # Fallback: reserve eksik → sadece netflow yönüne bak
+        if total_7d < 0:
+            signal, label = "BULLISH", "🟢 7G Net Çıkış"
+        elif total_7d > 0:
+            signal, label = "BEARISH", "⚠️ 7G Net Giriş"
+        else:
+            signal, label = "NEUTRAL", "🟡 Nötr"
 
     return {
         "token": token,
@@ -253,9 +265,10 @@ async def get_stablecoin_pulse() -> dict:
     total_netflow_1d = sum(r["netflow_1d"] for r in results)
     total_netflow_7d = sum(r["netflow_7d"] for r in results)
 
-    # SSR proxy = BTC market cap / stablecoin reserve on exchanges
-    # Düşük SSR = bol kuru barut = altcoinler için yeşil ışık
-    ssr_proxy = (btc_mcap / total_reserve) if total_reserve else None
+    # SSR proxy = BTC market cap / stablecoin reserve on exchanges.
+    # Düşük SSR = bol kuru barut = altcoinler için yeşil ışık.
+    # btc_mcap 0 ise (rate limit) None yap, yoksa label yanlış oluyor.
+    ssr_proxy = (btc_mcap / total_reserve) if (total_reserve and btc_mcap > 0) else None
 
     # Ana sinyal: 7-günlük net giriş yönü
     if total_netflow_7d > 1_000_000_000:  # 1B$ üstü 7G giriş
