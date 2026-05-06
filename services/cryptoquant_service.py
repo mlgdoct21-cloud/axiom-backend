@@ -462,18 +462,34 @@ def _interpret_signals(snapshot: dict) -> dict:
     """
     signals: dict[str, Any] = {}
 
-    # Exchange netflow
+    # Exchange netflow — symbol-aware thresholds (BTC/ETH/XRP ölçekleri farklı)
     nf = snapshot.get("exchange_netflow")
     if nf:
         val = nf["netflow_total"]
-        if val > 5000:
-            sig, label = "BEARISH", "⚠️ Satış Baskısı"
-        elif val < -5000:
-            sig, label = "BULLISH", "🟢 Birikim"
+        sym = snapshot.get("symbol", "BTC")
+        # Kademeli eşikler — Day 26 öğrenmesi: çok geniş eşik gerçek
+        # sinyali sessizce skip ediyor. Hafif/şiddetli ayrımı.
+        if sym == "BTC":
+            t_strong, t_mild = 5000, 500       # BTC
+        elif sym == "ETH":
+            t_strong, t_mild = 80000, 8000     # ETH (24x BTC ölçeği civarı)
+        elif sym == "XRP":
+            t_strong, t_mild = 80_000_000, 8_000_000   # XRP supply çok büyük
         else:
-            sig, label = "NEUTRAL", "🟡 Nötr"
+            t_strong, t_mild = 5000, 500
+        if val > t_strong:
+            sig, label = "BEARISH", "🔴 Şiddetli Satış"
+        elif val > t_mild:
+            sig, label = "BEARISH", "⚠️ Hafif Satış Baskısı"
+        elif val < -t_strong:
+            sig, label = "BULLISH", "💎 Şiddetli Birikim"
+        elif val < -t_mild:
+            sig, label = "BULLISH", "🟢 Hafif Birikim"
+        else:
+            sig, label = "NEUTRAL", "🟡 Dengeli"
+        unit = sym
         signals["exchange_netflow"] = {
-            "value_str": f"{'+' if val >= 0 else ''}{val:,.0f} BTC",
+            "value_str": f"{'+' if val >= 0 else ''}{val:,.0f} {unit}",
             "signal": sig,
             "label_tr": label,
         }
@@ -750,12 +766,110 @@ def _interpret_signals(snapshot: dict) -> dict:
             "label_tr": label,
         }
 
+    # XRP — Liquidations (USD)
+    liq = snapshot.get("xrp_liquidations")
+    if liq:
+        total = liq["total_usd"]
+        long_v = liq["long_usd"]
+        short_v = liq["short_usd"]
+        # Asymmetry → güçlü sinyal: sadece bir taraf temizleniyor
+        if total > 5_000_000:
+            if long_v > short_v * 2:
+                sig, label = "BULLISH", "🟢 Long Tasfiyesi (Dip Sinyali)"
+            elif short_v > long_v * 2:
+                sig, label = "BEARISH", "🔴 Short Sıkışması Sonrası"
+            else:
+                sig, label = "NEUTRAL", "⚠️ Çift Yönlü Tasfiye"
+        elif total > 500_000:
+            sig, label = "NEUTRAL", "🟡 Orta Tasfiye"
+        else:
+            sig, label = "BULLISH", "🟢 Sakin Türev"
+        signals["xrp_liquidations"] = {
+            "value_str": f"${total/1000:,.0f}K (L:{long_v/1000:.0f}K · S:{short_v/1000:.0f}K)",
+            "signal": sig,
+            "label_tr": label,
+        }
+
+    # XRP — Taker Buy/Sell oranı
+    taker = snapshot.get("xrp_taker_buy_sell")
+    if taker:
+        bratio = taker["buy_ratio"]
+        if bratio > 0.55:
+            sig, label = "BULLISH", "🟢 Alıcı Baskın"
+        elif bratio > 0.52:
+            sig, label = "BULLISH", "🟢 Hafif Alıcı"
+        elif bratio < 0.45:
+            sig, label = "BEARISH", "🔴 Satıcı Baskın"
+        elif bratio < 0.48:
+            sig, label = "BEARISH", "⚠️ Hafif Satıcı"
+        else:
+            sig, label = "NEUTRAL", "🟡 Dengeli"
+        signals["xrp_taker_buy_sell"] = {
+            "value_str": f"%{bratio*100:.1f} alıcı",
+            "signal": sig,
+            "label_tr": label,
+        }
+
+    # XRP — Supply ratio (borsalardaki XRP / toplam supply)
+    xsr = snapshot.get("xrp_supply_ratio")
+    if xsr:
+        v = xsr["supply_ratio"]
+        if v < 0.10:
+            sig, label = "BULLISH", "🟢 Borsa Stoku Düşük"
+        elif v < 0.13:
+            sig, label = "BULLISH", "🟢 Sağlıklı"
+        elif v > 0.18:
+            sig, label = "BEARISH", "⚠️ Borsa Stoku Yüksek"
+        else:
+            sig, label = "NEUTRAL", "🟡 Normal"
+        signals["xrp_supply_ratio"] = {
+            "value_str": f"{v:.3f}",
+            "signal": sig,
+            "label_tr": label,
+        }
+
+    # XRP — NVT (Network Value to Transactions)
+    nvt = snapshot.get("xrp_nvt")
+    if nvt:
+        v = nvt["nvt"]
+        if v > 200:
+            sig, label = "BEARISH", "⚠️ Aşırı Değerli (Düşük Kullanım)"
+        elif v > 100:
+            sig, label = "NEUTRAL", "🟡 Yüksek Değerleme"
+        elif v < 30:
+            sig, label = "BULLISH", "💎 Çok Aktif Ağ"
+        elif v < 60:
+            sig, label = "BULLISH", "🟢 Sağlıklı Kullanım"
+        else:
+            sig, label = "NEUTRAL", "🟡 Normal"
+        signals["xrp_nvt"] = {
+            "value_str": f"{v:.1f}",
+            "signal": sig,
+            "label_tr": label,
+        }
+
+    # XRP — Transaction count (7G değişim)
+    txc = snapshot.get("xrp_tx_count")
+    if txc:
+        chg = txc["change_7d_pct"]
+        if chg > 10:
+            sig, label = "BULLISH", "🟢 Ağ Kullanımı Artıyor"
+        elif chg > 0:
+            sig, label = "BULLISH", "🟢 Hafif Artış"
+        elif chg < -10:
+            sig, label = "BEARISH", "🔴 Ağ Kullanımı Düşüyor"
+        else:
+            sig, label = "NEUTRAL", "🟡 Stabil"
+        signals["xrp_tx_count"] = {
+            "value_str": f"{chg:+.1f}% (7G)",
+            "signal": sig,
+            "label_tr": label,
+        }
+
     # ── Axiom Skor: weighted 0-100 composite ─────────────────────────────────
-    # Sinyal başına ±max ağırlık. Toplam max range 136 (-68 ile +68).
-    # Skor = 50 + (signed_total / 136) * 50, clamp [0, 100].
-    # BTC kapsamı 9 sinyal; ETH'de PoS olduğu için miner/MVRV/SOPR yok,
-    # sadece 5 sinyal var. Symbol'e bakarak sadece mevcut sinyaller skora
-    # girer (max_total dinamik hesaplanır).
+    # Sinyal başına ±max ağırlık. Symbol'e bakarak sadece mevcut sinyaller
+    # skora girer (max_total dinamik hesaplanır).
+    # BTC: 16 sinyal · ETH: 7 sinyal · XRP: 8 sinyal.
     weights = {
         "exchange_netflow":     25,  # en yüksek aksiyonlanabilir sinyal
         "whale_ratio":          20,
@@ -769,6 +883,12 @@ def _interpret_signals(snapshot: dict) -> dict:
         # ETH-specific
         "eth_supply_ratio":     20,  # whale_ratio'nun ETH karşılığı
         "eth_active_addresses": 10,  # ağ canlılığı
+        # XRP-specific
+        "xrp_liquidations":     15,  # tasfiye asimetrisi güçlü sinyal
+        "xrp_taker_buy_sell":   18,  # spot tarafındaki agresörlük
+        "xrp_supply_ratio":     18,  # borsa arz dengesi
+        "xrp_nvt":              12,  # değerleme katsayısı
+        "xrp_tx_count":         10,  # ağ büyümesi
     }
 
     breakdown = []
@@ -908,17 +1028,18 @@ async def _build_btc_snapshot() -> dict:
 
 
 async def _build_eth_snapshot() -> dict:
-    """ETH lite snapshot — Pro plan'da 5 sinyal aktif (PoS yapısı + ürün
-    kararları sebebiyle whale_ratio/MVRV/SOPR/funding/coinbase yok).
-    BTC ile aynı interpretation pipeline, daha az data point."""
+    """ETH snapshot — Pro plan'da 7 sinyal aktif. PoS olduğu için BTC'nin
+    miner/MVRV/SOPR'u yok, ama funding + coinbase premium çalışıyor."""
     results = await asyncio.gather(
         _fetch_eth_netflow(),
         _fetch_eth_exchange_supply_ratio(),
         _fetch_eth_leverage_ratio(),
         _fetch_eth_open_interest(),
         _fetch_eth_active_addresses(),
+        _fetch_eth_funding_rates(),
+        _fetch_eth_coinbase_premium(),
     )
-    netflow, supply_ratio, leverage, oi, active_addr = results
+    netflow, supply_ratio, leverage, oi, active_addr, funding, cb_premium = results
     return {
         "symbol": "ETH",
         "exchange_netflow": netflow,
@@ -926,6 +1047,8 @@ async def _build_eth_snapshot() -> dict:
         "leverage_ratio": leverage,
         "open_interest": oi,
         "eth_active_addresses": active_addr,
+        "funding_rates": funding,
+        "coinbase_premium": cb_premium,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "_snapshot_full": True,
     }
@@ -933,23 +1056,28 @@ async def _build_eth_snapshot() -> dict:
 
 async def get_onchain_snapshot(symbol: str = "BTC") -> dict:
     """
-    Returns on-chain snapshot for BTC (full, 9-signal Axiom Score) or
-    ETH (lite, 5-signal). Other symbols return error.
+    Returns on-chain snapshot for BTC (16 sinyal full), ETH (7 sinyal),
+    or XRP (8 sinyal full). Diğer semboller error döner.
     """
     symbol = (symbol or "BTC").upper()
     if not _is_configured():
         return {"error": "cryptoquant_not_configured", "symbol": symbol}
 
-    if symbol not in ("BTC", "ETH"):
+    if symbol not in ("BTC", "ETH", "XRP"):
         return {"error": "symbol_not_supported", "symbol": symbol,
-                "supported": ["BTC", "ETH"]}
+                "supported": ["BTC", "ETH", "XRP"]}
 
     # Try cache first
     cached = await _cache_get("snapshot", symbol, "day")
     if cached and cached.get("_snapshot_full"):
         return cached
 
-    raw = await (_build_btc_snapshot() if symbol == "BTC" else _build_eth_snapshot())
+    if symbol == "BTC":
+        raw = await _build_btc_snapshot()
+    elif symbol == "ETH":
+        raw = await _build_eth_snapshot()
+    else:  # XRP
+        raw = await _build_xrp_snapshot()
     interpreted = _interpret_signals(raw)
     snapshot = {**raw, **interpreted}
 
@@ -1056,6 +1184,247 @@ async def _fetch_eth_active_addresses() -> Optional[dict]:
         "active_addresses": latest,
         "change_7d_pct": round(change, 2),
         "date": rows[-1].get("date"),
+    }
+
+
+async def _fetch_eth_funding_rates() -> Optional[dict]:
+    """ETH funding rates (Binance, son 24s saatlik → ortalama + son)."""
+    date_from = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y%m%dT%H:%M:%S")
+    raw = await _cq_get(
+        "/eth/market-data/funding-rates",
+        {"exchange": "binance", "window": "hour", "from": date_from, "limit": 24},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    values = [float(r.get("funding_rates", 0)) for r in rows if r.get("funding_rates") is not None]
+    if not values:
+        return None
+    return {
+        "latest": values[-1],
+        "avg_24h": sum(values) / len(values),
+        "ts": rows[-1].get("date"),
+    }
+
+
+# ── XRP fetchers (Pro plan'da 8 sinyal — derivatives ağırlıklı) ─────────────
+
+async def _fetch_xrp_funding_rates() -> Optional[dict]:
+    """XRP funding rates (Binance, son 24s)."""
+    date_from = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y%m%dT%H:%M:%S")
+    raw = await _cq_get(
+        "/xrp/market-data/funding-rates",
+        {"exchange": "binance", "window": "hour", "from": date_from, "limit": 24},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    values = [float(r.get("funding_rates", 0)) for r in rows if r.get("funding_rates") is not None]
+    if not values:
+        return None
+    return {
+        "latest": values[-1],
+        "avg_24h": sum(values) / len(values),
+        "ts": rows[-1].get("date"),
+    }
+
+
+async def _fetch_xrp_open_interest() -> Optional[dict]:
+    """XRP açık pozisyon (USD), 1g değişimi."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/xrp/market-data/open-interest",
+        {"exchange": "all_exchange", "window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    prev = rows[-2] if len(rows) >= 2 else latest
+    oi = float(latest.get("open_interest", 0))
+    oi_prev = float(prev.get("open_interest", 1))
+    change_pct = ((oi - oi_prev) / oi_prev * 100) if oi_prev else 0
+    return {
+        "open_interest": oi,
+        "change_pct": round(change_pct, 2),
+        "date": latest.get("date"),
+    }
+
+
+async def _fetch_xrp_liquidations() -> Optional[dict]:
+    """XRP tasfiyeler (long + short USD)."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/xrp/market-data/liquidations",
+        {"exchange": "binance", "window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    long_usd = float(latest.get("long_liquidations_usd", 0))
+    short_usd = float(latest.get("short_liquidations_usd", 0))
+    return {
+        "long_usd": long_usd,
+        "short_usd": short_usd,
+        "total_usd": long_usd + short_usd,
+        "date": latest.get("date"),
+    }
+
+
+async def _fetch_xrp_taker_buy_sell() -> Optional[dict]:
+    """XRP taker buy/sell oranı (Binance). >0.55 = alıcı baskın."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/xrp/market-data/taker-buy-sell-stats",
+        {"exchange": "binance", "window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    return {
+        "buy_ratio": float(latest.get("taker_buy_ratio", 0)),
+        "sell_ratio": float(latest.get("taker_sell_ratio", 0)),
+        "buy_volume": float(latest.get("taker_buy_volume", 0)),
+        "date": latest.get("date"),
+    }
+
+
+async def _fetch_xrp_leverage_ratio() -> Optional[dict]:
+    """XRP tahmini kaldıraç oranı (Binance)."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/xrp/market-data/estimated-leverage-ratio",
+        {"exchange": "binance", "window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    val = latest.get("estimated_leverage_ratio") or latest.get("elr") or 0
+    return {"leverage_ratio": float(val), "date": latest.get("date")}
+
+
+async def _fetch_xrp_supply_ratio() -> Optional[dict]:
+    """XRP borsa arz oranı — düşük = biriktirilme."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/xrp/flow-indicator/exchange-supply-ratio",
+        {"exchange": "all_exchange", "window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    val = latest.get("exchange_supply_ratio") or latest.get("supply_ratio") or 0
+    return {"supply_ratio": float(val), "date": latest.get("date")}
+
+
+async def _fetch_xrp_nvt() -> Optional[dict]:
+    """XRP NVT — ağ değeri / işlem hacmi. Yüksek = balon, düşük = ucuz."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/xrp/network-indicator/nvt",
+        {"window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    return {"nvt": float(latest.get("nvt", 0)), "date": latest.get("date")}
+
+
+async def _fetch_xrp_tx_count() -> Optional[dict]:
+    """XRP günlük işlem sayısı, 7G değişimi."""
+    date_from = (datetime.now(timezone.utc) - timedelta(days=8)).strftime("%Y%m%d")
+    raw = await _cq_get(
+        "/xrp/network-data/transactions-count",
+        {"window": "day", "from": date_from, "limit": 8},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if len(rows) < 2:
+        return None
+    latest = float(rows[-1].get("total_transactions_count") or rows[-1].get("transactions_count") or 0)
+    oldest = float(rows[0].get("total_transactions_count") or rows[0].get("transactions_count") or 1)
+    change = ((latest - oldest) / oldest * 100) if oldest else 0
+    return {
+        "tx_count": latest,
+        "change_7d_pct": round(change, 2),
+        "date": rows[-1].get("date"),
+    }
+
+
+async def _build_xrp_snapshot() -> dict:
+    """XRP full snapshot — 8 sinyal (derivatives + network).
+    BTC seviyesinde Axiom Skoru üretir."""
+    results = await asyncio.gather(
+        _fetch_xrp_funding_rates(),
+        _fetch_xrp_open_interest(),
+        _fetch_xrp_liquidations(),
+        _fetch_xrp_taker_buy_sell(),
+        _fetch_xrp_leverage_ratio(),
+        _fetch_xrp_supply_ratio(),
+        _fetch_xrp_nvt(),
+        _fetch_xrp_tx_count(),
+    )
+    funding, oi, liq, taker, leverage, supply_ratio, nvt, tx_count = results
+    return {
+        "symbol": "XRP",
+        "funding_rates": funding,
+        "open_interest": oi,
+        "xrp_liquidations": liq,
+        "xrp_taker_buy_sell": taker,
+        "leverage_ratio": leverage,
+        "xrp_supply_ratio": supply_ratio,
+        "xrp_nvt": nvt,
+        "xrp_tx_count": tx_count,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "_snapshot_full": True,
+    }
+
+
+# ── ETH-specific (devam) ─────────────────────────────────────────────────────
+
+async def _fetch_eth_coinbase_premium() -> Optional[dict]:
+    """ETH Coinbase premium index (saatlik son veri).
+    Pozitif = ABD kurumsal ETH alımı aktif."""
+    date_from = (datetime.now(timezone.utc) - timedelta(hours=4)).strftime("%Y%m%dT%H:%M:%S")
+    raw = await _cq_get(
+        "/eth/market-data/coinbase-premium-index",
+        {"window": "hour", "from": date_from, "limit": 4},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    # ETH endpoint returns coinbase_premium_gap (USD) and coinbase_premium_index (%)
+    val = latest.get("coinbase_premium_gap")
+    if val is None:
+        val = latest.get("coinbase_premium_index", 0)
+    return {
+        "coinbase_premium": float(val),
+        "ts": latest.get("date"),
     }
 
 

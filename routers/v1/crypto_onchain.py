@@ -20,6 +20,12 @@ from sqlalchemy import text
 from core.database import engine
 from services.cryptoquant_service import get_onchain_snapshot, _is_configured, refresh_all_metrics
 from services.cryptoquant_alerts import sweep_and_dispatch, morning_briefing
+from services.cryptoquant_market import (
+    get_erc20_radar,
+    get_stablecoin_pulse,
+    get_altseason_score,
+    refresh_market_metrics,
+)
 
 router = APIRouter()
 
@@ -141,4 +147,59 @@ async def admin_morning_briefing(x_internal_secret: Optional[str] = Header(None)
 async def admin_refresh(x_internal_secret: Optional[str] = Header(None)):
     _check_auth(x_internal_secret)
     await refresh_all_metrics()
+    await refresh_market_metrics()
     return {"status": "refreshed"}
+
+
+# ── Market-Wide Endpoints ─────────────────────────────────────────────────
+
+@router.get("/market/erc20-radar")
+async def market_erc20_radar():
+    """9 ERC20 DeFi tokenı için akıllı para hareketi (netflow + reserve)."""
+    if not _is_configured():
+        return JSONResponse(
+            status_code=503,
+            content={"error": "cryptoquant_not_configured"},
+        )
+    data = await get_erc20_radar()
+    return JSONResponse(
+        content=data,
+        headers={"Cache-Control": "public, max-age=900"},
+    )
+
+
+@router.get("/market/stablecoin-pulse")
+async def market_stablecoin_pulse():
+    """USDC + DAI borsa akış nabzı + SSR proxy ('kuru barut' göstergesi)."""
+    if not _is_configured():
+        return JSONResponse(
+            status_code=503,
+            content={"error": "cryptoquant_not_configured"},
+        )
+    data = await get_stablecoin_pulse()
+    return JSONResponse(
+        content=data,
+        headers={"Cache-Control": "public, max-age=900"},
+    )
+
+
+@router.get("/market/altseason")
+async def market_altseason():
+    """5 girdili Alt Sezon Composite skoru (0-100)."""
+    if not _is_configured():
+        return JSONResponse(
+            status_code=503,
+            content={"error": "cryptoquant_not_configured"},
+        )
+    data = await get_altseason_score()
+    return JSONResponse(
+        content=data,
+        headers={"Cache-Control": "public, max-age=900"},
+    )
+
+
+@router.post("/admin/market/refresh")
+async def admin_market_refresh(x_internal_secret: Optional[str] = Header(None)):
+    _check_auth(x_internal_secret)
+    await refresh_market_metrics()
+    return {"status": "market_refreshed"}
