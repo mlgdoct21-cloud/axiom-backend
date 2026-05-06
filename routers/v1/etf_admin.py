@@ -29,6 +29,27 @@ class EtfFlowUpsert(BaseModel):
     total_holdings_coins: Optional[float] = None
 
 
+def _check_internal(secret: Optional[str]) -> None:
+    expected = os.getenv("BOT_INTERNAL_SECRET", "").strip()
+    if not expected or secret != expected:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+@router.post("/coinglass-scrape")
+async def trigger_coinglass_scrape(
+    x_internal_secret: Optional[str] = Header(None),
+):
+    """Run CoinGlass Playwright scrape NOW for BTC + ETH and write to cache.
+
+    Useful after a deploy or to force a refresh outside the 6h supervisor
+    interval. Returns the per-symbol success map. Synchronous — request
+    waits for both scrapes (typically ~15s)."""
+    _check_internal(x_internal_secret)
+    from services.coinglass_scheduler import scrape_both_symbols
+    results = await scrape_both_symbols()
+    return {"ok": True, "results": results}
+
+
 @router.post("/cache")
 async def upsert_etf_cache(
     payload: EtfFlowUpsert,
@@ -37,9 +58,7 @@ async def upsert_etf_cache(
     """
     Manuel cache write. BOT_INTERNAL_SECRET ile auth.
     """
-    expected = os.getenv("BOT_INTERNAL_SECRET", "").strip()
-    if not expected or x_internal_secret != expected:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    _check_internal(x_internal_secret)
 
     if payload.symbol not in ("BTC", "ETH"):
         raise HTTPException(status_code=400, detail="symbol must be BTC or ETH")

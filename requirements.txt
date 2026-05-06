@@ -52,6 +52,12 @@ matplotlib==3.8.4
 # subscription.created / .updated / .deleted.
 stripe==9.0.0
 
+# CoinGlass ETF flow scraper — JS-rendered tables require a real browser.
+# Replaces the unreliable .github/workflows/coinglass-etf-cron.yml; runs
+# in services/coinglass_scheduler.py every 6h. Chromium installed via
+# `playwright install --with-deps chromium` in the Dockerfile.
+playwright==1.42.0
+
 # Technical Analysis (Phase 2.2) - Install when TradingView API available
 # pandas-ta==0.3.14b0
 # mplfinance==0.12.9

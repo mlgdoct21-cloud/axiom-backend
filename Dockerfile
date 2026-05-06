@@ -14,6 +14,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install Playwright Chromium for the CoinGlass ETF scheduler. Done as root
+# before the user switch so --with-deps can apt-get system libraries.
+# The browser binary lands under /ms-playwright (default PLAYWRIGHT_BROWSERS_PATH).
+RUN python -m playwright install --with-deps chromium
+
 # Copy application code
 COPY . .
 
@@ -23,7 +28,7 @@ COPY . .
 # yetkiyi sınırlar.
 RUN chmod +x /app/start.sh \
     && useradd --create-home --shell /bin/bash --uid 1000 appuser \
-    && chown -R appuser:appuser /app
+    && chown -R appuser:appuser /app /ms-playwright
 USER appuser
 
 # Expose port (Railway domain's targetPort is 8000; PORT env var controls the bind)

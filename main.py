@@ -12,6 +12,7 @@ from routers.v1 import router as v1_router
 from services.telegram_bot import start_telegram_bot
 from services.crawler import run_crawler
 from services.etf_flow_scheduler import etf_scraper_supervisor
+from services.coinglass_scheduler import coinglass_scraper_supervisor
 from services.macro_sources.reliability_probe import reliability_probe_supervisor
 from services.cryptoquant_scheduler import cryptoquant_supervisor
 from core.logger import get_logger
@@ -23,6 +24,7 @@ logger = get_logger("main")
 bot_task = None
 crawler_task = None
 etf_scraper_task = None
+coinglass_task = None
 macro_probe_task = None
 cryptoquant_task = None
 
@@ -55,7 +57,7 @@ async def crawler_supervisor():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global bot_task, crawler_task, etf_scraper_task, macro_probe_task, cryptoquant_task
+    global bot_task, crawler_task, etf_scraper_task, coinglass_task, macro_probe_task, cryptoquant_task
     logger.info("Application startup")
 
     # Schema guard — idempotent ALTER TABLE to ensure pipeline columns exist.
@@ -86,6 +88,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to start ETF scraper: {e}")
 
+    # CoinGlass Playwright supervisor — 6h cadence, BTC + ETH fresh data.
+    # Replaces the unreliable .github/workflows/coinglass-etf-cron.yml
+    # (May 6 06:00 UTC schedule run was deferred 2.5h, leaving stale modal).
+    try:
+        coinglass_task = asyncio.create_task(coinglass_scraper_supervisor())
+        logger.info("CoinGlass scheduler started")
+    except Exception as e:
+        logger.error(f"Failed to start CoinGlass scheduler: {e}")
+
     # Start Macro source reliability probe (5-min cadence, Hafta 1 verification)
     try:
         macro_probe_task = asyncio.create_task(reliability_probe_supervisor())
@@ -103,7 +114,7 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Application shutdown")
-    for task in [bot_task, crawler_task, etf_scraper_task, macro_probe_task, cryptoquant_task]:
+    for task in [bot_task, crawler_task, etf_scraper_task, coinglass_task, macro_probe_task, cryptoquant_task]:
         if task:
             task.cancel()
             try:
