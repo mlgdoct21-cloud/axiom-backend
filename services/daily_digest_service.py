@@ -122,9 +122,10 @@ class DailyDigestService:
             if sorted_asia and sorted_asia[0].get("change_pct", 0) < -0.5:
                 biggest_drop = sorted_asia[0]
 
-        # On-chain risk sinyalleri (BTC) — exchange netflow + funding rate
-        # Eşikler cryptoquant_service.py ile birebir aynı (netflow ±5000 BTC,
-        # funding ±0.001). Sadece anlamlı seviyede metne giriyor.
+        # On-chain yön sinyali (BTC) — exchange netflow + funding rate.
+        # Veri varsa daima gösterilir (nötr durumda da kullanıcıya bilgi
+        # verir). Şiddetli eşikler cryptoquant_service.py ile birebir aynı
+        # (netflow ±5000 BTC, funding ±0.001 = ±0.1%/24h).
         netflow_part: Optional[str] = None
         funding_part: Optional[str] = None
         onchain_risk = False  # red flag: hem netflow BEARISH hem funding aşırı long mu?
@@ -135,17 +136,26 @@ class DailyDigestService:
                 if val > 5000:
                     netflow_part = f"borsalara +{val:,.0f} BTC giriş (satış baskısı)"
                     onchain_risk = True
+                elif val > 500:
+                    netflow_part = f"borsalara +{val:,.0f} BTC giriş (hafif baskı)"
                 elif val < -5000:
                     netflow_part = f"borsalardan {abs(val):,.0f} BTC çıkış (birikim)"
+                elif val < -500:
+                    netflow_part = f"borsalardan {abs(val):,.0f} BTC çıkış (hafif birikim)"
+                else:
+                    netflow_part = f"borsa akışı dengeli ({val:+,.0f} BTC)"
 
             fr = onchain.get("funding_rates")
             if fr and fr.get("avg_24h") is not None:
                 avg = float(fr["avg_24h"])
+                pct = avg * 100
                 if avg > 0.001:
-                    funding_part = f"funding {avg*100:+.4f}% (aşırı long, squeeze riski)"
+                    funding_part = f"funding {pct:+.3f}% (aşırı long, squeeze riski)"
                     onchain_risk = True
                 elif avg < -0.001:
-                    funding_part = f"funding {avg*100:+.4f}% (short dominant)"
+                    funding_part = f"funding {pct:+.3f}% (short dominant)"
+                else:
+                    funding_part = f"funding {pct:+.3f}% (dengeli)"
 
         # Metin oluştur (template-based, Türkçe). En değerli sinyal en önde.
         parts = []
