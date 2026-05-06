@@ -26,6 +26,7 @@ from services.cryptoquant_market import (
     get_altseason_score,
     refresh_market_metrics,
 )
+from services.onchain_storyteller import get_onchain_story, refresh_story
 
 router = APIRouter()
 
@@ -203,3 +204,35 @@ async def admin_market_refresh(x_internal_secret: Optional[str] = Header(None)):
     _check_auth(x_internal_secret)
     await refresh_market_metrics()
     return {"status": "market_refreshed"}
+
+
+# ── On-Chain Storyteller ─────────────────────────────────────────────────
+
+@router.get("/crypto/onchain-story")
+async def onchain_story(symbol: str = Query(default="BTC", max_length=10)):
+    """Gemini ile üretilmiş on-chain hikâye (12h cache). BTC/ETH/XRP."""
+    sym = symbol.upper().strip()
+    data = await get_onchain_story(sym)
+    status = 200
+    if isinstance(data, dict) and data.get("error"):
+        err = data["error"]
+        if err == "cryptoquant_not_configured":
+            status = 503
+        elif err == "symbol_not_supported":
+            status = 400
+        elif err in ("snapshot_unavailable", "no_signals", "story_generation_failed"):
+            status = 502
+    headers = (
+        {"Cache-Control": "public, max-age=3600, stale-while-revalidate=21600"}
+        if status == 200 else {}
+    )
+    return JSONResponse(content=data, status_code=status, headers=headers)
+
+
+@router.post("/admin/crypto/story-refresh")
+async def admin_story_refresh(
+    symbol: str = Query(default="BTC", max_length=10),
+    x_internal_secret: Optional[str] = Header(None),
+):
+    _check_auth(x_internal_secret)
+    return await refresh_story(symbol.upper().strip())
