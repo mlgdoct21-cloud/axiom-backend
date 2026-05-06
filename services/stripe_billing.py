@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import text
@@ -135,6 +136,54 @@ async def create_checkout_session(telegram_id: str, tier: str) -> CheckoutResult
     return CheckoutResult(url=sess.url, session_id=sess.id)
 
 
+_DEFAULT_PORTAL_RETURN_URL = "https://axiom-dashboard-sigma.vercel.app/dashboard/settings"
+
+
+@dataclass
+class PortalResult:
+    url: Optional[str]
+    error: Optional[str] = None
+
+
+async def create_portal_session(telegram_id: str) -> PortalResult:
+    """Create a Stripe Customer Portal Session URL for `telegram_id`.
+
+    Returns 503-style error when Stripe isn't configured or when the user
+    has no stripe_customer_id (i.e. they never upgraded). Caller maps to
+    HTTP 400/503 as appropriate.
+    """
+    if not _set_api_key():
+        return PortalResult(url=None, error="stripe_not_configured")
+
+    customer_id: Optional[str] = None
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(User).where(User.telegram_id == str(telegram_id))
+            )
+            user = result.scalars().first()
+            if user is not None:
+                customer_id = getattr(user, "stripe_customer_id", None) or None
+    except Exception as e:
+        logger.warning(f"create_portal: customer lookup failed for {telegram_id}: {e}")
+        return PortalResult(url=None, error="lookup_failed")
+
+    if not customer_id:
+        return PortalResult(url=None, error="no_customer")
+
+    return_url = os.getenv("STRIPE_PORTAL_RETURN_URL", _DEFAULT_PORTAL_RETURN_URL)
+    try:
+        sess = stripe.billing_portal.Session.create(  # type: ignore[union-attr]
+            customer=customer_id,
+            return_url=return_url,
+        )
+    except Exception as e:
+        logger.error(f"stripe billing_portal.Session.create failed: {e}")
+        return PortalResult(url=None, error=str(e))
+
+    return PortalResult(url=sess.url)
+
+
 async def _apply_subscription_state(
     telegram_id: str,
     *,
@@ -142,6 +191,7 @@ async def _apply_subscription_state(
     subscription_id: Optional[str],
     status: Optional[str],
     tier: Optional[str],
+    current_period_end: Optional[datetime] = None,
 ) -> None:
     """Idempotent UPDATE on the users row. Tier is bumped only when the
     subscription status is 'active' / 'trialing'; on cancel/past_due we set
@@ -167,6 +217,9 @@ async def _apply_subscription_state(
     if eff_tier is not None:
         sets.append("tier = :tier")
         params["tier"] = eff_tier
+    if current_period_end is not None:
+        sets.append("current_period_end = :cpe")
+        params["cpe"] = current_period_end
     if not sets:
         return
     sql = text(f"UPDATE users SET {', '.join(sets)} WHERE telegram_id = :tid")
@@ -176,6 +229,23 @@ async def _apply_subscription_state(
     logger.info(
         f"stripe webhook: user {telegram_id} → tier={eff_tier or 'unchanged'} status={status}"
     )
+
+
+def _period_end_from(obj) -> Optional[datetime]:
+    """Pull `current_period_end` (Unix ts) from a Stripe subscription object
+    and convert to a UTC datetime. Returns None when missing or unparseable."""
+    if not obj:
+        return None
+    try:
+        ts = obj.get("current_period_end") if hasattr(obj, "get") else None
+    except Exception:
+        return None
+    if not ts:
+        return None
+    try:
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc)
+    except Exception:
+        return None
 
 
 def _meta_get(obj, key: str) -> Optional[str]:
@@ -205,6 +275,9 @@ async def handle_webhook_event(event: dict) -> dict:
             customer_id = obj.get("customer")
             subscription_id = obj.get("subscription")
             if telegram_id:
+                # checkout.session.completed doesn't carry current_period_end
+                # on the session itself; the customer.subscription.created
+                # event that follows will populate it.
                 await _apply_subscription_state(
                     telegram_id,
                     customer_id=customer_id,
@@ -225,6 +298,7 @@ async def handle_webhook_event(event: dict) -> dict:
                     subscription_id=obj.get("id"),
                     status=obj.get("status"),
                     tier=(obj.get("metadata") or {}).get("tier"),
+                    current_period_end=_period_end_from(obj),
                 )
         elif et == "customer.subscription.deleted":
             telegram_id = (obj.get("metadata") or {}).get("telegram_id")
@@ -237,6 +311,7 @@ async def handle_webhook_event(event: dict) -> dict:
                     subscription_id=obj.get("id"),
                     status="canceled",
                     tier="free",  # explicit downgrade
+                    current_period_end=_period_end_from(obj),
                 )
         else:
             logger.debug(f"stripe webhook: ignored event type {et}")

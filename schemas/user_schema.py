@@ -52,6 +52,8 @@ class UserResponse(BaseModel):
     report_mode: str
     report_hours: str
     custom_follows: str
+    subscription_status: Optional[str] = None
+    current_period_end: Optional[datetime] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 

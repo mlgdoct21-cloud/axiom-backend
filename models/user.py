@@ -28,6 +28,10 @@ class User(Base):
     stripe_customer_id = Column(String(64), nullable=True)
     stripe_subscription_id = Column(String(64), nullable=True)
     subscription_status = Column(String(32), nullable=True)  # active|past_due|canceled|...
+    # Stripe `current_period_end` (UTC) — when the active subscription will
+    # next renew or expire. NULL for free users and for paid users whose
+    # webhook landed before alembic 016 (backfilled by scripts/backfill_period_end.py).
+    current_period_end = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

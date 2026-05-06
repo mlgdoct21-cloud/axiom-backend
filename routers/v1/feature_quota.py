@@ -77,6 +77,39 @@ async def peek_quota(
     }
 
 
+@router.get("/history")
+async def quota_history(
+    days: int = Query(7, ge=1, le=30),
+    current_user = Depends(get_authenticated_user),
+):
+    """Recent feature_quota_log events for the authenticated user.
+
+    Powers the Settings page "Kullanım Geçmişi" card. Capped at 30 days
+    so the index scan stays cheap. Returns rows newest-first."""
+    sql = text("""
+        SELECT command, used_at FROM feature_quota_log
+        WHERE telegram_id = :tid
+          AND used_at > NOW() - make_interval(days => :days)
+        ORDER BY used_at DESC
+        LIMIT 200
+    """)
+    items: list[dict] = []
+    try:
+        async with engine.begin() as conn:
+            rows = (await conn.execute(sql, {"tid": str(current_user.telegram_id), "days": days})).fetchall()
+            for row in rows:
+                ts = row[1]
+                if ts is not None and ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                items.append({
+                    "command": row[0],
+                    "used_at": ts.isoformat() if ts else None,
+                })
+    except Exception:
+        items = []
+    return {"days": days, "total": len(items), "items": items}
+
+
 @router.get("/summary")
 async def quota_summary(
     current_user = Depends(get_authenticated_user),

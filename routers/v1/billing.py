@@ -13,11 +13,13 @@ handler errors and let our logger flag them.
 import os
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from core.logger import get_logger
+from core.security import get_current_user as get_authenticated_user
 from services.stripe_billing import (
     create_checkout_session,
+    create_portal_session,
     handle_webhook_event,
     is_configured,
     verify_webhook_signature,
@@ -56,6 +58,25 @@ async def checkout(
     if res.error or not res.url:
         raise HTTPException(status_code=502, detail=f"checkout_failed: {res.error or 'no_url'}")
     return {"url": res.url, "session_id": res.session_id, "tier": tier_norm}
+
+
+@router.post("/customer-portal")
+async def customer_portal(current_user = Depends(get_authenticated_user)):
+    """Mint a Stripe Customer Portal session URL for the authenticated user.
+
+    Frontend calls this from Settings → "Manage Subscription" and redirects
+    `window.location` to the returned URL. Returns 400 when the user has
+    never upgraded (no stripe_customer_id) so the frontend can route them
+    to the Telegram /upgrade flow instead. 503 when Stripe isn't configured.
+    """
+    if not is_configured():
+        raise HTTPException(status_code=503, detail="stripe_not_configured")
+    res = await create_portal_session(str(current_user.telegram_id))
+    if res.error == "no_customer":
+        raise HTTPException(status_code=400, detail="no_subscription")
+    if res.error or not res.url:
+        raise HTTPException(status_code=502, detail=f"portal_failed: {res.error or 'no_url'}")
+    return {"url": res.url}
 
 
 @router.post("/webhook")
