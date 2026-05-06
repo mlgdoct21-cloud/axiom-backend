@@ -419,6 +419,91 @@ async def _fetch_realized_price() -> Optional[dict]:
     return {"realized_price": float(val), "date": latest.get("date")}
 
 
+async def _fetch_sth_sopr() -> Optional[dict]:
+    """STH-SOPR (Short-Term Holder SOPR, < 155 gün tutucular).
+    >1.0 ve sürdürülürse boğa dinamiği, <1 = kısa vadeci kayıpla satıyor."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/btc/market-indicator/sth-sopr",
+        {"window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    val = latest.get("sth_sopr") or latest.get("sopr") or 0
+    return {"sth_sopr": float(val), "date": latest.get("date")}
+
+
+async def _fetch_sth_realized_price() -> Optional[dict]:
+    """STH-Realized Price — kısa vadeci tutucuların ortalama maliyeti.
+    Fiyat üstündeyse direnç, altındaysa destek davranır.
+    CryptoMe yazarının HEDGE alma seviyesi."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/btc/market-indicator/sth-realized-price",
+        {"window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    val = (
+        latest.get("sth_realized_price")
+        or latest.get("realized_price")
+        or 0
+    )
+    return {"sth_realized_price": float(val), "date": latest.get("date")}
+
+
+async def _fetch_asopr() -> Optional[dict]:
+    """aSOPR (Adjusted SOPR) — 1 saatten genç çıktıları hariç tutar.
+    Daha temiz sinyal; >1 sürerse boğa rejimi onayı."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/btc/market-indicator/asopr",
+        {"window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    val = latest.get("asopr") or latest.get("sopr") or 0
+    return {"asopr": float(val), "date": latest.get("date")}
+
+
+async def _fetch_spot_taker_ratio() -> Optional[dict]:
+    """Spot taker buy/sell ratio. >1 = spot alıcı baskın (kurumsal/sağlıklı),
+    <1 = spot satıcı baskın. Funding ile birlikte 'yön kaynağı' verir:
+    funding negatif + spot taker >1 = spot-led rally."""
+    date_from = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y%m%d")
+    raw = await _cq_get(
+        "/btc/market-data/taker-buy-sell-stats",
+        {"exchange": "all_exchange", "window": "day", "from": date_from, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    buy = float(latest.get("taker_buy_volume") or latest.get("buy_volume") or 0)
+    sell = float(latest.get("taker_sell_volume") or latest.get("sell_volume") or 1)
+    ratio = buy / sell if sell else None
+    return {
+        "ratio": round(ratio, 3) if ratio is not None else None,
+        "buy_volume": buy,
+        "sell_volume": sell,
+        "date": latest.get("date"),
+    }
+
+
 async def _fetch_hash_rate() -> Optional[dict]:
     """BTC network hash rate (EH/s). 7-day change indicates network security trend."""
     date_from = (datetime.now(timezone.utc) - timedelta(days=8)).strftime("%Y%m%d")
@@ -724,6 +809,68 @@ def _interpret_signals(snapshot: dict) -> dict:
             "label_tr": "📐 Piyasa Ortalama Maliyeti",
         }
 
+    # STH-SOPR (Short-Term Holder SOPR) — CryptoMe boğa rejimi göstergesi
+    ssopr = snapshot.get("sth_sopr")
+    if ssopr:
+        v = ssopr["sth_sopr"]
+        if v >= 1.03:
+            sig, label = "BULLISH", "🟢 Kısa Vadeci Güveni Yüksek"
+        elif v >= 1.0:
+            sig, label = "BULLISH", "🟢 STH Boğa Rejiminde"
+        elif v >= 0.97:
+            sig, label = "NEUTRAL", "🟡 STH Başabaşta"
+        else:
+            sig, label = "BEARISH", "🔴 STH Zararla Satıyor"
+        signals["sth_sopr"] = {
+            "value_str": f"{v:.4f}",
+            "signal": sig,
+            "label_tr": label,
+        }
+
+    # STH-Realized Price — kısa vadeci ortalama maliyet (HEDGE eşiği)
+    srp = snapshot.get("sth_realized_price")
+    if srp:
+        v = srp["sth_realized_price"]
+        signals["sth_realized_price"] = {
+            "value_str": f"${v:,.0f}",
+            "signal": "NEUTRAL",
+            "label_tr": "📌 STH Maliyet Eşiği",
+        }
+
+    # aSOPR (Adjusted SOPR) — kısa süreli çıktıları hariç tutan temiz sinyal
+    asopr = snapshot.get("asopr")
+    if asopr:
+        v = asopr["asopr"]
+        if v >= 1.02:
+            sig, label = "BULLISH", "🟢 aSOPR Kâr Realizasyonu"
+        elif v >= 1.0:
+            sig, label = "BULLISH", "🟢 aSOPR Boğa Onayı"
+        elif v >= 0.98:
+            sig, label = "NEUTRAL", "🟡 aSOPR Başabaş"
+        else:
+            sig, label = "BEARISH", "🔴 aSOPR Panik Bölgesi"
+        signals["asopr"] = {
+            "value_str": f"{v:.4f}",
+            "signal": sig,
+            "label_tr": label,
+        }
+
+    # Spot Taker Buy/Sell Ratio — yön kaynağı (spot vs türev)
+    st = snapshot.get("spot_taker")
+    if st and st.get("ratio") is not None:
+        v = st["ratio"]
+        if v >= 1.05:
+            sig, label = "BULLISH", "🟢 Spot Alıcı Baskın"
+        elif v >= 0.98:
+            sig, label = "NEUTRAL", "🟡 Spot Dengeli"
+        else:
+            sig, label = "BEARISH", "🔴 Spot Satıcı Baskın"
+        signals["spot_taker"] = {
+            "value_str": f"{v:.3f}",
+            "signal": sig,
+            "label_tr": label,
+        }
+
     # ETH-specific: exchange supply ratio (whale-ratio benzeri)
     esr = snapshot.get("eth_supply_ratio")
     if esr:
@@ -886,9 +1033,12 @@ def _interpret_signals(snapshot: dict) -> dict:
         "exchange_netflow":     25,  # en yüksek aksiyonlanabilir sinyal
         "whale_ratio":          20,
         "mpi":                  18,
+        "sth_sopr":             18,  # CryptoMe karar çerçevesinin omurgası
+        "spot_taker":           16,  # yön kaynağı: spot vs türev
         "stablecoin_inflow":    15,
         "leverage_ratio":       15,
         "funding_rates":        13,
+        "asopr":                12,  # adjusted SOPR — temiz sinyal
         "nupl":                 12,
         "sopr":                 10,
         "coinbase_premium":      8,
@@ -992,7 +1142,9 @@ def _interpret_signals(snapshot: dict) -> dict:
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 async def _build_btc_snapshot() -> dict:
-    """16 paralel BTC metrik fetch — Pro plan'ın tamamından yararlanıyor."""
+    """20 paralel BTC metrik fetch — Pro plan'ın tamamından yararlanıyor.
+    Day 27 #2: STH-SOPR + STH-Realized Price + aSOPR + Spot Taker eklendi
+    (CryptoMe karar çerçevesi + yön kaynağı için)."""
     results = await asyncio.gather(
         _fetch_exchange_netflow(),
         _fetch_whale_ratio(),
@@ -1010,11 +1162,16 @@ async def _build_btc_snapshot() -> dict:
         _fetch_leverage_ratio(),
         _fetch_realized_price(),
         _fetch_hash_rate(),
+        _fetch_sth_sopr(),
+        _fetch_sth_realized_price(),
+        _fetch_asopr(),
+        _fetch_spot_taker_ratio(),
     )
     (
         netflow, whale_ratio, miner_outflow, miner_reserve,
         stablecoin_inflow, funding_rates, open_interest, sopr, cb_premium,
         mvrv, nupl, mpi, puell, leverage_ratio, realized_price, hash_rate,
+        sth_sopr, sth_realized_price, asopr, spot_taker,
     ) = results
     return {
         "symbol": "BTC",
@@ -1034,6 +1191,10 @@ async def _build_btc_snapshot() -> dict:
         "leverage_ratio": leverage_ratio,
         "realized_price": realized_price,
         "hash_rate": hash_rate,
+        "sth_sopr": sth_sopr,
+        "sth_realized_price": sth_realized_price,
+        "asopr": asopr,
+        "spot_taker": spot_taker,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "_snapshot_full": True,
     }

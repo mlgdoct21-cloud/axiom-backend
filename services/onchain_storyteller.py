@@ -1,5 +1,5 @@
-"""On-Chain Storyteller — Gemini ile snapshot'taki ham sayıları
-Türkçe 3-paragraflık bir hikâyeye çevirir.
+"""Axiom Analistleri — Gemini ile snapshot'taki ham sayıları
+Türkçe 6-bloklu karar çerçevesine çevirir (CryptoMe tarzı).
 
 Pipeline:
 1. get_onchain_snapshot(symbol) → 8-16 sinyal + axiom_score + breakdown
@@ -30,6 +30,7 @@ from services.cryptoquant_service import (
     _cache_set,
     _is_configured,
 )
+from services.etf_flow_cache_service import get_latest_etf_flow
 
 logger = get_logger("crypto.storyteller")
 
@@ -85,79 +86,177 @@ def _top_contributors(snapshot: dict, n: int = 3) -> dict:
     }
 
 
-def _build_context(snapshot: dict) -> dict:
+def _direction_source(snapshot: dict) -> Optional[dict]:
+    """Spot vs Türev yön kaynağı analizi.
+    funding negatif + spot taker yüksek = spot-led (sağlıklı)
+    funding pozitif + spot taker düşük = kaldıraç-led (kırılgan)
+    """
+    funding = snapshot.get("funding_rates")
+    spot = snapshot.get("spot_taker")
+    if not funding and not spot:
+        return None
+    f_val = funding.get("latest") if funding else None
+    s_val = spot.get("ratio") if spot and spot.get("ratio") is not None else None
     return {
-        "symbol": snapshot.get("symbol"),
+        "funding_rate": f_val,
+        "spot_taker_ratio": s_val,
+        "futures_open_interest": (
+            snapshot.get("open_interest", {}).get("change_pct")
+            if snapshot.get("open_interest") else None
+        ),
+    }
+
+
+async def _etf_block(symbol: str) -> Optional[dict]:
+    """BTC + ETH için ETF flow özeti — spot kurumsal talep göstergesi."""
+    if symbol not in ("BTC", "ETH"):
+        return None
+    try:
+        flow = await get_latest_etf_flow(symbol)
+    except Exception as e:
+        logger.warning(f"etf flow read failed for {symbol}: {e}")
+        return None
+    if not flow:
+        return None
+    return {
+        "net_flow_usd": flow.get("net_flow_usd"),
+        "net_flow_coins": flow.get("net_flow_coins"),
+        "scraped_at": flow.get("scraped_at"),
+        "is_fresh": flow.get("is_fresh"),
+        "age_hours": flow.get("age_hours"),
+    }
+
+
+async def _build_context(snapshot: dict) -> dict:
+    sym = snapshot.get("symbol")
+    return {
+        "symbol": sym,
         "axiom_score": snapshot.get("axiom_score"),
         "score_zone": snapshot.get("score_zone_tr"),
         "score_summary": snapshot.get("score_summary"),
         "overall": snapshot.get("overall_tr"),
         "signals": _compact_signals(snapshot),
         "drivers": _top_contributors(snapshot),
+        "direction_source": _direction_source(snapshot),
+        "etf_flow": await _etf_block(sym) if sym else None,
         "fetched_at": snapshot.get("fetched_at"),
     }
 
 
 # ── Prompt ─────────────────────────────────────────────────────────────────
 
+_SYMBOL_PERSONALITY = {
+    "BTC": (
+        "BTC dilinde 'döngü', 'kurumsal akış', 'spot ETF', 'madenci', 'kohort' "
+        "(STH/LTH) anahtar kavramlardır. Bitcoin'i bir 'rezerv varlık' olarak "
+        "konumlandır; perakende heyecanı yerine uzun-soluklu sermaye davranışına "
+        "odaklan."
+    ),
+    "ETH": (
+        "ETH dilinde 'staking', 'gas/aktif kullanım', 'L2', 'spot ETH ETF', "
+        "'beacon chain çıkışları', 'borsa arz oranı' anahtar kavramlardır. "
+        "Ethereum'u 'üretken bir altyapı varlığı' olarak konumlandır; ağ kullanım "
+        "ve doğrulayıcı davranışı vurgu ön planda."
+    ),
+    "XRP": (
+        "XRP dilinde 'türev tarafı dominasyonu', 'likidasyon kaskadı', 'düşük "
+        "doğrulayıcı maliyeti', 'tx hacmi', 'tek noktalı whale dağılımı' anahtar "
+        "kavramlardır. XRP'yi 'yüksek-volatil türev oyun alanı' olarak konumlandır; "
+        "spot ETF veya madenci kavramı KULLANMA — XRP PoS değil, PoW de değil, "
+        "RPCA konsensüsü ile çalışır."
+    ),
+}
+
+
 def _build_prompt(ctx: dict) -> str:
     sym = ctx.get("symbol", "?")
+    personality = _SYMBOL_PERSONALITY.get(sym, "")
+    has_etf = bool(ctx.get("etf_flow"))
     return (
-        f"Sen AXIOM'un on-chain hikâyeleştirici mentörüsün. {sym} için ham "
-        "CryptoQuant sinyallerini Türk kripto yatırımcısının anlayacağı, "
-        "CryptoMe tarzı bir KARAR ÇERÇEVESİNE çevir. Sayı dökmek değil, "
-        "okuyucuya 'hangi engelleri geçtik, hangileri kaldı, ne olursa fikir değişir' "
-        "diye yön göster.\n\n"
-        f"INPUT JSON:\n{json.dumps(ctx, ensure_ascii=False)}\n\n"
-        "ÇIKTI ŞEMASI (sadece JSON, başka hiçbir şey yok):\n"
+        f"Sen 'Axiom Analistleri' takımısın — {sym} için on-chain veriyi "
+        "Türk kripto yatırımcısına KARAR ÇERÇEVESİ olarak sunuyorsun. "
+        "CryptoMe akademi yazarının üslubunu örnek al: numaralı engel/aşama "
+        "dizimi, 'eğer X olursa Y' koşullu cümleler, kendi pozisyonunu "
+        "açıkça ilan etme + revizyon koşulu, sıcak ama kurumsal Türkçe.\n\n"
+        f"### {sym} kişiliği:\n{personality}\n\n"
+        f"### INPUT JSON (TÜM sayılar buradan; başka kaynak YASAK):\n"
+        f"{json.dumps(ctx, ensure_ascii=False)}\n\n"
+        "### ÇIKTI ŞEMASI (sadece JSON):\n"
         "{\n"
-        '  "headline": string,        // 1 cümle, max 110 karakter, başlık-soru tercih edilir\n'
-        '                              // örn: "BTC için boğa döndü mü? — Erken sinyaller var, kapılar açılmadı."\n'
-        '  "paragraphs": [string, string, string, string, string],\n'
-        '  "footer": string           // 1 cümle uyarı\n'
+        '  "headline": string,        // max 120 karakter; başlık-soru veya net iddia\n'
+        '  "paragraphs": [string × 6],\n'
+        '  "footer": string\n'
         "}\n\n"
-        "PARAGRAF YAPISI (5 BLOK — sırayla, her biri 2-4 cümle):\n"
+        "### 6 BLOK (sırayla, her biri 2-4 cümle):\n"
         "1) BAŞLIK SORUSU + NET CEVAP\n"
-        "   Headline'daki soruyu açıkça cevapla. 'Evet ama henüz değil', "
-        "   'Hayır, şu sebeple', 'Evet ve şu engel de düştü' gibi NET pozisyon al. "
-        "   Axiom skoru + bölge (Güvenli/Dikkatli/Riskli/Fırsat) burada geçsin.\n"
-        "2) AŞILAN EŞİKLER (✅ engelleri geçtik)\n"
-        "   drivers.supports listesinden EN AZ 2 sinyali 'engelleri geçtik' "
-        "   çerçevesinde anlat. Her metrik için: DEĞER + NE ANLAMA GELDİĞİ + "
-        "   neden bu seviye olumlu.\n"
-        "3) HENÜZ AŞILMAYAN EŞİKLER (⏳ kalan engeller)\n"
-        "   drivers.pressures veya NEUTRAL signals'tan EN AZ 1-2 maddeyi "
-        "   'bekleyen engel' olarak göster. 'Şu seviyeye gelirse şu anlama gelir' "
-        "   formatı şart. Örn: 'Funding +0.01'in altında kalmaya devam ederse "
-        "   kaldıraçlı boğa iştahı henüz uyanmamış demektir.'\n"
-        "4) TETİKLEYİCİ VE REVİZYON KOŞULU\n"
-        "   İki yönlü: (a) 'Eğer [metrik] [eşik]'i geçerse fikrimiz [şu yöne] döner' "
-        "   ve (b) 'Aşağıda [metrik] [eşik]'in altına düşerse erken uyarı veririz: ...'. "
-        "   En az BİR yukarı koşul + BİR aşağı koşul olsun.\n"
-        "5) AXIOM'UN POZİSYONU + İZLENECEK TEK METRİK\n"
-        "   'Şu an Axiom skoru X — [bölge]. Yukarı doğru ilerlerse [pratik anlam], "
-        "   aşağı kayarsa [pratik anlam]. Önümüzdeki günlerde özellikle "
-        "   [tek bir metrik adı] gözlenmeli.' Tek metrik seç — odağı dağıtma.\n\n"
-        "KURALLAR (kesin):\n"
-        "- Türkçe; finansal jargonu çevir: 'netflow'='borsa akışı (giren-çıkan fark)', "
-        "  'funding rate'='fonlama oranı — kaldıraçlı pozisyonların yön ücreti', "
-        "  'whale ratio'='balina oranı — büyük adreslerin payı', "
-        "  'MVRV'='gerçekleşmiş kâr/zarar oranı', 'SOPR'='satılan paraların kâr katsayısı', "
-        "  'MPI'='madenci satış baskısı endeksi', 'open interest'='açık pozisyon hacmi'.\n"
-        "- HER sayı INPUT'taki signals[].value veya axiom_score'dan gelmeli; "
-        "  başka sayı UYDURMA. Eşik (1.0, 0.85, 0 gibi) genel kabul gören metrik "
-        "  eşiği ise yazabilirsin ama snapshot'taki gerçek değerle birlikte ver.\n"
-        "- 'Al', 'sat', 'tut', 'pozisyon aç', 'hedef fiyat', 'stop koy' YASAK. "
-        "  Bunun yerine 'şu eşiği izleyin', 'şu seviyenin altına düşerse uyarı', "
-        "  'Axiom'un kanaati şu yöne döner' kullan.\n"
-        "- Emoji veya markdown başlığı KULLANMA. Sadece (✅), (⏳) gibi inline "
-        "  durum işaretlerini paragraf İÇİNDE doğal kullanabilirsin (her blokta 1-2 tane).\n"
-        "- 'belki', 'olabilir' tahmin dilini SINIRLA; verinin söylediğini söyle, "
-        "  'eğer-ise' koşullu cümleleri tercih et.\n"
-        "- Mentör tonu: 'dostlar', 'arkadaşlar' gibi hitap KULLANMA — kurumsal "
-        "  ama sıcak Türkçe. Kullanıcıyı 'siz' diye çağır.\n"
-        "- footer her zaman: 'Bu analiz on-chain veriyi yorumlar; pozisyon kararı "
-        "  sizindir. Yatırım tavsiyesi değildir.' veya birebir benzeri.\n"
+        "   Headline'daki soruyu/iddiayı NET cevapla. Axiom skoru + bölge "
+        "   (Güvenli/Dikkatli/Riskli/Fırsat) burada geçsin.\n"
+        "2) AŞILAN EŞİKLER (✅)\n"
+        "   drivers.supports'tan EN AZ 2 sinyali 'engelleri geçtik' "
+        "   çerçevesinde anlat. STH-SOPR varsa ve 1.0'ın üstündeyse mutlaka "
+        "   'Kısa vadecilerin satışı kârla — boğa rejimi onayı' diye vurgula.\n"
+        "3) HENÜZ AŞILMAYAN EŞİKLER (⏳)\n"
+        "   drivers.pressures veya NEUTRAL'lardan 1-2 madde. 'Şu seviyeye "
+        "   gelirse şu anlama gelir' formatı şart. STH-Realized Price varsa "
+        "   ve fiyat altındaysa 'kısa vadecinin maliyetini geri kazanması "
+        "   bekleniyor' diye işle.\n"
+        "4) YÖN KAYNAĞI: SPOT MU TÜREV Mİ? (yeni)\n"
+        "   direction_source bloğunu yorumla:\n"
+        "   • funding NEGATIF + spot_taker_ratio >1.0 = SPOT-led rally "
+        "     (sağlıklı, kurumsal alıcı baskın)\n"
+        "   • funding POZİTİF + spot_taker düşük = KALDIRAÇ-led "
+        "     (kırılgan, short squeeze tehdidi)\n"
+        + (
+            "   • etf_flow.net_flow_usd POZİTİF (>50M) = spot ETF kurumsal "
+            "talebi destekliyor; NEGATİF = kurumsal çıkış. ETF rakamını "
+            "açıkça yaz (örn '$67M giriş' veya '$112M çıkış').\n"
+            if has_etf else ""
+        ) +
+        "   Bu blok yoksa çıkarma — 'yön kaynağı net okunmuyor' diye yaz.\n"
+        "5) TETİKLEYİCİ + REVİZYON KOŞULU\n"
+        "   İki yönlü: (a) 'Eğer [metrik] [eşik]'i geçerse Axiom'un kanaati "
+        "   [şu yöne] döner', (b) 'Aşağıda [metrik] [eşik]'in altına düşerse "
+        "   erken uyarı veririz'. EN AZ 1 yukarı + 1 aşağı koşul.\n"
+        "6) AXIOM'UN POZİSYONU + İZLENECEK TEK METRİK\n"
+        "   'Şu an Axiom skoru X — [bölge]. Yukarı doğru [pratik anlam], "
+        "   aşağı [pratik anlam]. Önümüzdeki günlerde özellikle [TEK metrik] "
+        "   izleyin.'\n\n"
+        "### DİL ÇEŞİTLİLİĞİ — KESİN KURAL:\n"
+        "Şu kalıp başlıkları KULLANMA (her sembolde tekrar ediyor, kötü):\n"
+        "  ✗ 'X için boğa momentumu geri mi dönüyor?'\n"
+        "  ✗ 'Karışık sinyallerle dikkatli bir dönem'\n"
+        "  ✗ 'X için yükseliş rüzgarı esiyor mu?'\n"
+        "Bunun yerine sembolün KENDİ kişiliğine özgü başlık ürün. Örn:\n"
+        "  ✓ BTC: 'Spot ETF girişi mi, kaldıraçlı sıçrama mı? STH-SOPR cevap veriyor.'\n"
+        "  ✓ ETH: 'Borsa arzı düşüyor, doğrulayıcı sırası uzuyor — ama funding henüz uyumadı.'\n"
+        "  ✓ XRP: 'Türev tarafı çift yönlü temizleniyor; spot agresörler hâlâ kararsız.'\n\n"
+        "### JARGON SÖZLÜĞÜ (mutlaka çevir):\n"
+        "- netflow → 'borsa akışı (giren-çıkan fark)'\n"
+        "- funding rate → 'fonlama oranı — kaldıraçlı pozisyonların yön ücreti'\n"
+        "- whale ratio → 'balina oranı'\n"
+        "- MVRV → 'gerçekleşmiş kâr/zarar oranı'\n"
+        "- SOPR → 'satılan paraların kâr katsayısı'\n"
+        "- STH-SOPR → 'kısa vadeci kâr katsayısı'\n"
+        "- STH-Realized Price → 'kısa vadeci ortalama maliyet'\n"
+        "- aSOPR → 'düzeltilmiş SOPR'\n"
+        "- MPI → 'madenci satış baskısı endeksi'\n"
+        "- spot taker ratio → 'spot alıcı/satıcı oranı'\n"
+        "- open interest → 'açık pozisyon hacmi'\n"
+        "- ETF flow → 'spot ETF net girişi/çıkışı'\n\n"
+        "### KESİN YASAKLAR:\n"
+        "- Sayı UYDURMA — INPUT'taki signals[].value veya axiom_score "
+        "  veya direction_source veya etf_flow alanlarından gelmeyen sayı YOK.\n"
+        "- 'Al', 'sat', 'tut', 'pozisyon aç', 'hedef fiyat', 'stop koy', "
+        "  'long aç', 'short aç' YASAK. Yerine 'izleyin', 'fikrimiz değişir', "
+        "  'erken uyarı veririz' kullan.\n"
+        "- Emoji veya markdown başlığı kullanma. Sadece (✅), (⏳) inline "
+        "  durum işaretleri paragraf içinde 1-2 kez kullanılabilir.\n"
+        "- 'belki', 'olabilir' tahmin dilini SINIRLA — koşullu 'eğer-ise' tercih et.\n"
+        "- 'dostlar', 'arkadaşlar' hitap YASAK. Kullanıcıyı 'siz' diye çağır.\n"
+        "- Diğer sembollerin kişiliğini KARIŞTIRMA: BTC'de XRP terimi yok, "
+        "  XRP'de madenci terimi yok.\n"
+        "- footer her zaman: 'Bu analiz on-chain veriyi yorumlar; pozisyon "
+        "  kararı sizindir. Yatırım tavsiyesi değildir.'\n"
     )
 
 
@@ -172,8 +271,8 @@ async def _call_gemini(prompt: str) -> Optional[dict]:
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": 0.4,
-            "maxOutputTokens": 3500,
+            "temperature": 0.55,
+            "maxOutputTokens": 4500,
             "responseMimeType": "application/json",
             "thinkingConfig": {"thinkingBudget": 0},
         },
@@ -219,15 +318,15 @@ def _validate(out: dict) -> Optional[dict]:
     if not headline or not isinstance(paragraphs, list) or len(paragraphs) < 2:
         return None
     paragraphs = [p.strip() for p in paragraphs if isinstance(p, str) and p.strip()]
-    # 5 blok hedef, ama 3'ten azsa rejekt — model en azından
-    # cevap+aşılan+kalan üçlüsünü vermeli.
-    if len(paragraphs) < 3:
+    # 6 blok hedef; 4'ten azsa rejekt — model en azından
+    # cevap+aşılan+kalan+revizyon dörtlüsünü vermeli.
+    if len(paragraphs) < 4:
         return None
     if not footer:
         footer = "Bu analiz on-chain veriyi yorumlar; pozisyon kararı sizindir. Yatırım tavsiyesi değildir."
     return {
-        "headline": headline[:160],
-        "paragraphs": paragraphs[:5],
+        "headline": headline[:180],
+        "paragraphs": paragraphs[:6],
         "footer": footer[:240],
     }
 
@@ -255,7 +354,7 @@ async def get_onchain_story(symbol: str = "BTC", *, force: bool = False) -> dict
     if not snapshot or snapshot.get("error"):
         return {"error": "snapshot_unavailable", "symbol": sym}
 
-    ctx = _build_context(snapshot)
+    ctx = await _build_context(snapshot)
     if not ctx.get("axiom_score") and not ctx.get("signals"):
         return {"error": "no_signals", "symbol": sym}
 
