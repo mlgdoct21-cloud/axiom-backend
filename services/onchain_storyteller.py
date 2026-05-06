@@ -309,6 +309,160 @@ async def _call_gemini(prompt: str) -> Optional[dict]:
         return None
 
 
+# ── Halüsinasyon önleyici: numeric validator ──────────────────────────────
+
+# Genel kabul gören metrik eşikleri ve sentinel değerler.
+# Bunlar prompt'ta açıkça eşik olarak geçtiği için (örn 'SOPR 1.0', 'whale 0.85')
+# whitelist'e baştan ekleniyor.
+_THRESHOLD_SENTINELS = {
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
+    "12", "15", "20", "24", "25", "30", "31", "50", "51", "60", "70", "71",
+    "86", "100", "155", "365",
+    "0.5", "0.7", "0.85", "0.9", "0.95", "0.97", "0.98",
+    "1.0", "1.02", "1.03", "1.05", "1.5", "2.0", "3.0", "3.7", "4.0",
+    "0.10", "0.13", "0.18", "0.25", "0.50", "0.75",
+}
+
+_NUM_RE = re.compile(r"[-+]?\d{1,3}(?:[,.]\d{3})*(?:[.,]\d+)?")
+
+
+def _normalize_num(s: str) -> Optional[float]:
+    """'+989.000.000' → 989000000.0  ·  '$67M' → 67  ·  '%-5.2' → 5.2"""
+    s = s.strip().lstrip("+").lstrip("$").rstrip("%").rstrip("M").rstrip("B").rstrip("K")
+    if not s or s in {"-", "+", "."}:
+        return None
+    try:
+        # '989.000.000' Avrupa formatı? Birden fazla nokta varsa ayraç kabul et
+        if s.count(".") > 1:
+            s = s.replace(".", "")
+        # Karışık virgül-nokta: en sağdaki ondalık say
+        if "," in s and "." in s:
+            if s.rfind(",") > s.rfind("."):
+                s = s.replace(".", "").replace(",", ".")
+            else:
+                s = s.replace(",", "")
+        elif "," in s:
+            # Tek virgül → ondalık ayraç (TR formatı) ya da binlik (EN)
+            # Eğer 1-3 hane varsa ondalık say
+            after = s.split(",")[-1]
+            if len(after) <= 2:
+                s = s.replace(",", ".")
+            else:
+                s = s.replace(",", "")
+        return float(s)
+    except (ValueError, AttributeError):
+        return None
+
+
+def _collect_allowed_numbers(ctx: dict) -> set[float]:
+    """Snapshot context'inden TÜM sayıları topla — uydurma kontrolü için
+    whitelist. Eşik sentinel'leri + signals[].value içindeki tüm sayılar +
+    direction_source + etf_flow + axiom_score."""
+    allowed: set[float] = set()
+    for s in _THRESHOLD_SENTINELS:
+        v = _normalize_num(s)
+        if v is not None:
+            allowed.add(v)
+
+    score = ctx.get("axiom_score")
+    if score is not None:
+        try:
+            allowed.add(float(score))
+        except (TypeError, ValueError):
+            pass
+
+    for sig in ctx.get("signals", []) or []:
+        v_str = sig.get("value", "") or ""
+        for m in _NUM_RE.findall(v_str):
+            n = _normalize_num(m)
+            if n is None:
+                continue
+            allowed.add(n)
+            allowed.add(abs(n))
+            # ölçek varyantları: M=milyon, B=milyar, K=bin → ham sayı
+            if "M" in v_str.upper():
+                allowed.add(n * 1_000_000)
+            if "B" in v_str.upper():
+                allowed.add(n * 1_000_000_000)
+            if "K" in v_str.upper():
+                allowed.add(n * 1_000)
+
+    ds = ctx.get("direction_source") or {}
+    for k in ("funding_rate", "spot_taker_ratio", "futures_open_interest"):
+        v = ds.get(k)
+        if v is not None:
+            try:
+                allowed.add(float(v))
+                allowed.add(float(v) * 100)
+            except (TypeError, ValueError):
+                pass
+
+    ef = ctx.get("etf_flow") or {}
+    for k in ("net_flow_usd", "net_flow_coins", "age_hours"):
+        v = ef.get(k)
+        if v is not None:
+            try:
+                f = float(v)
+                allowed.add(f)
+                allowed.add(abs(f))
+                # USD → milyon ölçek (LLM '$478M' yazabilir)
+                if k == "net_flow_usd":
+                    allowed.add(f / 1_000_000)
+                    allowed.add(abs(f / 1_000_000))
+            except (TypeError, ValueError):
+                pass
+
+    return allowed
+
+
+def _find_hallucinated_numbers(
+    text: str, allowed: set[float], tol_rel: float = 0.02
+) -> list[float]:
+    """text'teki sayılardan whitelist'e (±%2 tolerans) düşmeyenleri döner.
+    Telemetri amaçlı; bu liste boş değilse Gemini'yi 1 kez yeniden çağırırız."""
+    found: set[float] = set()
+    for raw in _NUM_RE.findall(text):
+        n = _normalize_num(raw)
+        if n is None or n == 0:
+            continue
+        # Tek hane (1-9) sayılar genelde sıralama/sayma — affet
+        if abs(n) < 10 and n == int(n):
+            continue
+        found.add(n)
+
+    bad: list[float] = []
+    for n in found:
+        ok = False
+        for a in allowed:
+            if a == 0:
+                if n == 0:
+                    ok = True
+                    break
+                continue
+            if abs(n - a) <= tol_rel * max(abs(a), abs(n)):
+                ok = True
+                break
+        if not ok:
+            bad.append(n)
+    return sorted(bad)
+
+
+def _validate_against_context(
+    out: dict, ctx: dict, *, max_bad: int = 2
+) -> tuple[Optional[dict], list[float]]:
+    """Önce şema validate, sonra numeric. max_bad'dan fazla uydurma sayı
+    varsa None döner (caller retry yapsın). Returns (parsed, hallucinated_list)."""
+    parsed = _validate(out)
+    if not parsed:
+        return None, []
+    full_text = " ".join([parsed["headline"], *parsed["paragraphs"], parsed["footer"]])
+    allowed = _collect_allowed_numbers(ctx)
+    bad = _find_hallucinated_numbers(full_text, allowed)
+    if len(bad) > max_bad:
+        return None, bad
+    return parsed, bad
+
+
 def _validate(out: dict) -> Optional[dict]:
     if not isinstance(out, dict):
         return None
@@ -358,8 +512,33 @@ async def get_onchain_story(symbol: str = "BTC", *, force: bool = False) -> dict
     if not ctx.get("axiom_score") and not ctx.get("signals"):
         return {"error": "no_signals", "symbol": sym}
 
-    raw_out = await _call_gemini(_build_prompt(ctx))
-    parsed = _validate(raw_out) if raw_out else None
+    # 1. tur — normal prompt
+    prompt = _build_prompt(ctx)
+    raw_out = await _call_gemini(prompt)
+    parsed, bad = _validate_against_context(raw_out or {}, ctx)
+
+    # 2. tur — uydurma sayı varsa Gemini'ye geri besleme + sıkıştırılmış yeniden dene
+    if not parsed and bad:
+        logger.warning(
+            f"storyteller {sym}: hallucinated numbers detected: {bad[:5]} — retrying"
+        )
+        retry_prompt = (
+            prompt
+            + "\n\n### KRİTİK DÜZELTME (önceki cevabınız reddedildi):\n"
+            + f"Şu sayılar INPUT JSON'da YOK ve uydurma kabul edildi: {bad[:8]}\n"
+            + "Yeniden üret. Sadece INPUT'taki signals[].value, axiom_score, "
+            + "direction_source, etf_flow alanlarındaki sayıları kullan. "
+            + "Bilmediğin bir sayıyı yazmak yerine sayısız anlatım yap."
+        )
+        raw_out2 = await _call_gemini(retry_prompt)
+        parsed, bad = _validate_against_context(raw_out2 or {}, ctx, max_bad=4)
+        # 2. tur biraz daha gevşek (max_bad=4): kullanıcıya hiç hikaye
+        # vermemektense ufak şüpheli sayılı bir hikaye iyi.
+
+    if not parsed:
+        # 1. tur şema-fail veya 2 tur halüsinasyon — yine de düşmemek için
+        # ham çıktıdan şema-only cevap kabul et
+        parsed = _validate(raw_out or {})
     if not parsed:
         return {"error": "story_generation_failed", "symbol": sym}
 
@@ -369,6 +548,10 @@ async def get_onchain_story(symbol: str = "BTC", *, force: bool = False) -> dict
         "axiom_score": ctx.get("axiom_score"),
         "score_zone": ctx.get("score_zone"),
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "_validator": {
+            "hallucinated_count": len(bad),
+            "samples": [str(n) for n in bad[:5]],
+        },
     }
     await _cache_set("story", sym, "day", payload, _CACHE_TTL)
     return payload
