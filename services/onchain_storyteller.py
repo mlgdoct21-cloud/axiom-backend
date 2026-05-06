@@ -103,33 +103,61 @@ def _build_context(snapshot: dict) -> dict:
 def _build_prompt(ctx: dict) -> str:
     sym = ctx.get("symbol", "?")
     return (
-        f"Sen AXIOM'un on-chain hikâyeleştirici ajanısın. {sym} için ham "
-        "CryptoQuant sinyallerini Türk perakende kripto yatırımcısının "
-        "anlayacağı sade bir hikâyeye çevir.\n\n"
+        f"Sen AXIOM'un on-chain hikâyeleştirici mentörüsün. {sym} için ham "
+        "CryptoQuant sinyallerini Türk kripto yatırımcısının anlayacağı, "
+        "CryptoMe tarzı bir KARAR ÇERÇEVESİNE çevir. Sayı dökmek değil, "
+        "okuyucuya 'hangi engelleri geçtik, hangileri kaldı, ne olursa fikir değişir' "
+        "diye yön göster.\n\n"
         f"INPUT JSON:\n{json.dumps(ctx, ensure_ascii=False)}\n\n"
         "ÇIKTI ŞEMASI (sadece JSON, başka hiçbir şey yok):\n"
         "{\n"
-        '  "headline": string,        // 1 cümle, max 90 karakter, çarpıcı ama abartısız\n'
-        '  "paragraphs": [string, string, string],\n'
+        '  "headline": string,        // 1 cümle, max 110 karakter, başlık-soru tercih edilir\n'
+        '                              // örn: "BTC için boğa döndü mü? — Erken sinyaller var, kapılar açılmadı."\n'
+        '  "paragraphs": [string, string, string, string, string],\n'
         '  "footer": string           // 1 cümle uyarı\n'
         "}\n\n"
-        "PARAGRAF YAPISI:\n"
-        "1) GENEL DURUM: Axiom skoru + ne anlama geldiği (Güvenli/Dikkatli/Riskli/Tehlikeli/Fırsat) "
-        "+ overall sinyal — 2-3 cümle.\n"
-        "2) NEDEN: drivers.supports ve drivers.pressures listesindeki metriklerden "
-        "en az 2'sini somut sayılarla anlatarak skoru NE besliyor NE baskılıyor — 3-4 cümle.\n"
-        "3) NE İZLENMELİ: signals listesindeki BEARISH veya NEUTRAL durumdaki bir-iki metriğe "
-        "işaret edip 'şu eşiği geçerse veya şu seviyeye gelirse durum değişir' tarzı "
-        "ileriye dönük bir gözlem — 2-3 cümle.\n\n"
-        "KURALLAR:\n"
-        "- Türkçe yaz; finansal jargonu çevir (örn. 'netflow' yerine 'borsa akışı', "
-        "'funding rate' yerine 'fonlama oranı: kaldıraçlı pozisyonların yönü').\n"
-        "- HER sayı INPUT'taki signals[].value veya axiom_score değerlerinden gelmeli; uydurma.\n"
-        "- 'Al', 'sat', 'tut', 'pozisyon aç', 'hedef fiyat' gibi tavsiye dili YASAK.\n"
-        "- Emoji veya markdown başlığı KULLANMA; düz metin paragraflar.\n"
-        "- footer her zaman: 'Yatırım tavsiyesi değildir; on-chain veriler tek başına karar mercii olamaz.' "
-        "veya benzeri 1 cümlelik uyarı.\n"
-        "- 'belki', 'olabilir' tarzı tahmin dilini sınırla; verinin SÖYLEDİĞİNİ söyle.\n"
+        "PARAGRAF YAPISI (5 BLOK — sırayla, her biri 2-4 cümle):\n"
+        "1) BAŞLIK SORUSU + NET CEVAP\n"
+        "   Headline'daki soruyu açıkça cevapla. 'Evet ama henüz değil', "
+        "   'Hayır, şu sebeple', 'Evet ve şu engel de düştü' gibi NET pozisyon al. "
+        "   Axiom skoru + bölge (Güvenli/Dikkatli/Riskli/Fırsat) burada geçsin.\n"
+        "2) AŞILAN EŞİKLER (✅ engelleri geçtik)\n"
+        "   drivers.supports listesinden EN AZ 2 sinyali 'engelleri geçtik' "
+        "   çerçevesinde anlat. Her metrik için: DEĞER + NE ANLAMA GELDİĞİ + "
+        "   neden bu seviye olumlu.\n"
+        "3) HENÜZ AŞILMAYAN EŞİKLER (⏳ kalan engeller)\n"
+        "   drivers.pressures veya NEUTRAL signals'tan EN AZ 1-2 maddeyi "
+        "   'bekleyen engel' olarak göster. 'Şu seviyeye gelirse şu anlama gelir' "
+        "   formatı şart. Örn: 'Funding +0.01'in altında kalmaya devam ederse "
+        "   kaldıraçlı boğa iştahı henüz uyanmamış demektir.'\n"
+        "4) TETİKLEYİCİ VE REVİZYON KOŞULU\n"
+        "   İki yönlü: (a) 'Eğer [metrik] [eşik]'i geçerse fikrimiz [şu yöne] döner' "
+        "   ve (b) 'Aşağıda [metrik] [eşik]'in altına düşerse erken uyarı veririz: ...'. "
+        "   En az BİR yukarı koşul + BİR aşağı koşul olsun.\n"
+        "5) AXIOM'UN POZİSYONU + İZLENECEK TEK METRİK\n"
+        "   'Şu an Axiom skoru X — [bölge]. Yukarı doğru ilerlerse [pratik anlam], "
+        "   aşağı kayarsa [pratik anlam]. Önümüzdeki günlerde özellikle "
+        "   [tek bir metrik adı] gözlenmeli.' Tek metrik seç — odağı dağıtma.\n\n"
+        "KURALLAR (kesin):\n"
+        "- Türkçe; finansal jargonu çevir: 'netflow'='borsa akışı (giren-çıkan fark)', "
+        "  'funding rate'='fonlama oranı — kaldıraçlı pozisyonların yön ücreti', "
+        "  'whale ratio'='balina oranı — büyük adreslerin payı', "
+        "  'MVRV'='gerçekleşmiş kâr/zarar oranı', 'SOPR'='satılan paraların kâr katsayısı', "
+        "  'MPI'='madenci satış baskısı endeksi', 'open interest'='açık pozisyon hacmi'.\n"
+        "- HER sayı INPUT'taki signals[].value veya axiom_score'dan gelmeli; "
+        "  başka sayı UYDURMA. Eşik (1.0, 0.85, 0 gibi) genel kabul gören metrik "
+        "  eşiği ise yazabilirsin ama snapshot'taki gerçek değerle birlikte ver.\n"
+        "- 'Al', 'sat', 'tut', 'pozisyon aç', 'hedef fiyat', 'stop koy' YASAK. "
+        "  Bunun yerine 'şu eşiği izleyin', 'şu seviyenin altına düşerse uyarı', "
+        "  'Axiom'un kanaati şu yöne döner' kullan.\n"
+        "- Emoji veya markdown başlığı KULLANMA. Sadece (✅), (⏳) gibi inline "
+        "  durum işaretlerini paragraf İÇİNDE doğal kullanabilirsin (her blokta 1-2 tane).\n"
+        "- 'belki', 'olabilir' tahmin dilini SINIRLA; verinin söylediğini söyle, "
+        "  'eğer-ise' koşullu cümleleri tercih et.\n"
+        "- Mentör tonu: 'dostlar', 'arkadaşlar' gibi hitap KULLANMA — kurumsal "
+        "  ama sıcak Türkçe. Kullanıcıyı 'siz' diye çağır.\n"
+        "- footer her zaman: 'Bu analiz on-chain veriyi yorumlar; pozisyon kararı "
+        "  sizindir. Yatırım tavsiyesi değildir.' veya birebir benzeri.\n"
     )
 
 
@@ -145,7 +173,7 @@ async def _call_gemini(prompt: str) -> Optional[dict]:
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.4,
-            "maxOutputTokens": 2048,
+            "maxOutputTokens": 3500,
             "responseMimeType": "application/json",
             "thinkingConfig": {"thinkingBudget": 0},
         },
@@ -191,14 +219,16 @@ def _validate(out: dict) -> Optional[dict]:
     if not headline or not isinstance(paragraphs, list) or len(paragraphs) < 2:
         return None
     paragraphs = [p.strip() for p in paragraphs if isinstance(p, str) and p.strip()]
-    if len(paragraphs) < 2:
+    # 5 blok hedef, ama 3'ten azsa rejekt — model en azından
+    # cevap+aşılan+kalan üçlüsünü vermeli.
+    if len(paragraphs) < 3:
         return None
     if not footer:
-        footer = "Yatırım tavsiyesi değildir; on-chain veriler tek başına karar mercii olamaz."
+        footer = "Bu analiz on-chain veriyi yorumlar; pozisyon kararı sizindir. Yatırım tavsiyesi değildir."
     return {
-        "headline": headline[:140],
-        "paragraphs": paragraphs[:3],
-        "footer": footer[:200],
+        "headline": headline[:160],
+        "paragraphs": paragraphs[:5],
+        "footer": footer[:240],
     }
 
 
