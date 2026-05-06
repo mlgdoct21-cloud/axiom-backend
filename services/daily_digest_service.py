@@ -111,8 +111,9 @@ class DailyDigestService:
         urgent_count: int,
         urgent_symbols: List[str],
         overnight: Dict[str, Any],
+        onchain: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """RISK RADAR — makro riskler ve volatilite."""
+        """RISK RADAR — makro riskler ve volatilite + BTC on-chain yön sinyali."""
         # Asya pazarındaki en büyük düşüşü bul
         asia_data = overnight.get("asia", []) if isinstance(overnight, dict) else []
         biggest_drop = None
@@ -121,18 +122,48 @@ class DailyDigestService:
             if sorted_asia and sorted_asia[0].get("change_pct", 0) < -0.5:
                 biggest_drop = sorted_asia[0]
 
-        # Metin oluştur (template-based, Türkçe)
+        # On-chain risk sinyalleri (BTC) — exchange netflow + funding rate
+        # Eşikler cryptoquant_service.py ile birebir aynı (netflow ±5000 BTC,
+        # funding ±0.001). Sadece anlamlı seviyede metne giriyor.
+        netflow_part: Optional[str] = None
+        funding_part: Optional[str] = None
+        onchain_risk = False  # red flag: hem netflow BEARISH hem funding aşırı long mu?
+        if onchain and not onchain.get("error"):
+            nf = onchain.get("exchange_netflow")
+            if nf and nf.get("netflow_total") is not None:
+                val = float(nf["netflow_total"])
+                if val > 5000:
+                    netflow_part = f"borsalara +{val:,.0f} BTC giriş (satış baskısı)"
+                    onchain_risk = True
+                elif val < -5000:
+                    netflow_part = f"borsalardan {abs(val):,.0f} BTC çıkış (birikim)"
+
+            fr = onchain.get("funding_rates")
+            if fr and fr.get("avg_24h") is not None:
+                avg = float(fr["avg_24h"])
+                if avg > 0.001:
+                    funding_part = f"funding {avg*100:+.4f}% (aşırı long, squeeze riski)"
+                    onchain_risk = True
+                elif avg < -0.001:
+                    funding_part = f"funding {avg*100:+.4f}% (short dominant)"
+
+        # Metin oluştur (template-based, Türkçe). En değerli sinyal en önde.
         parts = []
         if vix and vix.get("current"):
             parts.append(f"VIX {vix['current']} ({vix['status']})")
+
+        if netflow_part:
+            parts.append(netflow_part)
+        if funding_part:
+            parts.append(funding_part)
+
+        if biggest_drop:
+            parts.append(f"{biggest_drop['label']} {biggest_drop['change_pct']:+.2f}%")
 
         if urgent_count >= 5:
             parts.append(f"son 12 saatte {urgent_count} acil haber")
         elif urgent_count >= 1:
             parts.append(f"{urgent_count} önemli gelişme takipte")
-
-        if biggest_drop:
-            parts.append(f"{biggest_drop['label']} {biggest_drop['change_pct']:+.2f}%")
 
         if not parts:
             analysis = "Pazar göstergeleri sakin. Belirgin makro risk gözlenmiyor."
@@ -142,16 +173,24 @@ class DailyDigestService:
             # En yüksek risk seviyesini belirle
             if vix and vix.get("color") == "red":
                 color = "red"
-            elif urgent_count >= 5 or biggest_drop:
+            elif onchain_risk or biggest_drop:
+                color = "yellow"
+            elif urgent_count >= 5:
                 color = "yellow"
             else:
                 color = vix.get("color", "yellow") if vix else "yellow"
 
-        # Semboller: VIX + urgent semboller (top 3)
+        # Semboller: VIX + on-chain varsa BTC + urgent semboller
         symbols = ["VIX"] if vix else []
+        if netflow_part or funding_part:
+            symbols.append("BTC")
         symbols.extend(urgent_symbols[:3])
         if biggest_drop:
             symbols.append(biggest_drop["label"])
+
+        # Dedupe (sıra korunarak)
+        seen = set()
+        symbols = [s for s in symbols if not (s in seen or seen.add(s))]
 
         return {
             "title": "AXIOM RISK RADAR",
@@ -278,6 +317,11 @@ class DailyDigestService:
             from services.market_summary_service import get_earnings_today
             earnings_task = get_earnings_today(limit=20)
 
+            # BTC on-chain snapshot (cache-first; CryptoQuant supervisor 4h refresh).
+            # Risk Radar artık netflow + funding rate ile yön sinyali veriyor.
+            from services.cryptoquant_service import get_onchain_snapshot
+            onchain_task = get_onchain_snapshot("BTC")
+
             results = await asyncio.gather(
                 urgent_count_task,
                 urgent_symbols_task,
@@ -286,6 +330,7 @@ class DailyDigestService:
                 movers_task,
                 etf_flows_task,
                 earnings_task,
+                onchain_task,
                 return_exceptions=True,
             )
 
@@ -299,6 +344,7 @@ class DailyDigestService:
             movers = _safe(results[4], {"gainers": [], "losers": [], "actives": []})
             etf_flows = _safe(results[5], {"btc": {}, "eth": {}})
             earnings_list = _safe(results[6], [])
+            onchain = _safe(results[7], None)
 
             # VIX synchronous (yfinance)
             vix = DailyDigestService._get_vix()
@@ -309,6 +355,7 @@ class DailyDigestService:
                 urgent_count=urgent_count,
                 urgent_symbols=urgent_symbols,
                 overnight=overnight,
+                onchain=onchain,
             )
             quant_analysis = DailyDigestService._build_quant_analysis(
                 sectors=sectors,
