@@ -19,6 +19,7 @@ Metrics collected (Kademe 3 — cycle indicators):
   - Coinbase premium index     (hourly → latest value)
 """
 import os
+import re
 import asyncio
 import aiohttp
 from datetime import datetime, timezone, timedelta
@@ -63,6 +64,21 @@ def _get_sema() -> asyncio.Semaphore:
 
 def _is_configured() -> bool:
     return bool(_api_key())
+
+
+def _validate_response_schema(metric_key: str, latest_row: dict) -> None:
+    """Layer 0D — response'ta contract.expected_fields'tan en az 1'i bulunmalı.
+    Eksikse warning log'la; fetcher None dönecek (başka bir şey döndüremez)."""
+    try:
+        from data.metric_contracts import has_required_fields
+        ok, expected = has_required_fields(metric_key, latest_row)
+        if not ok:
+            logger.warning(
+                f"CQ schema mismatch {metric_key}: response'ta beklenen "
+                f"field'lar yok ({expected}). API breaking change olabilir."
+            )
+    except Exception as e:
+        logger.warning(f"CQ schema check error {metric_key}: {e}")
 
 
 async def _cq_get(path: str, params: dict, _retry: int = 2) -> Optional[dict]:
@@ -179,12 +195,14 @@ async def _fetch_cached(
     ttl: timedelta,
     fetcher,
 ) -> Optional[dict]:
-    """Cache-first per-metric fetcher with stale-fallback.
+    """Cache-first per-metric fetcher with stale-fallback + contract validation.
 
     1) Fresh cache hit (within TTL) → return immediately, no API call.
        Bu kritik: snapshot endpoint her 30 sn çağrılıyor, fresh-fetch
        her seferinde 20×CryptoQuant request → rate limit + 60sn timeout.
-    2) Cache miss → fresh fetch. Başarılıysa cache'e yaz.
+    2) Cache miss → fresh fetch.
+       Layer 0C: değer contract.value_range içinde mi (anomaly check).
+       Başarılıysa cache'e yaz.
     3) Fresh fetch fail (429/timeout/error) → expired cache'e düş.
        4 saat eski veri 0 sinyalden iyi.
     """
@@ -201,6 +219,26 @@ async def _fetch_cached(
         result = None
 
     if result is not None:
+        # Layer 0C — anomaly bound check. Outlier ise yine kabul et ama
+        # log'la (gerçek market spike olabilir; insan göz atana kadar
+        # narrative'de "(olağanüstü değer)" badge eklenebilir).
+        try:
+            from data.metric_contracts import is_value_in_range, CONTRACTS
+            contract = CONTRACTS.get(metric_key)
+            if contract and "value_range" in contract:
+                # Hangi field'ı sınıra göre kontrol edelim — ilk numeric değer
+                for k, v in result.items():
+                    if isinstance(v, (int, float)):
+                        ok, msg = is_value_in_range(metric_key, float(v))
+                        if not ok:
+                            logger.warning(
+                                f"CQ anomaly: {metric_key}/{symbol} field={k} "
+                                f"{msg} — kabul edildi ama insan göz atmalı"
+                            )
+                        break
+        except Exception as e:
+            logger.warning(f"CQ contract value check error {metric_key}: {e}")
+
         await _cache_set(metric_key, symbol, "day", result, ttl)
         return result
 
@@ -302,12 +340,15 @@ async def _fetch_miner_reserve() -> Optional[dict]:
 
 
 async def _fetch_stablecoin_inflow() -> Optional[dict]:
-    """Stablecoin (all tokens) exchange inflow. Rising = bullish (buying power
-    coming on-chain). Path moved from /usdt/... to /stablecoin/... in CQ v1
-    namespace; token=all_token aggregates USDT+USDC+BUSD+DAI etc."""
+    """Stablecoin NET exchange flow (in - out, all tokens, all exchanges).
+
+    ⚠️ Day 28 part 9: önce /inflow (gross) kullanılıyordu, contract violation —
+    gross inflow $3B olsa bile aynı gün outflow $3.2B varsa NET çıkış var.
+    Bu yüzden 'alım gücü geliyor' label'ı yanlıştı. Şimdi /netflow ile
+    NET değer döner; pozitif = gerçek alım gücü, negatif = gerçek çıkış."""
     yesterday = _yesterday_str()
     raw = await _cq_get(
-        "/stablecoin/exchange-flows/inflow",
+        "/stablecoin/exchange-flows/netflow",
         {"token": "all_token", "exchange": "all_exchange", "window": "day", "from": yesterday, "limit": 3},
     )
     if not raw:
@@ -317,7 +358,7 @@ async def _fetch_stablecoin_inflow() -> Optional[dict]:
         return None
     latest = rows[-1]
     return {
-        "inflow_total": float(latest.get("inflow_total", 0)),
+        "netflow_total": float(latest.get("netflow_total", 0)),
         "date": latest.get("date", yesterday),
     }
 
@@ -635,6 +676,29 @@ async def _fetch_korean_premium() -> Optional[dict]:
 
 # ── Signal interpreter ─────────────────────────────────────────────────────────
 
+def _enforce_label_contract(metric_key: str, label_tr: str) -> str:
+    """Layer 1 enforcement — label_tr contract.CANNOT_claim'e uymuyorsa
+    yasak kelimeyi WARN log + auto-substitute. Compile-time enforcement
+    test'leri (tests/test_metric_contracts.py) bu sayede çalışıyor;
+    runtime'da extra emniyet."""
+    try:
+        from data.metric_contracts import is_label_compliant
+        ok, violations = is_label_compliant(metric_key, label_tr)
+        if not ok:
+            logger.warning(
+                f"label contract VIOLATION {metric_key}: {label_tr!r} "
+                f"yasak kelime(ler) {violations}. Otomatik temizleniyor."
+            )
+            # Yasak kelimeleri label'dan çıkar (yumuşak fallback)
+            cleaned = label_tr
+            for w in violations:
+                cleaned = re.sub(re.escape(w), "[?]", cleaned, flags=re.IGNORECASE)
+            return cleaned
+    except Exception as e:
+        logger.debug(f"label contract check error {metric_key}: {e}")
+    return label_tr
+
+
 def _interpret_signals(snapshot: dict) -> dict:
     """
     Translates raw on-chain numbers into Turkish-language signal labels.
@@ -690,56 +754,67 @@ def _interpret_signals(snapshot: dict) -> dict:
             "label_tr": label,
         }
 
-    # Miner pressure
+    # Miner reserve — TREND metriği (7G değişim). miner_outflow ile
+    # zıt görünebilir; window suffix ile zaman ölçeği netleştirilir.
     mr = snapshot.get("miner_reserve")
     if mr:
         chg = mr["change_7d_pct"]
         if chg < -2:
-            sig, label = "BEARISH", "🔴 Madenci Satıyor"
+            sig, label = "BEARISH", "🔴 Madenci Stoğu Azalıyor (7G trend)"
         elif chg < 0:
-            sig, label = "NEUTRAL", "🟡 Hafif Baskı"
+            sig, label = "NEUTRAL", "🟡 Hafif Stok Erimesi (7G)"
         else:
-            sig, label = "BULLISH", "🟢 Stabil"
+            sig, label = "BULLISH", "🟢 Madenci Stoğu Stabil (7G)"
         signals["miner_reserve"] = {
             "value_str": f"{chg:+.1f}% (7G)",
             "signal": sig,
             "label_tr": label,
         }
 
-    # Miner outflow — 7 günlük ortalamaya göre günlük miner outflow.
-    # Eşik üstünde = madenci borsalara yüklü transfer (satış baskısı uyarısı).
+    # Miner outflow — ANLIK günlük transfer, 7G ortalamayla karşılaştırma.
+    # Window suffix '(günlük spike)' ile miner_reserve trend'inden ayırt edilir.
     mo = snapshot.get("miner_outflow")
     if mo:
         latest = float(mo.get("outflow_total", 0))
         avg7 = float(mo.get("avg_7d", 0)) or 1
         deviation = (latest - avg7) / avg7 if avg7 else 0
         if deviation > 0.5:
-            sig, label = "BEARISH", "🔴 Madenci Yüklü Satış"
+            sig, label = "BEARISH", "🔴 Madenci Yüklü Transfer (günlük spike)"
         elif deviation > 0.15:
-            sig, label = "NEUTRAL", "🟡 Hafif Madenci Akışı"
+            sig, label = "NEUTRAL", "🟡 Hafif Madenci Akışı (günlük)"
         elif deviation < -0.30:
-            sig, label = "BULLISH", "💎 Madenci Tutuyor"
+            sig, label = "BULLISH", "💎 Madenci Düşük Transfer (günlük)"
         else:
-            sig, label = "NEUTRAL", "🟡 Normal Madenci Akışı"
+            sig, label = "NEUTRAL", "🟡 Normal Madenci Akışı (günlük)"
         signals["miner_outflow"] = {
             "value_str": f"{latest:,.0f} BTC ({deviation*100:+.0f}% vs 7G ort)",
             "signal": sig,
             "label_tr": label,
         }
 
-    # Stablecoin inflow
+    # Stablecoin NET flow (Day 28 #9 — gross inflow yerine netflow)
+    # Pozitif net → borsalara alıcı para giriyor (BULLISH)
+    # Negatif net → borsalardan stablecoin çekiliyor (BEARISH)
     si = snapshot.get("stablecoin_inflow")
     if si:
-        val = si["inflow_total"]
+        val = si.get("netflow_total")
+        if val is None:
+            val = si.get("inflow_total", 0)  # backward compat
+        val = float(val)
         if val > 500_000_000:
-            sig, label = "BULLISH", "🟢 Alım Gücü Geliyor"
+            sig, label = "BULLISH", "🟢 Güçlü Alım Gücü (net giriş)"
         elif val > 100_000_000:
-            sig, label = "NEUTRAL", "🟡 Orta Giriş"
+            sig, label = "BULLISH", "🟢 Hafif Alım Gücü (net giriş)"
+        elif val > -100_000_000:
+            sig, label = "NEUTRAL", "🟡 Net Akış Dengeli"
+        elif val > -500_000_000:
+            sig, label = "BEARISH", "🔴 Hafif Çıkış (net)"
         else:
-            sig, label = "BEARISH", "🔴 Düşük Giriş"
+            sig, label = "BEARISH", "🔴 Güçlü Stablecoin Çıkışı (net)"
         m = val / 1_000_000
+        sign = "+" if val >= 0 else ""
         signals["stablecoin_inflow"] = {
-            "value_str": f"+{m:,.0f}M USDT",
+            "value_str": f"{sign}{m:,.0f}M stablecoin (net)",
             "signal": sig,
             "label_tr": label,
         }
@@ -793,18 +868,21 @@ def _interpret_signals(snapshot: dict) -> dict:
             "label_tr": label,
         }
 
-    # Coinbase Premium
+    # Coinbase Premium — sadece Coinbase vs Binance SPOT FİYAT FARKI.
+    # ⚠️ Day 28 #9: "ABD Kurumsal" iddiası kaldırıldı — kim alıp sattığını
+    # söyleyemeyiz (retail+kurumsal+arbitrajcı karışık). Gerçek doğrulanmış
+    # kurumsal göstergesi: ETF flow.
     cb = snapshot.get("coinbase_premium")
     if cb:
         v = cb["coinbase_premium"]
         if v > 5:
-            sig, label = "BULLISH", "🟢 ABD Kurumsal Alım"
+            sig, label = "BULLISH", "🟢 Coinbase Spot Anlık Alım Baskın"
         elif v < -5:
-            sig, label = "BEARISH", "🔴 ABD Kurumsal Satış"
+            sig, label = "BEARISH", "🔴 Coinbase Spot Anlık Satış Baskın"
         else:
-            sig, label = "NEUTRAL", "🟡 Nötr"
+            sig, label = "NEUTRAL", "🟡 Coinbase Spot Dengeli"
         signals["coinbase_premium"] = {
-            "value_str": f"{v:+.2f}",
+            "value_str": f"{v:+.2f} USD",
             "signal": sig,
             "label_tr": label,
         }
@@ -1233,6 +1311,17 @@ def _interpret_signals(snapshot: dict) -> dict:
         if negatives:
             parts.append("Baskı: " + ", ".join(n["label_tr"] for n in negatives))
         score_summary = " · ".join(parts) if parts else "Tüm sinyaller nötr bölgede."
+
+    # ── Layer 1 enforcement: tüm label_tr'leri contract'a karşı doğrula ──
+    # Yasak kelime varsa otomatik temizle + warning log. Bu sayede
+    # _interpret_signals'ın hardcoded label'ları contract'la TUTARSIZ
+    # kaldığında runtime'da yakalanır (ek emniyet katmanı; ana
+    # enforcement CI test'te — tests/test_metric_contracts.py).
+    for metric_key, sig_dict in list(signals.items()):
+        if isinstance(sig_dict, dict) and sig_dict.get("label_tr"):
+            cleaned = _enforce_label_contract(metric_key, sig_dict["label_tr"])
+            if cleaned != sig_dict["label_tr"]:
+                sig_dict["label_tr"] = cleaned
 
     # Overall signal (legacy — count-based, korunuyor backward compatibility için)
     bearish = sum(1 for s in signals.values() if s["signal"] == "BEARISH")

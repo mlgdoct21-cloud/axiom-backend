@@ -31,6 +31,7 @@ from services.cryptoquant_service import (
     _is_configured,
 )
 from services.etf_flow_cache_service import get_latest_etf_flow
+from services.narrative_auditor import audit_narrative
 
 logger = get_logger("crypto.storyteller")
 
@@ -313,7 +314,7 @@ def _build_prompt(ctx: dict) -> str:
         "- SOPR Ratio → 'uzun/kısa vadeci kâr dengesi'\n"
         "- liquidations → 'tasfiye (zorla kapatılan kaldıraçlı pozisyonlar)'\n"
         "- Korean Premium → 'Upbit primi (Asya retail iştahı)'\n"
-        "- MPI → 'madenci satış baskısı endeksi'\n"
+        "- MPI → 'madenci pozisyon endeksi (eşik üstünde satış uyarısı, +0.5 üstü dikkat, +2 üstü kritik)'\n"
         "- spot taker ratio → 'spot alıcı/satıcı oranı'\n"
         "- open interest → 'açık pozisyon hacmi'\n"
         "- ETF flow → 'spot ETF net girişi/çıkışı'\n\n"
@@ -745,6 +746,54 @@ async def get_onchain_story(symbol: str = "BTC", *, force: bool = False) -> dict
     if not parsed:
         return {"error": "story_generation_failed", "symbol": sym}
 
+    # ── Layer 2: Narrative Auditor (Gemini-powered semantic check) ──
+    # Bu, regex validator'ın yakalayamadığı semantic overclaim/UNSUPPORTED
+    # iddiaları yakalar. Kullanıcının yakaladığı "Coinbase Premium = ABD
+    # Kurumsal Satış" tipi hataları contract.CANNOT_claim'e karşı denetler.
+    auditor_result = await audit_narrative(
+        parsed["headline"], parsed["paragraphs"], parsed["footer"], ctx
+    )
+    if not auditor_result["ok"] and auditor_result["issues"]:
+        issues = auditor_result["issues"]
+        logger.warning(
+            f"storyteller {sym}: auditor flagged {len(issues)} issues: "
+            f"{[i.get('verdict') + ':' + i.get('claim','')[:40] for i in issues[:3]]}"
+        )
+        # Auditor notlarıyla bir kez daha retry
+        audit_notes = "\n".join(
+            f"  • [{i.get('verdict')}] '{i.get('claim','')[:80]}' "
+            f"(metric={i.get('source_metric')}): {i.get('reason','')[:120]}"
+            for i in issues[:5]
+        )
+        audit_retry_prompt = (
+            prompt
+            + "\n\n### KRİTİK DÜZELTME — VERİ DENETÇİSİ AGENT REDDETTİ:\n"
+            + audit_notes
+            + "\n\nMetric contract'larındaki CAN_claim/CANNOT_claim kelime "
+            + "hazinesine UY. Özellikle Coinbase Premium 'kurumsal' DİYEMEZ "
+            + "(sadece spot fiyat farkıdır); MPI 'satış baskısı endeksi' "
+            + "DEĞİL 'pozisyon endeksi'dir; stablecoin için 'alım gücü' "
+            + "iddiası NETFLOW pozitifse mantıklı."
+        )
+        raw_out3 = await _call_gemini(audit_retry_prompt)
+        parsed3, bad3 = _validate_against_context(raw_out3 or {}, ctx, max_bad=4)
+        if parsed3:
+            # 2. audit pass kontrolü
+            audit_2nd = await audit_narrative(
+                parsed3["headline"], parsed3["paragraphs"], parsed3["footer"], ctx
+            )
+            if audit_2nd["ok"] or len(audit_2nd["issues"]) < len(issues):
+                parsed = parsed3
+                bad = bad3
+                contradictions = (
+                    _find_contradictions(parsed3["paragraphs"]) if parsed3 else []
+                )
+                auditor_result = audit_2nd
+                logger.info(
+                    f"storyteller {sym}: auditor retry succeeded, "
+                    f"issues {len(issues)}→{len(audit_2nd['issues'])}"
+                )
+
     payload = {
         **parsed,
         "symbol": sym,
@@ -760,6 +809,14 @@ async def get_onchain_story(symbol: str = "BTC", *, force: bool = False) -> dict
                  "pos": c["pos"], "neg": c["neg"]}
                 for c in contradictions[:3]
             ],
+            "auditor_ok": auditor_result["ok"],
+            "auditor_issues": [
+                {"verdict": i.get("verdict"),
+                 "metric": i.get("source_metric"),
+                 "claim": (i.get("claim") or "")[:80]}
+                for i in auditor_result["issues"][:3]
+            ],
+            "auditor_meta": auditor_result.get("_meta", ""),
         },
     }
     await _cache_set("story", sym, "day", payload, _CACHE_TTL)
