@@ -207,6 +207,20 @@ _SHORT_LABEL = {
     "CORE_PCE": "Çekirdek PCE",
     "NFP": "NFP",
     "UNRATE": "İşsizlik",
+    # Day 28 part 3 — yeni ABD event'leri
+    "JOBLESS_INITIAL":    "İlk İşsizlik Başvurusu",
+    "JOBLESS_CONTINUING": "Devam Eden İşsizlik",
+    "RETAIL_SALES":       "Perakende Satışlar",
+    "PPI":                "ÜFE (ABD)",
+    "HOUSING_STARTS":     "Konut Başlangıçları",
+    "GDP":                "GSYİH",
+    # Türkiye event'leri
+    "TR_TUFE":            "TÜFE Manşet",
+    "TR_CORE_TUFE":       "Çekirdek TÜFE-B",
+    "TR_UFE":             "Yİ-ÜFE",
+    "TR_POLICY_RATE":     "TCMB Politika Faizi",
+    "TR_UNEMPLOYMENT":    "İşsizlik (TR)",
+    "TR_CURRENT_ACCT":    "Cari İşlemler",
 }
 
 

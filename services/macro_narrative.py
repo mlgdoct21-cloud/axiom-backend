@@ -518,17 +518,23 @@ def _trigger_broadcast(event_id: str) -> None:
     """Fire-and-forget Telegram broadcast + market reaction capture. Lazy
     import keeps the macro_narrative ↔ macro_broadcaster cycle safe
     (broadcaster also uses the engine).
+
+    Market reaction (DXY/SPY/US10Y) sadece ABD release'leri için anlamlı.
+    TR release'lerinde US asset'leri yakalamak yanıltıcı olur — bu yüzden
+    event_id'sinde 'tcmb:' prefix'i varsa reaction'ı skip ediyoruz. Faz 4'te
+    TR için USDTRY/BIST/TR2Y handler'ı eklenebilir.
     """
     try:
         from services.macro_broadcaster import broadcast_release_safe
         asyncio.create_task(broadcast_release_safe(event_id))
     except Exception as e:
         logger.error(f"broadcast trigger failed for {event_id}: {e}")
-    try:
-        from services.macro_market_reaction import trigger_reaction
-        trigger_reaction(event_id)
-    except Exception as e:
-        logger.error(f"market reaction trigger failed for {event_id}: {e}")
+    if not event_id.startswith("tcmb:"):
+        try:
+            from services.macro_market_reaction import trigger_reaction
+            trigger_reaction(event_id)
+        except Exception as e:
+            logger.error(f"market reaction trigger failed for {event_id}: {e}")
 
 
 async def generate_narrative_safe(event_id: str) -> None:
