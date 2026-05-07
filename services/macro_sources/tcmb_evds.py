@@ -43,11 +43,11 @@ EVDS_BASE_URL = "https://evds3.tcmb.gov.tr/igmevdsms-dis"
 # (politika faizi, işsizlik, cari işlemler) EVDS3'te kod değişikliği gördü;
 # doğru sürümleri kullanıcıyla birlikte teyit edilecek.
 SERIES = {
-    "tcmb_tufe":          "TP.FG.J0",          # TÜFE Genel Endeks (manşet TR enflasyon), aylık ✅
-    "tcmb_core_b":        "TP.FE.OKTG02",      # Çekirdek B (gıda+enerji+alkol+tütün hariç), aylık ✅
-    "tcmb_ufe":           "TP.FE.OKTG01",      # Yİ-ÜFE (üretici fiyatları), aylık ✅
+    "tcmb_tufe":          "TP.FG.J0",            # TÜFE Genel Endeks, aylık ✅
+    "tcmb_core_b":        "TP.FE.OKTG02",        # Çekirdek B, aylık ✅
+    "tcmb_ufe":           "TP.FE.OKTG01",        # Yİ-ÜFE üretici fiyatları, aylık ✅
+    "tcmb_policy_rate":   "TP.BISPOLFAIZ.TUR",   # TR politika faizi (BIS Bankası verisi), aylık ✅
     # TODO Day 28 part 4 — EVDS3'te kod doğrulaması bekleyen seriler:
-    # "tcmb_policy_rate":   "TP.???",  # TCMB 1-haftalık repo
     # "tcmb_unemployment":  "TP.???",  # İşsizlik oranı
     # "tcmb_current_acct":  "TP.???",  # Cari işlemler dengesi
 }
