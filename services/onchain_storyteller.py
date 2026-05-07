@@ -39,7 +39,7 @@ GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "{model}:generateContent?key={key}"
 )
-_HTTP_TIMEOUT = httpx.Timeout(25.0, connect=8.0)
+_HTTP_TIMEOUT = httpx.Timeout(45.0, connect=8.0)
 _CACHE_TTL = timedelta(hours=12)
 _SUPPORTED = ("BTC", "ETH", "XRP")
 
@@ -276,7 +276,9 @@ async def _call_gemini(prompt: str) -> Optional[dict]:
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.55,
-            "maxOutputTokens": 4500,
+            # 4500 yetmiyordu — 6 Türkçe paragraf 2700 char civarında JSON-encode
+            # edilince max'ı dolduruyor ve cevap mid-string truncate oluyordu.
+            "maxOutputTokens": 8000,
             "responseMimeType": "application/json",
             "thinkingConfig": {"thinkingBudget": 0},
         },
