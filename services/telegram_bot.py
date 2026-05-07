@@ -750,27 +750,66 @@ _ONCHAIN_EMOJI: dict[str, str] = {
 }
 
 # Metrik adı (Türkçe, başlık olarak kullanılır — sinyal status etiketi DEĞİL).
-# Örnek: "🐋 Balina Oranı 0.56" (doğru) — "🐋 Normal 0.56" (yanlış, eski hata).
+# KISA TUT — uzun açıklamalar zone-hint parantezini bozar. Örnek:
+#   ✓ "MPI -0.4 (eşik altı)"   ✗ "MPI (Madenci Pozisyon Endeksi) -0.4 (eşik altı)"
 _METRIC_NAME_TR: dict[str, str] = {
     "exchange_netflow": "Borsa Net Akışı",
     "whale_ratio": "Balina Oranı",
-    "mpi": "MPI (Madenci Pozisyon Endeksi)",
+    "mpi": "MPI",
     "stablecoin_inflow": "Stablecoin Net Akışı",
-    "coinbase_premium": "Coinbase Spot Primi",
-    "funding_rates": "Funding Rate",
-    "leverage_ratio": "Borsa Kaldıracı",
+    "coinbase_premium": "Coinbase Primi",
+    "funding_rates": "Funding",
+    "leverage_ratio": "Kaldıraç",
     "mvrv": "MVRV",
     "nupl": "NUPL",
     "sopr": "SOPR",
     "sopr_ratio": "SOPR Ratio",
-    "puell": "Puell Multiple",
-    "btc_liquidations": "Likidasyonlar",
+    "puell": "Puell",
+    "btc_liquidations": "Likidasyon",
     "korean_premium": "Kore Primi",
     "spot_taker": "Spot Taker",
     "hash_rate": "Hash Rate",
     "active_addresses": "Aktif Adres",
     "realized_price": "Realized Price",
 }
+
+# Zone hint = kullanıcının istediği "(eşik altı)" / "(orta bölge)" tarzı
+# pozisyonel descriptor. label_tr ('🟢 Madenci Güveni') sinyal-statüsü
+# söyler, oysa zone hint NEREDE olduğunu söyler. Per-metric × per-signal,
+# 1-3 kelime, parantez İÇİNDE değil — render parantez ekler.
+_METRIC_ZONE_HINT: dict[str, dict[str, str]] = {
+    "exchange_netflow": {"BULLISH": "net çıkış", "NEUTRAL": "yatay", "BEARISH": "net giriş"},
+    "whale_ratio":      {"BULLISH": "sakin", "NEUTRAL": "normal", "BEARISH": "yüksek aktivite"},
+    "mpi":              {"BULLISH": "eşik altı", "NEUTRAL": "hafif satış", "BEARISH": "eşik üstü"},
+    "stablecoin_inflow":{"BULLISH": "alıma hazırlanıyor", "NEUTRAL": "yatay", "BEARISH": "çıkış baskın"},
+    "coinbase_premium": {"BULLISH": "alış baskın", "NEUTRAL": "dengeli", "BEARISH": "satış baskın"},
+    "funding_rates":    {"BULLISH": "short sıkışması", "NEUTRAL": "dengeli", "BEARISH": "hafif aşırı"},
+    "leverage_ratio":   {"BULLISH": "düşük risk", "NEUTRAL": "normal", "BEARISH": "yüksek risk"},
+    "mvrv":             {"BULLISH": "dip bölge", "NEUTRAL": "orta bölge", "BEARISH": "tepe bölge"},
+    "nupl":             {"BULLISH": "korku bölgesi", "NEUTRAL": "iyimserlik", "BEARISH": "öfori"},
+    "sopr":             {"BULLISH": "dip", "NEUTRAL": "başabaş", "BEARISH": "kâr realizasyonu"},
+    "sopr_ratio":       {"BULLISH": "dengede", "NEUTRAL": "hafif sapma", "BEARISH": "LTH dağıtım"},
+    "puell":            {"BULLISH": "dip bölge", "NEUTRAL": "normal", "BEARISH": "tepe bölge"},
+    "btc_liquidations": {"BULLISH": "long tasfiye sonrası", "NEUTRAL": "düşük", "BEARISH": "spike"},
+    "korean_premium":   {"BULLISH": "Asya alış", "NEUTRAL": "dengeli", "BEARISH": "Asya satış"},
+    "spot_taker":       {"BULLISH": "alıcı agresif", "NEUTRAL": "dengeli", "BEARISH": "satıcı agresif"},
+    "hash_rate":        {"BULLISH": "yükseliyor", "NEUTRAL": "stabil", "BEARISH": "düşüyor"},
+    "active_addresses": {"BULLISH": "yükseliyor", "NEUTRAL": "stabil", "BEARISH": "düşüyor"},
+}
+
+
+def _strip_value_parens(value_str: str) -> str:
+    """value_str içindeki '(günlük)' / '(... vs ...)' gibi parantezleri kaldır
+    — zone hint parantezi ile çakışmasın. '+0.0184% (günlük)' → '+0.0184%'."""
+    return re.sub(r"\s*\([^)]*\)\s*$", "", value_str).strip()
+
+
+def _format_value_with_zone(metric: str, value_str: str, signal: str) -> str:
+    """Hero/watchlist için '0.018% (hafif aşırı)' formatı.
+    value_str'den eski parantezi kaldır, zone hint ekle."""
+    base = _strip_value_parens(value_str)
+    hint = _METRIC_ZONE_HINT.get(metric, {}).get(signal)
+    return f"{base} ({hint})" if hint else base
 
 # Üst-satır kısa özet için 2-3 kelimelik durum descriptor'ları.
 # `score_summary` snapshot'tan geliyor ama label_tr (status word) kullanıyor —
@@ -927,24 +966,30 @@ def _render_onchain_brief(snap: dict, symbol: str) -> str:
         lines = ["", "<b>📈 SAHNEDEKİ 3 BÜYÜK HAREKET</b>"]
         for h in heroes:
             metric_name = _METRIC_NAME_TR.get(h["metric"], h["label_tr"])
+            value_with_zone = _format_value_with_zone(
+                h["metric"], str(h["value_str"]), h.get("signal", "NEUTRAL")
+            )
             lines.append(
                 f"\n{h['emoji']} <b>{html.escape(metric_name)}</b>"
-                f"  <code>{html.escape(str(h['value_str']))}</code>"
+                f"  <code>{html.escape(value_with_zone)}</code>"
             )
             if h.get("why_tr"):
                 lines.append(f"   └ <i>{html.escape(h['why_tr'])}</i>")
         stories_block = "\n".join(lines) + "\n"
         hero_metrics = {h["metric"] for h in heroes}
 
-    # Watchlist (karşı sinyal) — aynı kural: metrik adı başlık
+    # Watchlist (karşı sinyal) — aynı kural: metrik adı başlık + zone hint
     watch = _pick_watchlist_signal(snap, hero_metrics)
     watch_block = ""
     if watch:
         metric_name = _METRIC_NAME_TR.get(watch["metric"], watch["label_tr"])
+        value_with_zone = _format_value_with_zone(
+            watch["metric"], str(watch["value_str"]), watch.get("signal", "NEUTRAL")
+        )
         watch_block = (
             f"\n👀 <b>İzleme listesinde</b>\n"
             f"{watch['emoji']} <b>{html.escape(metric_name)}</b>"
-            f"  <code>{html.escape(str(watch['value_str']))}</code>\n"
+            f"  <code>{html.escape(value_with_zone)}</code>\n"
             f"   └ <i>{html.escape(watch.get('why_tr', ''))}</i>\n"
         )
 
