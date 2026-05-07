@@ -86,32 +86,68 @@ async def _fetch_quote(session: aiohttp.ClientSession, symbol: str, api_key: str
 # 1. OVERNIGHT MARKETS
 # ════════════════════════════════════════════════════════════════════════════
 
+async def _fmp_batch_quote(
+    session: aiohttp.ClientSession,
+    symbols: List[str],
+    api_key: str,
+) -> Dict[str, Dict[str, Any]]:
+    """`/stable/batch-quote` — tek HTTP çağrısıyla N sembol.
+
+    Per-symbol `/stable/quote` `^GDAXI` / `^FCHI` / `^VIX` gibi endeksleri
+    "Special Endpoint" hatası ile reddediyor (FMP Premium per-symbol kısıtlaması).
+    Batch-quote bu kısıtı bypass ediyor; tüm endeksleri ve futures'ı tek istekte
+    alıp dict olarak `{symbol: quote_dict}` döner.
+    """
+    if not symbols:
+        return {}
+    csv = ",".join(symbols)
+    url = f"{FMP_BASE_URL}/batch-quote?symbols={csv}&apikey={api_key}"
+    data = await _fmp_get(session, url, timeout=8)
+    if not data or not isinstance(data, list):
+        logger.warning(f"batch-quote empty/invalid for {len(symbols)} symbols")
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for q in data:
+        if not isinstance(q, dict):
+            continue
+        sym = q.get("symbol")
+        if sym:
+            out[sym] = q
+    return out
+
+
 async def get_overnight_markets() -> Dict[str, Any]:
     """
     Asya, Avrupa endeksleri ve US futures — kullanıcı uyurken neler oldu?
-    Her sembol için /stable/quote'a paralel istek (multi-symbol premium gerektiriyor).
+
+    Day 28 part 5: per-symbol `/stable/quote` yerine `/stable/batch-quote` —
+    `^GDAXI` (DAX) ve `^FCHI` (CAC 40) FMP'nin Special Endpoint kısıtına
+    takılıyordu, batch endpoint'i bunu bypass ediyor.
     """
     api_key = _api_key()
     if not api_key:
         logger.error("FMP_API_KEY missing — overnight markets skipped")
         return {"asia": [], "europe": [], "us_futures": [], "error": "no_api_key"}
 
-    # Tüm sembolleri toparla
-    all_index_meta: List[tuple] = []  # (symbol, label, flag, region)
+    # Tüm sembolleri toparla (region eşlemesini koru)
+    sym_to_meta: Dict[str, tuple] = {}  # symbol -> (label, flag, region)
+    all_symbols: List[str] = []
     for region, syms in OVERNIGHT_INDICES.items():
         for symbol, label, flag in syms:
-            all_index_meta.append((symbol, label, flag, region))
+            sym_to_meta[symbol] = (label, flag, region)
+            all_symbols.append(symbol)
 
     async with aiohttp.ClientSession() as session:
-        tasks = [_fetch_quote(session, m[0], api_key) for m in all_index_meta]
-        quotes = await asyncio.gather(*tasks, return_exceptions=True)
+        quotes = await _fmp_batch_quote(session, all_symbols, api_key)
 
     result: Dict[str, List[Dict[str, Any]]] = {"asia": [], "europe": [], "us_futures": []}
 
-    for (symbol, label, flag, region), q in zip(all_index_meta, quotes):
-        if isinstance(q, Exception) or not q:
+    for symbol in all_symbols:
+        q = quotes.get(symbol)
+        if not q:
             continue
-        # /stable/quote field'ları: price, change, changePercentage (s'siz!)
+        label, flag, region = sym_to_meta[symbol]
+        # /stable/batch-quote field'ları: price, change, changePercentage
         change_pct = q.get("changePercentage") or q.get("changesPercentage") or 0
         price = q.get("price") or 0
         change = q.get("change") or 0
@@ -127,9 +163,44 @@ async def get_overnight_markets() -> Dict[str, Any]:
 
     logger.info(
         f"Overnight markets: asia={len(result['asia'])}, "
-        f"eu={len(result['europe'])}, us={len(result['us_futures'])}"
+        f"eu={len(result['europe'])}, us={len(result['us_futures'])} "
+        f"(batch-quote, {len(quotes)}/{len(all_symbols)} resolved)"
     )
     return result
+
+
+async def get_vix_quote_fmp() -> Optional[Dict[str, Any]]:
+    """VIX (^VIX) — FMP batch-quote ile.
+
+    Railway'de yfinance bloklu (Day 4 BLS pattern). FMP Premium aboneliğimiz
+    `/stable/batch-quote?symbols=^VIX` ile sorunsuz dönüyor.
+    """
+    api_key = _api_key()
+    if not api_key:
+        return None
+    async with aiohttp.ClientSession() as session:
+        quotes = await _fmp_batch_quote(session, ["^VIX"], api_key)
+    q = quotes.get("^VIX")
+    if not q:
+        return None
+    current = q.get("price") or 0
+    change_pct = q.get("changePercentage") or q.get("changesPercentage") or 0
+    if not current:
+        return None
+    if current > 30:
+        status, color = "Yüksek (Panik)", "red"
+    elif current > 20:
+        status, color = "Orta", "yellow"
+    elif current > 15:
+        status, color = "Normal", "green"
+    else:
+        status, color = "Düşük (Sakin)", "green"
+    return {
+        "current": round(float(current), 2),
+        "status": status,
+        "color": color,
+        "change_pct": round(float(change_pct), 2),
+    }
 
 
 # ════════════════════════════════════════════════════════════════════════════

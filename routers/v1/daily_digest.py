@@ -28,25 +28,22 @@ async def get_daily_digest(db: AsyncSession = Depends(get_db)):
             "symbols": ["BTC", "USD", ...],
             "color": "red|yellow|green"
         },
-        "quant_analysis": {
-            "title": "AXIOM KANTITATIF ANALIZ",
-            "trigger": "...",
-            "symbols": ["AAPL", "ETH", ...],
-            "color": "green|yellow|red"
-        },
         "portfolio_signal": {
             "title": "PORTFÖY SINYAL",
             "recommendation": "...",
             "symbols": ["BTC", "USDC", ...],
             "color": "blue"
         },
+        "vix": { "current": 18.4, "status": "...", "color": "yellow" },
         "last_updated": "2026-05-01T12:34:56.789Z"
     }
 
     Açıklama:
-    - Risk Radar: Makro riskler, Fed kararları, volatilite
-    - Kantitatif Analiz: Teknik sinyaller, momentum indicators
-    - Portföy Sinyalı: Önerilen pozisyonlar, entry/exit points
+    - Risk Radar: VIX + BTC on-chain (netflow + funding) + Asya endeksleri + acil haber
+      sentezi → frontend modal'ı verdict + faktör kartları + aksiyon önerisi gösterir.
+    - Portföy Sinyalı: Top movers + ETF akışları.
+    - Kantitatif kart kaldırıldı (Day 28 part 5) — sektör verisi MiniSectorChip + Risk
+      Radar modal'ında, earnings sayısı MiniEarningsChip'te.
     """
     try:
         digest = await DailyDigestService.get_daily_digest(db)

@@ -75,8 +75,23 @@ class DailyDigestService:
             return []
 
     @staticmethod
-    def _get_vix() -> Optional[Dict[str, Any]]:
-        """VIX (fear gauge) — yfinance üzerinden."""
+    async def _get_vix() -> Optional[Dict[str, Any]]:
+        """VIX (fear gauge) — FMP-first, yfinance fallback.
+
+        Day 28 part 5: yfinance Railway'de bloklu (Day 4 BLS pattern, IP-based
+        rate limit). FMP Premium aboneliğimiz `/stable/batch-quote?symbols=^VIX`
+        ile sorunsuz dönüyor; yfinance lokal/dev fallback olarak kalıyor.
+        """
+        # Primary — FMP
+        try:
+            from services.market_summary_service import get_vix_quote_fmp
+            fmp = await get_vix_quote_fmp()
+            if fmp and fmp.get("current"):
+                return fmp
+        except Exception as e:
+            logger.warning(f"VIX FMP fetch error: {e}")
+
+        # Fallback — yfinance (lokal dev'de Railway dışında çalışır)
         try:
             vix = yf.Ticker("^VIX")
             data = vix.history(period="5d")
@@ -100,7 +115,7 @@ class DailyDigestService:
                 "change_pct": round(change_pct, 2),
             }
         except Exception as e:
-            logger.warning(f"VIX fetch error: {e}")
+            logger.warning(f"VIX yfinance fallback error: {e}")
             return None
 
     # ─── Card builders ────────────────────────────────────────────────────
@@ -209,53 +224,10 @@ class DailyDigestService:
             "color": color,
         }
 
-    @staticmethod
-    def _build_quant_analysis(
-        sectors: List[Dict[str, Any]],
-        earnings_count: int,
-    ) -> Dict[str, Any]:
-        """KANTITATIF ANALIZ — sector rotation + earnings."""
-        if not sectors:
-            return {
-                "title": "AXIOM KANTITATIF ANALIZ",
-                "trigger": "Sektör datası geçici olarak alınamadı.",
-                "symbols": [],
-                "color": "yellow",
-            }
-
-        top_sector = sectors[0]
-        bottom_sector = sectors[-1] if len(sectors) > 1 else None
-
-        parts = []
-        parts.append(f"{top_sector['sector']} {top_sector['change_pct']:+.2f}%'lik liderlikte")
-        if bottom_sector and bottom_sector["change_pct"] < 0:
-            parts.append(f"{bottom_sector['sector']} {bottom_sector['change_pct']:+.2f}%'le baskı altında")
-
-        if earnings_count > 0:
-            parts.append(f"{earnings_count} şirket bugün bilanço açıklayacak")
-
-        trigger = "Sektör rotasyonu: " + "; ".join(parts) + "."
-
-        # Renk: en güçlü sektör pozitifse yeşil, hepsi negatifse kırmızı
-        positive_count = sum(1 for s in sectors if s.get("change_pct", 0) > 0)
-        if positive_count >= len(sectors) * 0.7:
-            color = "green"
-        elif positive_count <= len(sectors) * 0.3:
-            color = "red"
-        else:
-            color = "yellow"
-
-        # Sembol olarak top sektörden 3 örnek (sektör adı kullanıyoruz)
-        symbols = [top_sector["sector"][:8].upper()]
-        if bottom_sector:
-            symbols.append(bottom_sector["sector"][:8].upper())
-
-        return {
-            "title": "AXIOM KANTITATIF ANALIZ",
-            "trigger": trigger,
-            "symbols": symbols,
-            "color": color,
-        }
+    # _build_quant_analysis removed (Day 28 part 5).
+    # Sektör rotasyonu zaten MiniSectorChip'te ayrı kart olarak gösteriliyor;
+    # earnings sayısı MiniEarningsChip'te. Sektör baskısı (top/bottom) artık
+    # frontend'de Risk Radar modal'ına entegre — orada faktör kartları arasında.
 
     @staticmethod
     def _build_portfolio_signal(
@@ -356,10 +328,10 @@ class DailyDigestService:
             earnings_list = _safe(results[6], [])
             onchain = _safe(results[7], None)
 
-            # VIX synchronous (yfinance)
-            vix = DailyDigestService._get_vix()
+            # VIX (FMP-first, yfinance fallback)
+            vix = await DailyDigestService._get_vix()
 
-            # 3 card oluştur
+            # 2 card oluştur (Kantitatif kaldırıldı — Day 28 part 5)
             risk_radar = DailyDigestService._build_risk_radar(
                 vix=vix,
                 urgent_count=urgent_count,
@@ -367,20 +339,18 @@ class DailyDigestService:
                 overnight=overnight,
                 onchain=onchain,
             )
-            quant_analysis = DailyDigestService._build_quant_analysis(
-                sectors=sectors,
-                earnings_count=len(earnings_list),
-            )
             portfolio_signal = DailyDigestService._build_portfolio_signal(
                 movers=movers,
                 etf_flows=etf_flows,
             )
 
+            # Sektör verisi artık Risk Radar modal'ı tarafından da kullanılıyor
+            # (sektör baskısı kartları). Ayrıca MiniSectorChip aynı veriyi /dashboard-summary
+            # üzerinden zaten alıyor — burada quant_analysis üretmiyoruz.
             return {
                 "risk_radar": risk_radar,
-                "quant_analysis": quant_analysis,
                 "portfolio_signal": portfolio_signal,
-                "vix": vix,  # bonus: frontend gauge için
+                "vix": vix,  # bonus: frontend Risk Radar modal verdict için
                 "last_updated": datetime.now(timezone.utc).isoformat(),
             }
 
@@ -388,7 +358,6 @@ class DailyDigestService:
             logger.error(f"Daily digest fatal error: {e}", exc_info=True)
             return {
                 "risk_radar": {"title": "AXIOM RISK RADAR", "analysis": "Veri geçici olarak alınamadı.", "symbols": [], "color": "yellow"},
-                "quant_analysis": {"title": "AXIOM KANTITATIF ANALIZ", "trigger": "Veri geçici olarak alınamadı.", "symbols": [], "color": "yellow"},
                 "portfolio_signal": {"title": "PORTFÖY SINYAL", "recommendation": "Veri geçici olarak alınamadı.", "symbols": [], "color": "blue"},
                 "last_updated": datetime.now(timezone.utc).isoformat(),
                 "error": str(e),
