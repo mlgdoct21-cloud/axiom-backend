@@ -27,12 +27,19 @@ FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 
 # Canonical series. Add more without changing call sites.
 SERIES = {
-    "fred_cpi": "CPIAUCSL",        # CPI-U All Items SA, monthly index
-    "fred_core_cpi": "CPILFESL",   # CPI-U Less Food & Energy (Core), SA, monthly index
-    "fred_nfp": "PAYEMS",          # Total Nonfarm Payrolls SA, thousands
-    "fred_unrate": "UNRATE",       # Civilian Unemployment Rate SA, % (4.2 = 4.2%)
-    "fred_pce": "PCEPI",           # Headline PCE Price Index SA, monthly index
-    "fred_core_pce": "PCEPILFE",   # Core PCE Price Index SA, monthly index
+    "fred_cpi": "CPIAUCSL",                   # CPI-U All Items SA, monthly index
+    "fred_core_cpi": "CPILFESL",              # CPI-U Less Food & Energy (Core), SA, monthly index
+    "fred_nfp": "PAYEMS",                     # Total Nonfarm Payrolls SA, thousands
+    "fred_unrate": "UNRATE",                  # Civilian Unemployment Rate SA, % (4.2 = 4.2%)
+    "fred_pce": "PCEPI",                      # Headline PCE Price Index SA, monthly index
+    "fred_core_pce": "PCEPILFE",              # Core PCE Price Index SA, monthly index
+    # Day 28 part 3 (2026-05-07) eklendi — kullanıcı "günlük açıklanan veriler" dedi.
+    "fred_jobless_initial": "ICSA",           # Initial Jobless Claims SA, weekly Thursday 08:30 ET
+    "fred_jobless_continuing": "CCSA",        # Continuing Claims SA, weekly Thursday 08:30 ET
+    "fred_retail_sales": "RSAFS",             # Advance Monthly Retail Sales (ex food services) SA, ~mid-month
+    "fred_ppi": "PPIACO",                     # Producer Price Index All Commodities NSA, ~13th
+    "fred_housing_starts": "HOUST",           # Housing Starts: Total New Privately Owned SA, ~17th
+    "fred_gdp": "GDPC1",                      # Real GDP, Quarterly Annualized SA, ~25th of quarter+1
 }
 
 _USER_AGENT = "AXIOM-Macro/0.1 (+https://axiom-dashboard-sigma.vercel.app)"

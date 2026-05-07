@@ -172,6 +172,21 @@ def _categorise(release: dict) -> Optional[str]:
         return "PCE_HOT" if delta_pct >= 0 else "PCE_COOL"
     if et == "CORE_PCE":
         return "CORE_PCE_HOT" if delta_pct >= 0 else "CORE_PCE_COOL"
+    # Day 28 part 3 — yeni event_type'lar
+    if et == "JOBLESS_INITIAL":
+        # Düşük claims = sıkı işgücü; "düşük" yön bullish risk varlıklara
+        # değil, hawkish Fed'e götürür. delta_pct hafta-üzerinden değişim.
+        return "JOBLESS_LOW" if delta_pct < 0 else "JOBLESS_HIGH"
+    if et == "JOBLESS_CONTINUING":
+        return "JOBLESS_LOW" if delta_pct < 0 else "JOBLESS_HIGH"
+    if et == "RETAIL_SALES":
+        return "RETAIL_HOT" if delta_pct >= 0 else "RETAIL_COOL"
+    if et == "PPI":
+        return "PPI_HOT" if delta_pct >= 0 else "PPI_COOL"
+    if et == "HOUSING_STARTS":
+        return "HOUSING_HOT" if delta_pct >= 0 else "HOUSING_COOL"
+    if et == "GDP":
+        return "GDP_HOT" if delta_pct >= 0 else "GDP_COOL"
     return None
 
 
@@ -215,6 +230,34 @@ def _format_clause(payload: dict) -> str:
             "Format: \"Önceki ay <prior> iken bu ay <actual> kişi geldi.\" "
             "Ardından bir cümlede yön + mekanizma (≤30 kelime). "
             "\"Piyasa beklentisi\" ifadesi KULLANMA — INPUT'ta beklenti yok."
+        )
+    # Day 28 part 3 — yeni event_type formatları
+    if et in ("JOBLESS_INITIAL", "JOBLESS_CONTINUING") and payload.get("actual") is not None and payload.get("prior") is not None:
+        label = "İlk işsizlik başvuruları" if et == "JOBLESS_INITIAL" else "Devam eden işsizlik başvuruları"
+        return (
+            f"Format: \"{label} geçen hafta <prior> iken bu hafta <actual> kişi.\" "
+            "Ardından bir cümlede yön + mekanizma (≤30 kelime). "
+            "Düşüş = sıkı işgücü, hawkish Fed; artış = soğuyan işgücü, dovish dönüş."
+        )
+    if et == "RETAIL_SALES" and payload.get("mom_pct") is not None:
+        return (
+            "Format: \"Perakende satışlar aylık <mom_pct>% (önceki <prior>, mevcut <actual>).\" "
+            "Ardından bir cümlede yön + mekanizma (≤30 kelime). Pozitif = sıkı tüketici/sticky CPI; negatif = soğuyan talep."
+        )
+    if et == "PPI" and payload.get("mom_pct") is not None:
+        return (
+            "Format: \"Üretici fiyatları aylık <mom_pct>% (önceki <prior>, mevcut <actual>).\" "
+            "Ardından bir cümlede yön + mekanizma (≤30 kelime). PPI CPI öncülüdür."
+        )
+    if et == "HOUSING_STARTS" and payload.get("actual") is not None and payload.get("prior") is not None:
+        return (
+            "Format: \"Konut başlangıçları önceki <prior> iken bu ay <actual> bin birim.\" "
+            "Ardından bir cümlede yön + mekanizma (≤30 kelime). Faiz duyarlı sektör."
+        )
+    if et == "GDP" and payload.get("actual") is not None and payload.get("prior") is not None:
+        return (
+            "Format: \"GDP önceki çeyrek <prior>% iken bu çeyrek <actual>%.\" "
+            "Ardından bir cümlede yön + mekanizma (≤30 kelime). Büyüme yönü Fed kararını etkiler."
         )
     # FOMC without before/after (or unknown shape): factual + mechanism only.
     return (
@@ -353,6 +396,8 @@ async def generate_narrative(event_id: str) -> NarrativeResult:
     }
     if mom_pct is not None and (release.get("event_type") or "").upper() in (
         "CPI", "PCE", "CORE_CPI", "CORE_PCE",
+        # Day 28 part 3 — RETAIL_SALES ve PPI için de MoM% hesaplanır
+        "RETAIL_SALES", "PPI",
     ):
         payload["mom_pct"] = mom_pct
     if before:

@@ -80,3 +80,70 @@ CORE_PCE_COOL:
   mechanism: "Strongest dovish signal of all releases; risk-on into duration"
   sectors_positive: [tech, growth_stocks, real_estate, consumer_discretionary]
   sectors_negative: [energy, financials]
+
+# === Day 28 part 3 — yeni veri kapsamı ===
+
+# Initial Jobless Claims (haftalık) — düşük değer = sıkı işgücü = enflasyon riski
+JOBLESS_LOW:
+  description: "Initial claims below 4-week MA; labour market still tight"
+  mechanism: "Tight labour delays Fed cuts; rate-sensitives bear the cost"
+  sectors_negative: [small_caps, real_estate, utilities, growth_stocks]
+  sectors_positive: [financials, industrials]
+
+JOBLESS_HIGH:
+  description: "Initial claims above 4-week MA; layoff trend rising"
+  mechanism: "Soft labour boosts cut bets; defensives and duration lead"
+  sectors_positive: [tech, growth_stocks, real_estate, utilities, consumer_staples]
+  sectors_negative: [financials, energy, industrials]
+
+# Retail Sales — yüksek = tüketici sağlam = ekonomi sıkı, faiz indirimi gecikir
+RETAIL_HOT:
+  description: "Retail sales beat; consumer resilient; soft-landing narrative weakens"
+  mechanism: "Strong demand keeps inflation sticky, delays Fed cuts"
+  sectors_negative: [small_caps, real_estate, utilities]
+  sectors_positive: [consumer_discretionary, financials, industrials]
+
+RETAIL_COOL:
+  description: "Retail sales miss; consumer pullback signals"
+  mechanism: "Soft consumer raises cut odds; duration bid"
+  sectors_positive: [tech, growth_stocks, real_estate, utilities, consumer_staples]
+  sectors_negative: [consumer_discretionary, financials]
+
+# PPI — üretici enflasyonu, CPI öncülü
+PPI_HOT:
+  description: "PPI above expectation; pipeline inflation building"
+  mechanism: "Wholesale price pressure feeds through to CPI; rate cuts deferred"
+  sectors_negative: [tech, growth_stocks, real_estate, consumer_discretionary]
+  sectors_positive: [energy, financials, commodities, materials]
+
+PPI_COOL:
+  description: "PPI undershoots; pipeline pressures easing"
+  mechanism: "Pipeline disinflation supports CPI cooling thesis"
+  sectors_positive: [tech, growth_stocks, real_estate, consumer_discretionary]
+  sectors_negative: [energy, materials]
+
+# Housing Starts — konut başlangıçları, faiz duyarlı
+HOUSING_HOT:
+  description: "Housing starts beat; construction resilient despite high rates"
+  mechanism: "Sector strength supports broader cyclicals"
+  sectors_positive: [real_estate, financials, materials, industrials]
+  sectors_negative: []
+
+HOUSING_COOL:
+  description: "Housing starts miss; rate-sensitive sector weakening"
+  mechanism: "Construction slowdown raises cut pressure on Fed"
+  sectors_negative: [real_estate, financials, materials]
+  sectors_positive: [tech, growth_stocks, consumer_staples]
+
+# GDP — büyüme, çeyreklik
+GDP_HOT:
+  description: "GDP beats; economy growing above trend"
+  mechanism: "Strong growth supports earnings + delays Fed cuts"
+  sectors_positive: [financials, industrials, consumer_discretionary, energy]
+  sectors_negative: [utilities, consumer_staples]
+
+GDP_COOL:
+  description: "GDP misses; growth slowing or contracting"
+  mechanism: "Soft growth reignites recession risk; defensives + duration lead"
+  sectors_positive: [tech, growth_stocks, utilities, consumer_staples, real_estate]
+  sectors_negative: [financials, industrials, energy]

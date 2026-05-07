@@ -55,12 +55,24 @@ SOURCE_INTERVAL: dict[str, timedelta] = {
     "fred_unrate": timedelta(minutes=60),
     "fred_pce": timedelta(minutes=60),
     "fred_core_pce": timedelta(minutes=60),
+    # Day 28 part 3 — haftalık jobless claims daha sık (perşembe 13:30 UTC
+    # geldiğinde hızlı yakalansın), aylıklar 60min
+    "fred_jobless_initial": timedelta(minutes=30),
+    "fred_jobless_continuing": timedelta(minutes=30),
+    "fred_retail_sales": timedelta(minutes=60),
+    "fred_ppi": timedelta(minutes=60),
+    "fred_housing_starts": timedelta(minutes=60),
+    "fred_gdp": timedelta(minutes=60),
     "kalshi_fed": timedelta(minutes=60),
 }
 
 # All FRED sources we probe in one batched call. Order is stable for
 # deterministic probe rows.
-_FRED_SOURCES = ("fred_cpi", "fred_core_cpi", "fred_nfp", "fred_unrate", "fred_pce", "fred_core_pce")
+_FRED_SOURCES = (
+    "fred_cpi", "fred_core_cpi", "fred_nfp", "fred_unrate", "fred_pce", "fred_core_pce",
+    "fred_jobless_initial", "fred_jobless_continuing", "fred_retail_sales",
+    "fred_ppi", "fred_housing_starts", "fred_gdp",
+)
 
 # Number of historical observations to fetch per probe. 13 lets the public
 # endpoint compute YoY (current vs 12-mo-prior) and the previous-period
@@ -87,6 +99,13 @@ _STATES: dict[str, _SourceState] = {
     "fred_unrate": _SourceState(name="fred_unrate"),
     "fred_pce": _SourceState(name="fred_pce"),
     "fred_core_pce": _SourceState(name="fred_core_pce"),
+    # Day 28 part 3
+    "fred_jobless_initial": _SourceState(name="fred_jobless_initial"),
+    "fred_jobless_continuing": _SourceState(name="fred_jobless_continuing"),
+    "fred_retail_sales": _SourceState(name="fred_retail_sales"),
+    "fred_ppi": _SourceState(name="fred_ppi"),
+    "fred_housing_starts": _SourceState(name="fred_housing_starts"),
+    "fred_gdp": _SourceState(name="fred_gdp"),
     "kalshi_fed": _SourceState(name="kalshi_fed"),
 }
 

@@ -39,13 +39,25 @@ except Exception:  # pragma: no cover — Python <3.9 wouldn't reach prod
     _ET = None
 
 # release_id → (event_type, release time HH:MM in US/Eastern, accelerated sources).
-# Times are the standard announcement clock — 08:30 ET for BLS (CPI, NFP),
-# 08:30 ET for BEA (PCE). FOMC decisions are 14:00 ET but FRED doesn't have
-# a clean release_id for those, so YAML still owns them.
+# Times are the standard announcement clock — 08:30 ET for BLS (CPI, NFP, PPI),
+# 08:30 ET for BEA (PCE, GDP), 08:30 ET DOL (ICSA), 08:30 ET Census (RSAFS, HOUST).
+# FOMC decisions are 14:00 ET but FRED doesn't have a clean release_id for those,
+# so YAML still owns them.
+#
+# IDs canonical FRED ID'leridir; 2026-05-07'de FRED `/releases` endpoint'inden
+# doğrulandı. Önceki kodda PCE için release_id=21 yazılmıştı, ama 21 aslında
+# "H.6 Money Stock Measures" — PCE'nin doğru ID'si 54 (Personal Income and
+# Outlays). Bu fix ile PCE adaptive polling doğru release date'e bakacak.
 _RELEASES = {
-    10: ("CPI",  "08:30", ("fred_cpi", "fred_core_cpi")),
-    50: ("NFP",  "08:30", ("fred_nfp", "fred_unrate")),
-    21: ("PCE",  "08:30", ("fred_pce", "fred_core_pce")),
+    10:  ("CPI",  "08:30", ("fred_cpi", "fred_core_cpi")),
+    50:  ("NFP",  "08:30", ("fred_nfp", "fred_unrate")),
+    54:  ("PCE",  "08:30", ("fred_pce", "fred_core_pce")),  # was incorrectly 21
+    # Day 28 part 3 — haftalık jobless + aylık retail/PPI/housing + çeyreklik GDP
+    180: ("JOBLESS_CLAIMS", "08:30", ("fred_jobless_initial", "fred_jobless_continuing")),
+    9:   ("RETAIL_SALES",   "08:30", ("fred_retail_sales",)),
+    46:  ("PPI",            "08:30", ("fred_ppi",)),
+    27:  ("HOUSING_STARTS", "08:30", ("fred_housing_starts",)),
+    53:  ("GDP",            "08:30", ("fred_gdp",)),
 }
 
 _USER_AGENT = "AXIOM-Macro/0.1 (+https://axiom-dashboard-sigma.vercel.app)"
@@ -138,6 +150,19 @@ def _label_for(event_type: str, d: date_t) -> str:
         return f"{period} CPI-U"
     if event_type == "PCE":
         return f"{period} Personal Income & Outlays"
+    # Day 28 part 3
+    if event_type == "JOBLESS_CLAIMS":
+        # Haftalık — periyot ay başı yerine ilgili haftanın bittiği gün etrafında
+        return f"Initial & Continuing Jobless Claims (week ending {d.strftime('%d %b')})"
+    if event_type == "RETAIL_SALES":
+        return f"{period} Advance Retail Sales"
+    if event_type == "PPI":
+        return f"{period} Producer Price Index"
+    if event_type == "HOUSING_STARTS":
+        return f"{period} Housing Starts"
+    if event_type == "GDP":
+        # Çeyrek bazlı — yayın ayı kullanılacak (advance/preliminary/final ayrımı yapılmıyor)
+        return f"GDP Release ({d.strftime('%b %Y')})"
     return f"{period} {event_type}"
 
 

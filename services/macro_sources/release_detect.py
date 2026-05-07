@@ -40,6 +40,13 @@ _FRED_EVENT_TYPE = {
     "fred_unrate": "UNRATE",
     "fred_pce": "PCE",
     "fred_core_pce": "CORE_PCE",
+    # Day 28 part 3
+    "fred_jobless_initial": "JOBLESS_INITIAL",
+    "fred_jobless_continuing": "JOBLESS_CONTINUING",
+    "fred_retail_sales": "RETAIL_SALES",
+    "fred_ppi": "PPI",
+    "fred_housing_starts": "HOUSING_STARTS",
+    "fred_gdp": "GDP",
 }
 
 
