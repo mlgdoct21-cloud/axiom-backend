@@ -749,6 +749,78 @@ _ONCHAIN_EMOJI: dict[str, str] = {
     "realized_price": "🏷️",
 }
 
+# Metrik adı (Türkçe, başlık olarak kullanılır — sinyal status etiketi DEĞİL).
+# Örnek: "🐋 Balina Oranı 0.56" (doğru) — "🐋 Normal 0.56" (yanlış, eski hata).
+_METRIC_NAME_TR: dict[str, str] = {
+    "exchange_netflow": "Borsa Net Akışı",
+    "whale_ratio": "Balina Oranı",
+    "mpi": "MPI (Madenci Pozisyon Endeksi)",
+    "stablecoin_inflow": "Stablecoin Net Akışı",
+    "coinbase_premium": "Coinbase Spot Primi",
+    "funding_rates": "Funding Rate",
+    "leverage_ratio": "Borsa Kaldıracı",
+    "mvrv": "MVRV",
+    "nupl": "NUPL",
+    "sopr": "SOPR",
+    "sopr_ratio": "SOPR Ratio",
+    "puell": "Puell Multiple",
+    "btc_liquidations": "Likidasyonlar",
+    "korean_premium": "Kore Primi",
+    "spot_taker": "Spot Taker",
+    "hash_rate": "Hash Rate",
+    "active_addresses": "Aktif Adres",
+    "realized_price": "Realized Price",
+}
+
+# Üst-satır kısa özet için 2-3 kelimelik durum descriptor'ları.
+# `score_summary` snapshot'tan geliyor ama label_tr (status word) kullanıyor —
+# kullanıcı için anlamsız ("Normal, Kohortlar Dengede, Madenci Güveni"). Burada
+# direksiyon başına insan diliyle kısa ifade üretiyoruz.
+_METRIC_STATE_SHORT: dict[str, dict[str, str]] = {
+    "exchange_netflow": {"BULLISH": "borsadan çıkış", "BEARISH": "borsaya akış"},
+    "whale_ratio":      {"BULLISH": "balina hareketi sakin", "BEARISH": "balinalar aktif"},
+    "mpi":              {"BULLISH": "madenci tutuyor", "BEARISH": "madenci satıyor"},
+    "stablecoin_inflow":{"BULLISH": "stablecoin alıma hazır", "BEARISH": "stablecoin çıkıyor"},
+    "coinbase_premium": {"BULLISH": "Coinbase'de alış", "BEARISH": "Coinbase'de satış"},
+    "funding_rates":    {"BULLISH": "funding sağlıklı", "BEARISH": "funding aşırı"},
+    "leverage_ratio":   {"BULLISH": "kaldıraç düşük", "BEARISH": "kaldıraç yüksek"},
+    "mvrv":             {"BULLISH": "ucuz bölge", "BEARISH": "pahalı bölge"},
+    "nupl":             {"BULLISH": "öfori yok", "BEARISH": "aşırı kâr"},
+    "sopr":             {"BULLISH": "tutuluyor", "BEARISH": "kâr realizasyonu"},
+    "sopr_ratio":       {"BULLISH": "uzun vade tutuyor", "BEARISH": "uzun vade satıyor"},
+    "puell":            {"BULLISH": "dip bölge", "BEARISH": "zirve bölge"},
+    "btc_liquidations": {"BULLISH": "likidasyon düşük", "BEARISH": "likidasyon spike"},
+    "korean_premium":   {"BULLISH": "Asya talebi güçlü", "BEARISH": "Asya'da satış"},
+    "spot_taker":       {"BULLISH": "spot alıcı agresif", "BEARISH": "spot satıcı agresif"},
+    "hash_rate":        {"BULLISH": "ağ güçleniyor", "BEARISH": "hash düşüyor"},
+    "active_addresses": {"BULLISH": "kullanım artıyor", "BEARISH": "kullanım düşüyor"},
+    "realized_price":   {"BULLISH": "maliyetin üstünde", "BEARISH": "maliyetin altında"},
+}
+
+
+def _build_short_summary(snap: dict, max_pos: int = 2, max_neg: int = 2) -> str:
+    """Üst-satır özeti — score_summary'i override eder. Top katkıları
+    `_METRIC_STATE_SHORT`'tan kısa ifadelerle birleştirir.
+    Örn: 'Güç: balina hareketi sakin, madenci tutuyor · Baskı: funding aşırı'
+    """
+    breakdown = snap.get("score_breakdown") or []
+    if not breakdown:
+        return ""
+    pos = sorted([b for b in breakdown if b.get("contribution", 0) > 0],
+                 key=lambda x: -x["contribution"])[:max_pos]
+    neg = sorted([b for b in breakdown if b.get("contribution", 0) < 0],
+                 key=lambda x: x["contribution"])[:max_neg]
+    parts = []
+    if pos:
+        words = [_METRIC_STATE_SHORT.get(p["metric"], {}).get("BULLISH") or p["label_tr"]
+                 for p in pos]
+        parts.append("Güç: " + ", ".join(words))
+    if neg:
+        words = [_METRIC_STATE_SHORT.get(n["metric"], {}).get("BEARISH") or n["label_tr"]
+                 for n in neg]
+        parts.append("Baskı: " + ", ".join(words))
+    return " · ".join(parts) if parts else ""
+
 
 def _pick_hero_stories(snap: dict, count: int = 3) -> list[dict]:
     """Score breakdown'dan en güçlü 3 sinyali (mutlak katkı) dön. Karışık
@@ -822,11 +894,16 @@ def _build_onchain_keyboard(symbol: str) -> dict:
 
 def _render_onchain_brief(snap: dict, symbol: str) -> str:
     """Yeni hikâye-anlatıcı format: verdict + 3 büyük hareket + watchlist
-    + dashboard upsell. Telegram HTML."""
+    + dashboard upsell. Telegram HTML.
+
+    NOT: Hero başlığı = METRİK ADI (`_METRIC_NAME_TR`) + value_str.
+    `label_tr` sinyal status etiketi olduğu için ('Normal', 'Kohortlar
+    Dengede') başlık olarak KULLANILMAZ — onun yerini why_tr ('└' satırı)
+    insan diliyle anlatım yapar.
+    """
     overall_tr = snap.get("overall_tr", "❓ Veri Yok")
     axiom_score = snap.get("axiom_score")
     score_zone_tr = snap.get("score_zone_tr", "")
-    score_summary = snap.get("score_summary", "")
 
     # Header — verdict + score
     if axiom_score is not None:
@@ -837,10 +914,11 @@ def _render_onchain_brief(snap: dict, symbol: str) -> str:
     else:
         header = f"🔗 <b>{symbol} ON-CHAIN — {overall_tr}</b>\n"
 
-    # Tek-cümle özet
-    summary_line = f"<i>{html.escape(score_summary)}</i>\n" if score_summary else ""
+    # Üst-satır kısa özet — score_summary override (jargon yerine descriptor)
+    short_summary = _build_short_summary(snap, max_pos=2, max_neg=1)
+    summary_line = f"<i>{html.escape(short_summary)}</i>\n" if short_summary else ""
 
-    # 3 hero story
+    # 3 hero story — METRİK ADI başlık + value_str + why_tr alt satır
     heroes = _pick_hero_stories(snap, count=3)
     if not heroes:
         stories_block = "<i>Şu an aktif sinyal yok — piyasa nötr.</i>\n"
@@ -848,8 +926,9 @@ def _render_onchain_brief(snap: dict, symbol: str) -> str:
     else:
         lines = ["", "<b>📈 SAHNEDEKİ 3 BÜYÜK HAREKET</b>"]
         for h in heroes:
+            metric_name = _METRIC_NAME_TR.get(h["metric"], h["label_tr"])
             lines.append(
-                f"\n{h['emoji']} <b>{html.escape(h['label_tr'])}</b>"
+                f"\n{h['emoji']} <b>{html.escape(metric_name)}</b>"
                 f"  <code>{html.escape(str(h['value_str']))}</code>"
             )
             if h.get("why_tr"):
@@ -857,13 +936,14 @@ def _render_onchain_brief(snap: dict, symbol: str) -> str:
         stories_block = "\n".join(lines) + "\n"
         hero_metrics = {h["metric"] for h in heroes}
 
-    # Watchlist (karşı sinyal)
+    # Watchlist (karşı sinyal) — aynı kural: metrik adı başlık
     watch = _pick_watchlist_signal(snap, hero_metrics)
     watch_block = ""
     if watch:
+        metric_name = _METRIC_NAME_TR.get(watch["metric"], watch["label_tr"])
         watch_block = (
             f"\n👀 <b>İzleme listesinde</b>\n"
-            f"{watch['emoji']} {html.escape(watch['label_tr'])}"
+            f"{watch['emoji']} <b>{html.escape(metric_name)}</b>"
             f"  <code>{html.escape(str(watch['value_str']))}</code>\n"
             f"   └ <i>{html.escape(watch.get('why_tr', ''))}</i>\n"
         )
