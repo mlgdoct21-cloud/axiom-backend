@@ -64,20 +64,22 @@ logger = get_logger("crawler")
 # Dashboard'ın "sürekli akış" hissini vermesi için fetch+analyze cycle'ları kısa,
 # digest ise sadece non-urgent için kısa bekletme yapar (kullanıcı yenilemek
 # zorunda kalmasın; ama urgent'lar anında, normaller de 3 dk içinde gitsin).
-FAST_FETCH_INTERVAL_SEC = int(os.getenv("AXIOM_FAST_FETCH_SEC", "30"))  # 30 sn
-BATCH_ANALYZE_INTERVAL_SEC = int(os.getenv("AXIOM_BATCH_ANALYZE_SEC", "60"))  # 1 dk
+# Day 28 #10 — yayın akışı sırasında haber gecikmelerini minimize:
+# fetch 30s→15s, analyze 60s→30s, SSE age 10min→5min.
+# Worst-case latency 63s → ~25s. Gemini cost +~$0.01/gün.
+FAST_FETCH_INTERVAL_SEC = int(os.getenv("AXIOM_FAST_FETCH_SEC", "15"))  # 15 sn
+BATCH_ANALYZE_INTERVAL_SEC = int(os.getenv("AXIOM_BATCH_ANALYZE_SEC", "30"))  # 30 sn
 DIGEST_INTERVAL_SEC = int(os.getenv("AXIOM_DIGEST_SEC", "180"))  # 3 dk
 # Gemini çağrı başına haber adedi. 15 haber ~4-5K token prompt + 4-8K token yanıt.
 # Daha büyük batch = daha az API çağrısı = daha az quota tüketimi.
-# 60s interval × 15 haber = 900 haber/saat teorik. Pratik (bazı cycle'lar
-# Gemini overloaded döner) ~500-700 haber/saat.
+# 30s interval × 15 haber = 1800 haber/saat teorik. Pratik (bazı cycle'lar
+# Gemini overloaded döner) ~1000-1400 haber/saat.
 BATCH_SIZE = int(os.getenv("AXIOM_BATCH_SIZE", "15"))
 FMP_FALLBACK_THRESHOLD = int(os.getenv("AXIOM_FMP_FALLBACK_MIN", "5"))  # FMP bundan az dönerse RSS ekle
 # SSE canlı akış tazelik penceresi: bu yaştan eski analizler dashboard'a
 # anlık olarak itilmez (DB'de kalır, feed endpoint reload'unda erişilir).
-# batch_analyze backlog'u işlerken 20-30 dk eski item'lar SSE'ye düşüp
-# dashboard'da "sıra bozukluğu" yaratıyordu. 0 = gate kapalı (tümünü yayınla).
-SSE_MAX_AGE_MIN = int(os.getenv("AXIOM_SSE_MAX_AGE_MIN", "10"))
+# 10dk → 5dk: backlog uzun sürerse eski item'lar SSE'den çıkmasın.
+SSE_MAX_AGE_MIN = int(os.getenv("AXIOM_SSE_MAX_AGE_MIN", "5"))
 
 # Urgent keywords — acil broadcast tetikleyicileri (başlıkta aranır, lowercase)
 URGENT_KEYWORDS = [
