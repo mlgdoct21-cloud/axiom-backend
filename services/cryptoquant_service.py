@@ -550,6 +550,74 @@ async def _fetch_coinbase_premium() -> Optional[dict]:
     }
 
 
+async def _fetch_lth_sopr() -> Optional[dict]:
+    """LTH-SOPR (Long-Term Holder SOPR, ≥155 gün tutucular).
+    >1.0 sürdürülürse LTH dağıtım/kar realizasyonu (tepe uyarısı eşiği),
+    <1.0 = uzun vadeci zararla satmıyor → birikim devam ediyor."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/btc/market-indicator/lth-sopr",
+        {"window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    val = latest.get("lth_sopr") or latest.get("sopr") or 0
+    return {"lth_sopr": float(val), "date": latest.get("date")}
+
+
+async def _fetch_btc_liquidations() -> Optional[dict]:
+    """BTC tasfiyeler (long + short USD, Binance). Asimetri yön sinyali verir:
+    long_v > short_v × 2 = forced sell sonrası dip riski azaldı (BULLISH),
+    short_v > long_v × 2 = short sıkışması (BEARISH şüphesi)."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/btc/market-data/liquidations",
+        {"exchange": "binance", "window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    long_usd = float(latest.get("long_liquidations_usd", 0))
+    short_usd = float(latest.get("short_liquidations_usd", 0))
+    return {
+        "long_usd": long_usd,
+        "short_usd": short_usd,
+        "total_usd": long_usd + short_usd,
+        "date": latest.get("date"),
+    }
+
+
+async def _fetch_korean_premium() -> Optional[dict]:
+    """Korean Premium (Upbit ortalaması vs Binance). Pozitif = Korean retail
+    FOMO baskın (genelde local top sinyali), negatif = Korean retail kaçıyor
+    (genelde dip onayı)."""
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/btc/market-data/korea-premium",
+        {"exchange": "upbit", "window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    val = (
+        latest.get("korea_premium")
+        or latest.get("kimchi_premium")
+        or latest.get("premium")
+        or 0
+    )
+    return {"korean_premium": float(val), "date": latest.get("date")}
+
+
 # ── Signal interpreter ─────────────────────────────────────────────────────────
 
 def _interpret_signals(snapshot: dict) -> dict:
@@ -871,6 +939,72 @@ def _interpret_signals(snapshot: dict) -> dict:
             "label_tr": label,
         }
 
+    # LTH-SOPR (Long-Term Holder SOPR) — uzun vadeci dağıtım barometresi
+    lsopr = snapshot.get("lth_sopr")
+    if lsopr:
+        v = lsopr["lth_sopr"]
+        if v >= 2.0:
+            sig, label = "BEARISH", "⚠️ LTH Aşırı Dağıtım (Tepe Uyarısı)"
+        elif v >= 1.5:
+            sig, label = "NEUTRAL", "🟡 LTH Kâr Realizasyonu"
+        elif v >= 1.0:
+            sig, label = "BULLISH", "🟢 LTH Kontrollü Dağıtım"
+        elif v >= 0.95:
+            sig, label = "BULLISH", "🟢 LTH Tutuyor"
+        else:
+            sig, label = "BULLISH", "💎 LTH Zararla Satmıyor (Dip Onayı)"
+        signals["lth_sopr"] = {
+            "value_str": f"{v:.4f}",
+            "signal": sig,
+            "label_tr": label,
+        }
+
+    # BTC Liquidations — tasfiye asimetrisi yön sinyali
+    bliq = snapshot.get("btc_liquidations")
+    if bliq:
+        total = bliq["total_usd"]
+        long_v = bliq["long_usd"]
+        short_v = bliq["short_usd"]
+        if total > 50_000_000:
+            if long_v > short_v * 2:
+                sig, label = "BULLISH", "🟢 Long Tasfiyesi (Forced Sell Bitti)"
+            elif short_v > long_v * 2:
+                sig, label = "BEARISH", "🔴 Short Sıkışması Sonrası"
+            else:
+                sig, label = "NEUTRAL", "⚠️ Çift Yönlü Tasfiye"
+        elif total > 5_000_000:
+            sig, label = "NEUTRAL", "🟡 Orta Tasfiye"
+        else:
+            sig, label = "BULLISH", "🟢 Sakin Türev"
+        signals["btc_liquidations"] = {
+            "value_str": (
+                f"${total/1_000_000:,.1f}M "
+                f"(L:{long_v/1_000_000:.1f}M · S:{short_v/1_000_000:.1f}M)"
+            ),
+            "signal": sig,
+            "label_tr": label,
+        }
+
+    # Korean Premium — Upbit retail FOMO/kapitülasyon
+    kp = snapshot.get("korean_premium")
+    if kp:
+        v = kp["korean_premium"]
+        if v > 3.0:
+            sig, label = "BEARISH", "⚠️ Korean FOMO (Local Top Riski)"
+        elif v > 1.0:
+            sig, label = "NEUTRAL", "🟡 Hafif Korean Premium"
+        elif v < -2.0:
+            sig, label = "BULLISH", "💎 Korean Kapitülasyon (Dip)"
+        elif v < -0.5:
+            sig, label = "BULLISH", "🟢 Korean Retail Kaçıyor"
+        else:
+            sig, label = "NEUTRAL", "🟡 Korean Dengeli"
+        signals["korean_premium"] = {
+            "value_str": f"%{v:+.2f}",
+            "signal": sig,
+            "label_tr": label,
+        }
+
     # ETH-specific: exchange supply ratio (whale-ratio benzeri)
     esr = snapshot.get("eth_supply_ratio")
     if esr:
@@ -1032,15 +1166,18 @@ def _interpret_signals(snapshot: dict) -> dict:
     weights = {
         "exchange_netflow":     25,  # en yüksek aksiyonlanabilir sinyal
         "whale_ratio":          20,
+        "lth_sopr":             20,  # uzun vadeci dağıtım/birikim barometresi
         "mpi":                  18,
         "sth_sopr":             18,  # CryptoMe karar çerçevesinin omurgası
         "spot_taker":           16,  # yön kaynağı: spot vs türev
+        "btc_liquidations":     15,  # tasfiye asimetrisi yön sinyali
         "stablecoin_inflow":    15,
         "leverage_ratio":       15,
         "funding_rates":        13,
         "asopr":                12,  # adjusted SOPR — temiz sinyal
         "nupl":                 12,
         "sopr":                 10,
+        "korean_premium":        8,  # Upbit retail FOMO/kapitülasyon
         "coinbase_premium":      8,
         # ETH-specific
         "eth_supply_ratio":     20,  # whale_ratio'nun ETH karşılığı
@@ -1142,9 +1279,10 @@ def _interpret_signals(snapshot: dict) -> dict:
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 async def _build_btc_snapshot() -> dict:
-    """20 paralel BTC metrik fetch — Pro plan'ın tamamından yararlanıyor.
-    Day 27 #2: STH-SOPR + STH-Realized Price + aSOPR + Spot Taker eklendi
-    (CryptoMe karar çerçevesi + yön kaynağı için)."""
+    """23 paralel BTC metrik fetch — Pro plan'ın tamamından yararlanıyor.
+    Day 27 #2: STH-SOPR + STH-Realized Price + aSOPR + Spot Taker eklendi.
+    Day 28 #2 (Faz 2): LTH-SOPR + BTC Liquidations + Korean Premium eklendi
+    (uzun vadeci dağıtım, tasfiye asimetrisi, Asia retail nabzı)."""
     results = await asyncio.gather(
         _fetch_exchange_netflow(),
         _fetch_whale_ratio(),
@@ -1166,12 +1304,16 @@ async def _build_btc_snapshot() -> dict:
         _fetch_sth_realized_price(),
         _fetch_asopr(),
         _fetch_spot_taker_ratio(),
+        _fetch_lth_sopr(),
+        _fetch_btc_liquidations(),
+        _fetch_korean_premium(),
     )
     (
         netflow, whale_ratio, miner_outflow, miner_reserve,
         stablecoin_inflow, funding_rates, open_interest, sopr, cb_premium,
         mvrv, nupl, mpi, puell, leverage_ratio, realized_price, hash_rate,
         sth_sopr, sth_realized_price, asopr, spot_taker,
+        lth_sopr, btc_liquidations, korean_premium,
     ) = results
     return {
         "symbol": "BTC",
@@ -1195,6 +1337,9 @@ async def _build_btc_snapshot() -> dict:
         "sth_realized_price": sth_realized_price,
         "asopr": asopr,
         "spot_taker": spot_taker,
+        "lth_sopr": lth_sopr,
+        "btc_liquidations": btc_liquidations,
+        "korean_premium": korean_premium,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "_snapshot_full": True,
     }
