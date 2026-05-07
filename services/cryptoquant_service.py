@@ -46,6 +46,20 @@ _TTL_MINER = timedelta(hours=12)
 _TTL_FUNDING = timedelta(minutes=30)
 _TTL_CYCLE = timedelta(hours=12)
 
+# Concurrency limit — Pro plan ~10 req/s. Snapshot 20 fetcher'ı tek seferde
+# atınca yarısı 429 yiyordu → 10 sinyal eksik snapshot 4 saat cache'e
+# yapışıyordu. 5 paralel slot rate-limit'in altında kalır, ~4 sn'de tamamlanır.
+_FETCH_SEMA: Optional[asyncio.Semaphore] = None
+
+
+def _get_sema() -> asyncio.Semaphore:
+    """Lazy-init: Semaphore must be created in a running event loop on older
+    Python versions; this runs at first fetcher call, not import time."""
+    global _FETCH_SEMA
+    if _FETCH_SEMA is None:
+        _FETCH_SEMA = asyncio.Semaphore(5)
+    return _FETCH_SEMA
+
 
 def _is_configured() -> bool:
     return bool(_api_key())
@@ -53,32 +67,37 @@ def _is_configured() -> bool:
 
 async def _cq_get(path: str, params: dict, _retry: int = 2) -> Optional[dict]:
     """Single CryptoQuant API GET call. Returns parsed JSON or None on error.
-    429 (rate limit) durumunda 5sn bekleyip 1 kez retry yapar."""
+    429 (rate limit) durumunda 5sn bekleyip 1 kez retry yapar.
+
+    Tüm çağrılar `_get_sema()` üzerinden serileştirilir → en fazla 5 paralel
+    istek; bu sayede 20-fetcher'lık snapshot build'i CryptoQuant Pro'nun
+    rate-limit'ini aşmıyor."""
     key = _api_key()
     if not key:
         return None
     url = f"{_BASE_URL}{path}"
     headers = {"Authorization": f"Bearer {key}"}
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                url, headers=headers, params=params,
-                timeout=aiohttp.ClientTimeout(total=12),
-            ) as resp:
-                if resp.status == 429:
-                    if _retry > 0:
-                        # Exponential backoff: ilk retry 8s, ikinci 15s
-                        wait = 8.0 if _retry == 2 else 15.0
-                        logger.warning(f"CryptoQuant 429 @ {path} — retry {_retry} in {wait}s")
-                        await asyncio.sleep(wait)
-                        return await _cq_get(path, params, _retry=_retry - 1)
-                    logger.warning(f"CryptoQuant rate limit (final): {path}")
-                    return None
-                if resp.status != 200:
-                    body = await resp.text()
-                    logger.warning(f"CryptoQuant {resp.status} @ {path}: {body[:200]}")
-                    return None
-                return await resp.json()
+        async with _get_sema():
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url, headers=headers, params=params,
+                    timeout=aiohttp.ClientTimeout(total=12),
+                ) as resp:
+                    if resp.status == 429:
+                        if _retry > 0:
+                            # Exponential backoff: ilk retry 8s, ikinci 15s
+                            wait = 8.0 if _retry == 2 else 15.0
+                            logger.warning(f"CryptoQuant 429 @ {path} — retry {_retry} in {wait}s")
+                            await asyncio.sleep(wait)
+                            return await _cq_get(path, params, _retry=_retry - 1)
+                        logger.warning(f"CryptoQuant rate limit (final): {path}")
+                        return None
+                    if resp.status != 200:
+                        body = await resp.text()
+                        logger.warning(f"CryptoQuant {resp.status} @ {path}: {body[:200]}")
+                        return None
+                    return await resp.json()
     except Exception as e:
         logger.error(f"CryptoQuant request error {path}: {e}")
         return None
@@ -134,6 +153,37 @@ async def _cache_get(metric_key: str, symbol: str, window: str) -> Optional[dict
     except Exception as e:
         logger.warning(f"Cache get error {metric_key}: {e}")
     return None
+
+
+async def _fetch_cached(
+    metric_key: str,
+    symbol: str,
+    ttl: timedelta,
+    fetcher,
+) -> Optional[dict]:
+    """Per-metric cache fallback wrapper.
+
+    1) Fresh fetch dener — başarılıysa cache'e yazıp döner.
+    2) Fetch None dönerse (429/timeout/silent fail) son geçerli cache'e
+       fallback yapar; cache de yoksa None döner.
+
+    Bu sayede tek bir 429 burst snapshot'ı asla 4 saat boyunca poisonlamaz —
+    eksik fetcher önceki başarılı değeriyle hayatta kalır."""
+    try:
+        result = await fetcher()
+    except Exception as e:
+        logger.warning(f"CQ fetcher exception {metric_key}/{symbol}: {e}")
+        result = None
+
+    if result is not None:
+        await _cache_set(metric_key, symbol, "day", result, ttl)
+        return result
+
+    # Fresh fetch fail → fallback to cached
+    cached = await _cache_get(metric_key, symbol, "day")
+    if cached:
+        logger.info(f"CQ cache fallback: {metric_key}/{symbol}")
+    return cached
 
 
 # ── Metric fetchers ────────────────────────────────────────────────────────────
@@ -631,6 +681,27 @@ def _interpret_signals(snapshot: dict) -> dict:
             "label_tr": label,
         }
 
+    # Miner outflow — 7 günlük ortalamaya göre günlük miner outflow.
+    # Eşik üstünde = madenci borsalara yüklü transfer (satış baskısı uyarısı).
+    mo = snapshot.get("miner_outflow")
+    if mo:
+        latest = float(mo.get("outflow_total", 0))
+        avg7 = float(mo.get("avg_7d", 0)) or 1
+        deviation = (latest - avg7) / avg7 if avg7 else 0
+        if deviation > 0.5:
+            sig, label = "BEARISH", "🔴 Madenci Yüklü Satış"
+        elif deviation > 0.15:
+            sig, label = "NEUTRAL", "🟡 Hafif Madenci Akışı"
+        elif deviation < -0.30:
+            sig, label = "BULLISH", "💎 Madenci Tutuyor"
+        else:
+            sig, label = "NEUTRAL", "🟡 Normal Madenci Akışı"
+        signals["miner_outflow"] = {
+            "value_str": f"{latest:,.0f} BTC ({deviation*100:+.0f}% vs 7G ort)",
+            "signal": sig,
+            "label_tr": label,
+        }
+
     # Stablecoin inflow
     si = snapshot.get("stablecoin_inflow")
     if si:
@@ -1065,6 +1136,7 @@ def _interpret_signals(snapshot: dict) -> dict:
         "stablecoin_inflow":    15,
         "leverage_ratio":       15,
         "funding_rates":        13,
+        "miner_outflow":        12,  # madenci borsa transferi (satış baskısı)
         "nupl":                 12,
         "sopr":                 10,
         "korean_premium":        8,  # Upbit retail FOMO/kapitülasyon
@@ -1169,31 +1241,35 @@ def _interpret_signals(snapshot: dict) -> dict:
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 async def _build_btc_snapshot() -> dict:
-    """20 paralel BTC metrik fetch — Pro plan'ın tamamı.
+    """20 BTC metrik fetch — Pro plan'ın tamamı, semaphore(5) ile sıralı.
     Day 28 #2 (Faz 2): SOPR Ratio (LTH/STH kohort dengesi) + BTC Liquidations
     + Korean Premium eklendi. Day 27'de eklenmiş ancak Pro tier'da 404 dönen
-    raw STH-SOPR / aSOPR / STH-Realized Price fetcher'ları kaldırıldı."""
+    raw STH-SOPR / aSOPR / STH-Realized Price fetcher'ları kaldırıldı.
+
+    Day 28 #7: Her fetcher `_fetch_cached` ile sarmalandı — fresh fetch
+    başarısızsa son geçerli cache'e fallback. Tek 429 burst snapshot'ı
+    artık degrade etmez."""
     results = await asyncio.gather(
-        _fetch_exchange_netflow(),
-        _fetch_whale_ratio(),
-        _fetch_miner_outflow(),
-        _fetch_miner_reserve(),
-        _fetch_stablecoin_inflow(),
-        _fetch_funding_rates(),
-        _fetch_open_interest(),
-        _fetch_sopr(),
-        _fetch_coinbase_premium(),
-        _fetch_mvrv(),
-        _fetch_nupl(),
-        _fetch_mpi(),
-        _fetch_puell_multiple(),
-        _fetch_leverage_ratio(),
-        _fetch_realized_price(),
-        _fetch_hash_rate(),
-        _fetch_spot_taker_ratio(),
-        _fetch_sopr_ratio(),
-        _fetch_btc_liquidations(),
-        _fetch_korean_premium(),
+        _fetch_cached("exchange_netflow",  "BTC", _TTL_EXCHANGE_FLOW, _fetch_exchange_netflow),
+        _fetch_cached("whale_ratio",       "BTC", _TTL_EXCHANGE_FLOW, _fetch_whale_ratio),
+        _fetch_cached("miner_outflow",     "BTC", _TTL_MINER,         _fetch_miner_outflow),
+        _fetch_cached("miner_reserve",     "BTC", _TTL_MINER,         _fetch_miner_reserve),
+        _fetch_cached("stablecoin_inflow", "BTC", _TTL_EXCHANGE_FLOW, _fetch_stablecoin_inflow),
+        _fetch_cached("funding_rates",     "BTC", _TTL_FUNDING,       _fetch_funding_rates),
+        _fetch_cached("open_interest",     "BTC", _TTL_FUNDING,       _fetch_open_interest),
+        _fetch_cached("sopr",              "BTC", _TTL_CYCLE,         _fetch_sopr),
+        _fetch_cached("coinbase_premium",  "BTC", _TTL_FUNDING,       _fetch_coinbase_premium),
+        _fetch_cached("mvrv",              "BTC", _TTL_CYCLE,         _fetch_mvrv),
+        _fetch_cached("nupl",              "BTC", _TTL_CYCLE,         _fetch_nupl),
+        _fetch_cached("mpi",               "BTC", _TTL_CYCLE,         _fetch_mpi),
+        _fetch_cached("puell",             "BTC", _TTL_CYCLE,         _fetch_puell_multiple),
+        _fetch_cached("leverage_ratio",    "BTC", _TTL_FUNDING,       _fetch_leverage_ratio),
+        _fetch_cached("realized_price",    "BTC", _TTL_CYCLE,         _fetch_realized_price),
+        _fetch_cached("hash_rate",         "BTC", _TTL_CYCLE,         _fetch_hash_rate),
+        _fetch_cached("spot_taker",        "BTC", _TTL_FUNDING,       _fetch_spot_taker_ratio),
+        _fetch_cached("sopr_ratio",        "BTC", _TTL_CYCLE,         _fetch_sopr_ratio),
+        _fetch_cached("btc_liquidations",  "BTC", _TTL_FUNDING,       _fetch_btc_liquidations),
+        _fetch_cached("korean_premium",    "BTC", _TTL_FUNDING,       _fetch_korean_premium),
     )
     (
         netflow, whale_ratio, miner_outflow, miner_reserve,
@@ -1230,15 +1306,16 @@ async def _build_btc_snapshot() -> dict:
 
 async def _build_eth_snapshot() -> dict:
     """ETH snapshot — Pro plan'da 7 sinyal aktif. PoS olduğu için BTC'nin
-    miner/MVRV/SOPR'u yok, ama funding + coinbase premium çalışıyor."""
+    miner/MVRV/SOPR'u yok, ama funding + coinbase premium çalışıyor.
+    Day 28 #7: per-metric cache fallback aktif."""
     results = await asyncio.gather(
-        _fetch_eth_netflow(),
-        _fetch_eth_exchange_supply_ratio(),
-        _fetch_eth_leverage_ratio(),
-        _fetch_eth_open_interest(),
-        _fetch_eth_active_addresses(),
-        _fetch_eth_funding_rates(),
-        _fetch_eth_coinbase_premium(),
+        _fetch_cached("exchange_netflow",     "ETH", _TTL_EXCHANGE_FLOW, _fetch_eth_netflow),
+        _fetch_cached("eth_supply_ratio",     "ETH", _TTL_EXCHANGE_FLOW, _fetch_eth_exchange_supply_ratio),
+        _fetch_cached("leverage_ratio",       "ETH", _TTL_FUNDING,       _fetch_eth_leverage_ratio),
+        _fetch_cached("open_interest",        "ETH", _TTL_FUNDING,       _fetch_eth_open_interest),
+        _fetch_cached("eth_active_addresses", "ETH", _TTL_CYCLE,         _fetch_eth_active_addresses),
+        _fetch_cached("funding_rates",        "ETH", _TTL_FUNDING,       _fetch_eth_funding_rates),
+        _fetch_cached("coinbase_premium",     "ETH", _TTL_FUNDING,       _fetch_eth_coinbase_premium),
     )
     netflow, supply_ratio, leverage, oi, active_addr, funding, cb_premium = results
     return {
@@ -1282,7 +1359,18 @@ async def get_onchain_snapshot(symbol: str = "BTC") -> dict:
     interpreted = _interpret_signals(raw)
     snapshot = {**raw, **interpreted}
 
-    await _cache_set("snapshot", symbol, "day", snapshot, _TTL_EXCHANGE_FLOW)
+    # Cache poison guard — degrade snapshot'ı 4 saat boyunca yapışmasın.
+    # Beklenen sinyal sayısı: BTC=20, ETH=7, XRP=8. Eşik = beklenenin %80'i.
+    EXPECTED = {"BTC": 20, "ETH": 7, "XRP": 8}
+    expected = EXPECTED.get(symbol, 1)
+    actual = len(snapshot.get("signals", {}))
+    if actual >= int(expected * 0.8):
+        await _cache_set("snapshot", symbol, "day", snapshot, _TTL_EXCHANGE_FLOW)
+    else:
+        logger.warning(
+            f"CQ snapshot degrade — {symbol} {actual}/{expected} sinyal, "
+            f"cache yazılmadı (mevcut cache korunuyor)."
+        )
     return snapshot
 
 
@@ -1576,16 +1664,17 @@ async def _fetch_xrp_tx_count() -> Optional[dict]:
 
 async def _build_xrp_snapshot() -> dict:
     """XRP full snapshot — 8 sinyal (derivatives + network).
-    BTC seviyesinde Axiom Skoru üretir."""
+    BTC seviyesinde Axiom Skoru üretir.
+    Day 28 #7: per-metric cache fallback aktif."""
     results = await asyncio.gather(
-        _fetch_xrp_funding_rates(),
-        _fetch_xrp_open_interest(),
-        _fetch_xrp_liquidations(),
-        _fetch_xrp_taker_buy_sell(),
-        _fetch_xrp_leverage_ratio(),
-        _fetch_xrp_supply_ratio(),
-        _fetch_xrp_nvt(),
-        _fetch_xrp_tx_count(),
+        _fetch_cached("funding_rates",       "XRP", _TTL_FUNDING,       _fetch_xrp_funding_rates),
+        _fetch_cached("open_interest",       "XRP", _TTL_FUNDING,       _fetch_xrp_open_interest),
+        _fetch_cached("xrp_liquidations",    "XRP", _TTL_FUNDING,       _fetch_xrp_liquidations),
+        _fetch_cached("xrp_taker_buy_sell",  "XRP", _TTL_FUNDING,       _fetch_xrp_taker_buy_sell),
+        _fetch_cached("leverage_ratio",      "XRP", _TTL_FUNDING,       _fetch_xrp_leverage_ratio),
+        _fetch_cached("xrp_supply_ratio",    "XRP", _TTL_EXCHANGE_FLOW, _fetch_xrp_supply_ratio),
+        _fetch_cached("xrp_nvt",             "XRP", _TTL_CYCLE,         _fetch_xrp_nvt),
+        _fetch_cached("xrp_tx_count",        "XRP", _TTL_CYCLE,         _fetch_xrp_tx_count),
     )
     funding, oi, liq, taker, leverage, supply_ratio, nvt, tx_count = results
     return {
