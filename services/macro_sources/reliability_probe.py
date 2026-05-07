@@ -64,6 +64,13 @@ SOURCE_INTERVAL: dict[str, timedelta] = {
     "fred_housing_starts": timedelta(minutes=60),
     "fred_gdp": timedelta(minutes=60),
     "kalshi_fed": timedelta(minutes=60),
+    # Day 28 part 3 — Türkiye TCMB EVDS, hepsi aylık → 60dk yeterli
+    "tcmb_policy_rate":   timedelta(minutes=60),
+    "tcmb_tufe":          timedelta(minutes=60),
+    "tcmb_core_b":        timedelta(minutes=60),
+    "tcmb_ufe":           timedelta(minutes=60),
+    "tcmb_unemployment":  timedelta(minutes=60),
+    "tcmb_current_acct":  timedelta(minutes=60),
 }
 
 # All FRED sources we probe in one batched call. Order is stable for
@@ -107,7 +114,19 @@ _STATES: dict[str, _SourceState] = {
     "fred_housing_starts": _SourceState(name="fred_housing_starts"),
     "fred_gdp": _SourceState(name="fred_gdp"),
     "kalshi_fed": _SourceState(name="kalshi_fed"),
+    # Day 28 part 3 — TCMB EVDS sources
+    "tcmb_policy_rate":   _SourceState(name="tcmb_policy_rate"),
+    "tcmb_tufe":          _SourceState(name="tcmb_tufe"),
+    "tcmb_core_b":        _SourceState(name="tcmb_core_b"),
+    "tcmb_ufe":           _SourceState(name="tcmb_ufe"),
+    "tcmb_unemployment":  _SourceState(name="tcmb_unemployment"),
+    "tcmb_current_acct":  _SourceState(name="tcmb_current_acct"),
 }
+
+_TCMB_SOURCES = (
+    "tcmb_policy_rate", "tcmb_tufe", "tcmb_core_b",
+    "tcmb_ufe", "tcmb_unemployment", "tcmb_current_acct",
+)
 
 
 async def _probe_fed_rss() -> dict:
@@ -191,6 +210,70 @@ async def _probe_fred_all(due_sources: tuple[str, ...] = _FRED_SOURCES) -> list[
     return rows
 
 
+async def _probe_tcmb_all(due_sources: tuple[str, ...] = _TCMB_SOURCES) -> list[dict]:
+    """TCMB EVDS probes — paralel olmayan, sırayla. Anahtar yoksa graceful skip
+    (tek warning loglanır, downstream'e error mesajı gider, narrative tetiklenmez)."""
+    from services.macro_sources.tcmb_evds import (
+        SERIES as TCMB_SERIES,
+        fetch_tcmb_series,
+        _is_configured as tcmb_configured,
+    )
+    from services.macro_sources.release_detect import record_tcmb_observation
+
+    if not tcmb_configured():
+        # Tek warning sızdır — her tickte spamlanmasın diye state üzerinden
+        # gate'lenmiyor (zaten 60dk cadence). İlk gate'lenmemiş probe'ta
+        # error_msg kalıcı olur, kullanıcı log üzerinden görür.
+        return [
+            {
+                "source": s,
+                "success": False,
+                "latency_ms": 0,
+                "http_status": None,
+                "not_modified": False,
+                "payload_bytes": 0,
+                "events_extracted": None,
+                "error_msg": "TCMB_EVDS_API_KEY missing",
+            }
+            for s in due_sources
+        ]
+
+    rows: list[dict] = []
+    for source_name in due_sources:
+        series_code = TCMB_SERIES.get(source_name)
+        if not series_code:
+            continue
+        t0 = time.monotonic()
+        per = await fetch_tcmb_series(series_code)
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        success = bool(per and per.success)
+        rows.append({
+            "source": source_name,
+            "success": success,
+            "latency_ms": latency_ms,
+            "http_status": per.http_status if per else None,
+            "not_modified": False,
+            "payload_bytes": per.payload_bytes if per else 0,
+            "events_extracted": per.data_points if success else None,
+            "error_msg": per.error if per else None,
+        })
+        # Persist newest observation; older ones aren't backfilled (TCMB aylık
+        # cadence + brifing zamanlama TR data için zaten ileri planda).
+        if success and per and per.observations:
+            try:
+                ok = await record_tcmb_observation(
+                    source=source_name,
+                    latest_date=per.latest_date,
+                    latest_value=per.latest_value,
+                    prior_value=per.prior_value,
+                )
+                if ok:
+                    logger.info(f"tcmb {source_name}: new release recorded")
+            except Exception as e:
+                logger.error(f"tcmb release persist failed for {source_name}: {e}")
+    return rows
+
+
 async def _probe_kalshi() -> dict:
     """One Kalshi KXFED snapshot — also writes the distribution to macro_market_pricing."""
     t0 = time.monotonic()
@@ -260,6 +343,16 @@ async def probe_once(*, force: bool = False) -> dict:
     fred_due = tuple(s for s in _FRED_SOURCES if force or _is_due(s, now))
     if fred_due:
         rows = await _probe_fred_all(fred_due)
+        for row in rows:
+            await _record(row)
+            _log_row(row)
+            _mark(row["source"], now)
+            fired.append(row)
+
+    # Day 28 part 3 — TCMB EVDS rotation (key yoksa graceful skip)
+    tcmb_due = tuple(s for s in _TCMB_SOURCES if force or _is_due(s, now))
+    if tcmb_due:
+        rows = await _probe_tcmb_all(tcmb_due)
         for row in rows:
             await _record(row)
             _log_row(row)

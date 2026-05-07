@@ -28,6 +28,7 @@ from core.logger import get_logger
 from services.macro_sources.fed_rss import ReleaseEvent
 from services.macro_sources.fred_api import SERIES as FRED_SERIES
 from services.macro_sources.kalshi_fed import KalshiSnapshot
+from services.macro_sources.tcmb_evds import SERIES as TCMB_SERIES
 
 logger = get_logger("macro.release_detect")
 
@@ -47,6 +48,16 @@ _FRED_EVENT_TYPE = {
     "fred_ppi": "PPI",
     "fred_housing_starts": "HOUSING_STARTS",
     "fred_gdp": "GDP",
+}
+
+# Day 28 part 3 — Türkiye TCMB EVDS source name → event_type label mapping.
+_TCMB_EVENT_TYPE = {
+    "tcmb_policy_rate":  "TR_POLICY_RATE",
+    "tcmb_tufe":         "TR_TUFE",
+    "tcmb_core_b":       "TR_CORE_TUFE",
+    "tcmb_ufe":          "TR_UFE",
+    "tcmb_unemployment": "TR_UNEMPLOYMENT",
+    "tcmb_current_acct": "TR_CURRENT_ACCT",
 }
 
 
@@ -126,6 +137,58 @@ async def record_fred_observation(
         return False
     except Exception as e:
         logger.error(f"record_fred_observation failed for {event_id}: {e}")
+        return False
+
+
+async def record_tcmb_observation(
+    source: str,
+    latest_date: Optional[str],
+    latest_value: Optional[str],
+    prior_value: Optional[str],
+    *,
+    trigger_narrative: bool = True,
+) -> bool:
+    """Day 28 part 3 — TCMB EVDS observation kayıt. macro_releases.country='TR'.
+    event_id format `tcmb:TR_TUFE:2026-04-01` deterministik."""
+    event_type = _TCMB_EVENT_TYPE.get(source)
+    if not event_type or not latest_date:
+        return False
+    series_code = TCMB_SERIES.get(source, "")
+    event_id = f"tcmb:{event_type}:{latest_date}"
+    released_at = _parse_obs_date(latest_date)
+    if released_at is None:
+        return False
+    actual = _decimal_or_none(latest_value)
+    prior = _decimal_or_none(prior_value)
+    if actual is None:
+        return False
+    sql = text("""
+        INSERT INTO macro_releases
+        (event_id, event_type, country, released_at, prior_value, actual_value, source, source_url)
+        VALUES
+        (:event_id, :event_type, 'TR', :released_at, :prior_value, :actual_value, 'tcmb_evds', :source_url)
+        ON CONFLICT (event_id) DO NOTHING
+        RETURNING event_id
+    """)
+    params = {
+        "event_id": event_id,
+        "event_type": event_type,
+        "released_at": released_at,
+        "prior_value": prior,
+        "actual_value": actual,
+        "source_url": f"https://evds2.tcmb.gov.tr/index.php?/evds/serieMarket/collapse_2/5949/DataGroup/turkish/bie_{series_code.replace('.', '')}/",
+    }
+    try:
+        async with engine.begin() as conn:
+            row = (await conn.execute(sql, params)).first()
+        if row is not None:
+            logger.info(f"new TR release: {event_id} actual={actual} prior={prior}")
+            if trigger_narrative:
+                _trigger_narrative(event_id)
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"record_tcmb_observation failed for {event_id}: {e}")
         return False
 
 

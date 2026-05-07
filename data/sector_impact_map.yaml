@@ -147,3 +147,79 @@ GDP_COOL:
   mechanism: "Soft growth reignites recession risk; defensives + duration lead"
   sectors_positive: [tech, growth_stocks, utilities, consumer_staples, real_estate]
   sectors_negative: [financials, industrials, energy]
+
+# === Türkiye (TCMB EVDS) ===
+# BIST sektörleri için: bist_banka, bist_sanayi, bist_holding, bist_perakende,
+# bist_inşaat, bist_iletişim, bist_metal, bist_kimya, bist_gida (sector_bist_tickers.yaml)
+
+TR_TUFE_HOT:
+  description: "TÜFE manşet enflasyon yükselişi; TCMB sıkılaşma baskısı"
+  mechanism: "Reel faiz baskısı banka marjlarını korur, faiz duyarlı sektörlere baskı"
+  sectors_positive: [bist_banka, financials]
+  sectors_negative: [bist_inşaat, bist_perakende, real_estate, growth_stocks]
+
+TR_TUFE_COOL:
+  description: "TÜFE soğuyor; TCMB faiz indirimi alanı genişliyor"
+  mechanism: "Cut bekleyişi BIST'i destekler, USDTRY üzerindeki sertleşme baskısı azalır"
+  sectors_positive: [bist_inşaat, bist_perakende, bist_holding, growth_stocks]
+  sectors_negative: [bist_banka]
+
+TR_CORE_TUFE_HOT:
+  description: "Çekirdek-B yapışkan enflasyon; cut beklentisi geri çekiliyor"
+  mechanism: "TCMB için en önemli ölçü; yükselişte sıkı para politikası uzar"
+  sectors_positive: [bist_banka, financials]
+  sectors_negative: [bist_inşaat, bist_perakende, real_estate]
+
+TR_CORE_TUFE_COOL:
+  description: "Çekirdek-B soğuyor; politika gevşemesi için yeşil ışık"
+  mechanism: "TCMB cut adımları öne çekilebilir; risk varlıkları rahatlar"
+  sectors_positive: [bist_inşaat, bist_perakende, bist_holding]
+  sectors_negative: [bist_banka]
+
+TR_UFE_HOT:
+  description: "Yİ-ÜFE yükselişi; pipeline enflasyon baskısı"
+  mechanism: "ÜFE TÜFE öncülüdür; üretici maliyeti tüketiciye yansıyacak"
+  sectors_negative: [bist_inşaat, bist_perakende]
+  sectors_positive: [bist_metal, bist_kimya, energy]
+
+TR_UFE_COOL:
+  description: "Yİ-ÜFE soğuyor; pipeline rahatlama"
+  mechanism: "Üretici fiyatlarındaki düşüş TÜFE'ye haftalar sonra geçecek"
+  sectors_positive: [bist_inşaat, bist_perakende]
+  sectors_negative: [bist_metal, bist_kimya]
+
+TR_HAWKISH:
+  description: "TCMB politika faizi yükseldi; sıkılaşma sürüyor"
+  mechanism: "TL pozitif, faiz duyarlı sektörler baskı altında, banka marjı korunur"
+  sectors_positive: [bist_banka, financials]
+  sectors_negative: [bist_inşaat, bist_perakende, real_estate, bist_holding]
+
+TR_DOVISH:
+  description: "TCMB faiz indirdi; gevşeme döngüsü"
+  mechanism: "BIST geneli pozitif, USDTRY yukarı baskı, banka marjı daralır"
+  sectors_positive: [bist_inşaat, bist_perakende, bist_holding, growth_stocks]
+  sectors_negative: [bist_banka]
+
+TR_UNRATE_UP:
+  description: "İşsizlik yükseldi; iç talep zayıflıyor"
+  mechanism: "TCMB cut baskısı artar; ama harcama kanalı daralır"
+  sectors_positive: [bist_banka]
+  sectors_negative: [bist_perakende, bist_inşaat, consumer_discretionary]
+
+TR_UNRATE_DOWN:
+  description: "İşsizlik düştü; iç talep güçlü"
+  mechanism: "Tüketim güçlü ama enflasyon baskısı sürüyor"
+  sectors_positive: [bist_perakende, bist_holding, consumer_discretionary]
+  sectors_negative: [bist_banka]
+
+TR_CURACCT_BETTER:
+  description: "Cari açık daraldı / fazla verdi; TL için pozitif"
+  mechanism: "Dış finansman ihtiyacı azaldı; USDTRY üzerinde rahatlama"
+  sectors_positive: [bist_holding, bist_inşaat, bist_perakende]
+  sectors_negative: [bist_metal]  # ihracatçılar zayıf TL'den fayda görüyordu
+
+TR_CURACCT_WORSE:
+  description: "Cari açık derinleşti; dış finansman ihtiyacı arttı"
+  mechanism: "USDTRY yukarı baskı; ihracatçılar pozitif, ithalat-bağımlı negatif"
+  sectors_positive: [bist_metal, bist_kimya]
+  sectors_negative: [bist_inşaat, bist_perakende, bist_iletişim]

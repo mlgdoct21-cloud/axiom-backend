@@ -187,6 +187,21 @@ def _categorise(release: dict) -> Optional[str]:
         return "HOUSING_HOT" if delta_pct >= 0 else "HOUSING_COOL"
     if et == "GDP":
         return "GDP_HOT" if delta_pct >= 0 else "GDP_COOL"
+    # Day 28 part 3 — TR (TCMB EVDS) event types
+    if et == "TR_TUFE":
+        return "TR_TUFE_HOT" if delta_pct >= 0 else "TR_TUFE_COOL"
+    if et == "TR_CORE_TUFE":
+        return "TR_CORE_TUFE_HOT" if delta_pct >= 0 else "TR_CORE_TUFE_COOL"
+    if et == "TR_UFE":
+        return "TR_UFE_HOT" if delta_pct >= 0 else "TR_UFE_COOL"
+    if et == "TR_POLICY_RATE":
+        # TCMB faiz değişimi: + = hawkish (sıkılaşma), - = dovish (gevşeme)
+        return "TR_HAWKISH" if delta_pct > 0 else ("TR_DOVISH" if delta_pct < 0 else None)
+    if et == "TR_UNEMPLOYMENT":
+        return "TR_UNRATE_UP" if delta_pct >= 0 else "TR_UNRATE_DOWN"
+    if et == "TR_CURRENT_ACCT":
+        # Pozitif değişim = açık daralıyor (TL pozitif), negatif = açık derinleşiyor
+        return "TR_CURACCT_BETTER" if delta_pct >= 0 else "TR_CURACCT_WORSE"
     return None
 
 
@@ -258,6 +273,33 @@ def _format_clause(payload: dict) -> str:
         return (
             "Format: \"GDP önceki çeyrek <prior>% iken bu çeyrek <actual>%.\" "
             "Ardından bir cümlede yön + mekanizma (≤30 kelime). Büyüme yönü Fed kararını etkiler."
+        )
+    # Day 28 part 3 — Türkiye event_type formatları
+    if et in ("TR_TUFE", "TR_CORE_TUFE") and payload.get("mom_pct") is not None:
+        label = "Çekirdek TÜFE-B" if et == "TR_CORE_TUFE" else "TÜFE Genel"
+        return (
+            f"Format: \"{label} aylık değişim <mom_pct>% (önceki endeks <prior>, mevcut <actual>).\" "
+            "Ardından bir cümlede yön + mekanizma (≤30 kelime, BIST/USDTRY etkisini hatırlat)."
+        )
+    if et == "TR_UFE" and payload.get("mom_pct") is not None:
+        return (
+            "Format: \"Yİ-ÜFE aylık <mom_pct>% (önceki <prior>, mevcut <actual>).\" "
+            "ÜFE TÜFE öncülüdür; yükseliş enflasyon baskısı, düşüş kademeli rahatlama anlamına gelir."
+        )
+    if et == "TR_POLICY_RATE" and payload.get("actual") is not None and payload.get("prior") is not None:
+        return (
+            "Format: \"TCMB politika faizi önceki ay <prior>% iken bu ay <actual>%.\" "
+            "Yön: artış = sıkılaşma/TL pozitif, düşüş = gevşeme/borsa pozitif."
+        )
+    if et == "TR_UNEMPLOYMENT" and payload.get("actual") is not None and payload.get("prior") is not None:
+        return (
+            "Format: \"İşsizlik önceki ay %<prior> iken bu ay %<actual>.\" "
+            "Yön + mekanizma (≤30 kelime)."
+        )
+    if et == "TR_CURRENT_ACCT" and payload.get("actual") is not None and payload.get("prior") is not None:
+        return (
+            "Format: \"Cari açık önceki ay <prior> milyon $ iken bu ay <actual> milyon $.\" "
+            "Pozitif değer = fazla, negatif = açık. TL ve BIST etkisini hatırlat (≤30 kelime)."
         )
     # FOMC without before/after (or unknown shape): factual + mechanism only.
     return (
@@ -398,6 +440,8 @@ async def generate_narrative(event_id: str) -> NarrativeResult:
         "CPI", "PCE", "CORE_CPI", "CORE_PCE",
         # Day 28 part 3 — RETAIL_SALES ve PPI için de MoM% hesaplanır
         "RETAIL_SALES", "PPI",
+        # TR — TÜFE/Çekirdek/ÜFE aylık endeks tabanlı, MoM% gerek
+        "TR_TUFE", "TR_CORE_TUFE", "TR_UFE",
     ):
         payload["mom_pct"] = mom_pct
     if before:
