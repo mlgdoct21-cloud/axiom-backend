@@ -643,10 +643,318 @@ async def _get_user_tier(user_id) -> str:
         return "free"
 
 
+# ── /onchain hikâye anlatıcı katmanı ──────────────────────────────────────────
+# Power-user için 14+ metrik dökümü değil, normal kullanıcı için "büyük resim
+# + 3 ana hareket + içeri çekecek hook" formatı. Tam tablo [📊 Tam Tablo]
+# butonunun arkasında saklı (callback ile mesajı edit ediyoruz, yeni mesaj
+# açmıyoruz — ekran kirlenmesin).
+
+# Her metrik için "neden önemli" tek-cümle taglines (BULLISH / BEARISH).
+# label_tr veriyi söyler, why_tr ne anlama geldiğini söyler. Bu mapping
+# presentation katmanı — contract'lara karşı doğrulamaya gerek yok.
+_ONCHAIN_WHY: dict[str, dict[str, str]] = {
+    "exchange_netflow": {
+        "BULLISH": "Borsadan çıkış = satış baskısı düşüyor",
+        "BEARISH": "Borsaya akış = satış için pozisyonlanılıyor",
+    },
+    "whale_ratio": {
+        "BULLISH": "Büyük cüzdanlar borsada sessiz",
+        "BEARISH": "Balinalar borsada aktif — hareketli sular",
+    },
+    "mpi": {
+        "BULLISH": "Madenciler eldeki BTC'yi tutuyor → arz kıtlığı",
+        "BEARISH": "Madenci satış baskısı eşik üstünde",
+    },
+    "stablecoin_inflow": {
+        "BULLISH": "Stablecoin alıma hazırlanıyor",
+        "BEARISH": "Stablecoin çıkıyor — alıcı çekiliyor",
+    },
+    "coinbase_premium": {
+        "BULLISH": "Coinbase tezgahında alış baskın",
+        "BEARISH": "Coinbase tezgahında satış baskın",
+    },
+    "funding_rates": {
+        "BULLISH": "Türev piyasası sakin, sağlıklı yükseliş",
+        "BEARISH": "Funding aşırı — sıkışma riski",
+    },
+    "leverage_ratio": {
+        "BULLISH": "Kaldıraç düşük, sağlam zemin",
+        "BEARISH": "Kaldıraç yüksek — likidasyon riski",
+    },
+    "mvrv": {
+        "BULLISH": "Tarihsel olarak ucuz bölgede",
+        "BEARISH": "Tarihsel olarak pahalı — kâr realizasyonu yakın",
+    },
+    "nupl": {
+        "BULLISH": "Henüz aşırı kâr/öfori yok",
+        "BEARISH": "Aşırı kâr bölgesi — dikkat",
+    },
+    "sopr": {
+        "BULLISH": "Eldeki coinler tutuluyor",
+        "BEARISH": "Kâr realizasyonu başlıyor",
+    },
+    "sopr_ratio": {
+        "BULLISH": "Uzun vadeli sahipler satmıyor",
+        "BEARISH": "Uzun vadeli sahipler kâr alıyor",
+    },
+    "puell": {
+        "BULLISH": "Madenci geliri baskı altında — dipler yakın",
+        "BEARISH": "Madenci geliri zirve — satış baskısı yakın",
+    },
+    "btc_liquidations": {
+        "BULLISH": "Likidasyonlar düştü — sağlıklı seyir",
+        "BEARISH": "Likidasyon spike — yüksek volatilite",
+    },
+    "korean_premium": {
+        "BULLISH": "Asya talebi güçlü",
+        "BEARISH": "Asya tarafında satış baskısı",
+    },
+    "spot_taker": {
+        "BULLISH": "Spot alıcı agresif",
+        "BEARISH": "Spot satıcı agresif",
+    },
+    "hash_rate": {
+        "BULLISH": "Ağ güvenliği güçleniyor",
+        "BEARISH": "Hash düşüyor — madenci stresi",
+    },
+    "active_addresses": {
+        "BULLISH": "Aktif adres artıyor — kullanım yükseliyor",
+        "BEARISH": "Aktif adres düşüyor — ilgi azalıyor",
+    },
+    "realized_price": {
+        "BULLISH": "Piyasa ortalama maliyetin üstünde",
+        "BEARISH": "Piyasa ortalama maliyetin altında",
+    },
+}
+
+# Her metriğe görsel emoji (hikâye satırlarının başında).
+_ONCHAIN_EMOJI: dict[str, str] = {
+    "exchange_netflow": "📥",
+    "whale_ratio": "🐋",
+    "mpi": "⛏️",
+    "stablecoin_inflow": "💵",
+    "coinbase_premium": "🇺🇸",
+    "funding_rates": "⚡",
+    "leverage_ratio": "🌡️",
+    "mvrv": "📐",
+    "nupl": "🧠",
+    "sopr": "📊",
+    "sopr_ratio": "📊",
+    "puell": "💎",
+    "btc_liquidations": "💥",
+    "korean_premium": "🇰🇷",
+    "spot_taker": "🛒",
+    "hash_rate": "⛓️",
+    "active_addresses": "👥",
+    "realized_price": "🏷️",
+}
+
+
+def _pick_hero_stories(snap: dict, count: int = 3) -> list[dict]:
+    """Score breakdown'dan en güçlü 3 sinyali (mutlak katkı) dön. Karışık
+    durumda çoğunluk yönünden seç + 1 karşı görüşü göster ('izleme
+    listesinde' bölümü için ayrı çağrıda)."""
+    breakdown = snap.get("score_breakdown") or []
+    sigs = snap.get("signals") or {}
+    if not breakdown:
+        return []
+
+    # Her breakdown item → enrich with why_tr from sigs
+    enriched = []
+    for b in breakdown:
+        if b.get("contribution", 0) == 0:
+            continue
+        sig = b.get("signal", "NEUTRAL")
+        why = _ONCHAIN_WHY.get(b["metric"], {}).get(sig, "")
+        emoji = _ONCHAIN_EMOJI.get(b["metric"], "•")
+        enriched.append({
+            **b,
+            "why_tr": why,
+            "emoji": emoji,
+        })
+
+    # Mutlak katkıya göre sırala, en güçlü 3'ü al
+    enriched.sort(key=lambda x: -abs(x["contribution"]))
+    return enriched[:count]
+
+
+def _pick_watchlist_signal(snap: dict, hero_metrics: set[str]) -> Optional[dict]:
+    """Hero stories'in dışında kalan EN güçlü karşı sinyal — 'baskı' satırı.
+    Yoksa None. (Hero hepsi BULLISH ise bir BEARISH bul, tersi de geçerli.)"""
+    breakdown = snap.get("score_breakdown") or []
+    if not breakdown:
+        return None
+    hero_signals = {b["signal"] for b in breakdown if b["metric"] in hero_metrics}
+    # Karşı yön tek değer ise (hepsi BULLISH veya hepsi BEARISH) ters tarafı bul
+    if hero_signals == {"BULLISH"}:
+        target = "BEARISH"
+    elif hero_signals == {"BEARISH"}:
+        target = "BULLISH"
+    else:
+        return None  # zaten karışık, watchlist'e gerek yok
+    candidates = [b for b in breakdown if b["signal"] == target and b["metric"] not in hero_metrics]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: -abs(x["contribution"]))
+    b = candidates[0]
+    return {
+        **b,
+        "why_tr": _ONCHAIN_WHY.get(b["metric"], {}).get(target, ""),
+        "emoji": _ONCHAIN_EMOJI.get(b["metric"], "•"),
+    }
+
+
+def _build_onchain_keyboard(symbol: str) -> dict:
+    """[📊 Tam Tablo] (callback) + [💎 Dashboard'da Tam Analiz →] (URL)."""
+    dashboard_url = os.getenv("DASHBOARD_URL", "https://axiom-dashboard-sigma.vercel.app").rstrip("/")
+    deep_link = f"{dashboard_url}/dashboard/crypto?symbol={symbol}&tab=onchain&ref=tg_onchain"
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "📊 Tam Tablo", "callback_data": f"onchain_full:{symbol}"},
+            ],
+            [
+                {"text": "💎 Dashboard'da Tam AXIOM Analizi →", "url": deep_link},
+            ],
+        ]
+    }
+
+
+def _render_onchain_brief(snap: dict, symbol: str) -> str:
+    """Yeni hikâye-anlatıcı format: verdict + 3 büyük hareket + watchlist
+    + dashboard upsell. Telegram HTML."""
+    overall_tr = snap.get("overall_tr", "❓ Veri Yok")
+    axiom_score = snap.get("axiom_score")
+    score_zone_tr = snap.get("score_zone_tr", "")
+    score_summary = snap.get("score_summary", "")
+
+    # Header — verdict + score
+    if axiom_score is not None:
+        header = (
+            f"🔗 <b>{symbol} ON-CHAIN — {score_zone_tr}</b>\n"
+            f"<b>AXIOM Skor: {axiom_score}/100</b>  ·  {overall_tr}\n"
+        )
+    else:
+        header = f"🔗 <b>{symbol} ON-CHAIN — {overall_tr}</b>\n"
+
+    # Tek-cümle özet
+    summary_line = f"<i>{html.escape(score_summary)}</i>\n" if score_summary else ""
+
+    # 3 hero story
+    heroes = _pick_hero_stories(snap, count=3)
+    if not heroes:
+        stories_block = "<i>Şu an aktif sinyal yok — piyasa nötr.</i>\n"
+        hero_metrics = set()
+    else:
+        lines = ["", "<b>📈 SAHNEDEKİ 3 BÜYÜK HAREKET</b>"]
+        for h in heroes:
+            lines.append(
+                f"\n{h['emoji']} <b>{html.escape(h['label_tr'])}</b>"
+                f"  <code>{html.escape(str(h['value_str']))}</code>"
+            )
+            if h.get("why_tr"):
+                lines.append(f"   └ <i>{html.escape(h['why_tr'])}</i>")
+        stories_block = "\n".join(lines) + "\n"
+        hero_metrics = {h["metric"] for h in heroes}
+
+    # Watchlist (karşı sinyal)
+    watch = _pick_watchlist_signal(snap, hero_metrics)
+    watch_block = ""
+    if watch:
+        watch_block = (
+            f"\n👀 <b>İzleme listesinde</b>\n"
+            f"{watch['emoji']} {html.escape(watch['label_tr'])}"
+            f"  <code>{html.escape(str(watch['value_str']))}</code>\n"
+            f"   └ <i>{html.escape(watch.get('why_tr', ''))}</i>\n"
+        )
+
+    # Upsell — dashboard'a çek
+    upsell = (
+        f"\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"💎 <b>Bu mesajda göremedikleriniz:</b>\n"
+        f"  • Storyteller AI: bu sinyaller bir araya gelince ne anlama geliyor?\n"
+        f"  • Döngü Pusulası: bull/bear döngüsünün neresindeyiz?\n"
+        f"  • Balina Radarı + Risk Isı haritası\n"
+        f"  • Tarihsel benzerlik: bu seviye en son ne zaman görüldü?\n\n"
+        f"<i>Veri: CryptoQuant Pro · 20+ metrik · canlı</i>"
+    )
+
+    return header + summary_line + stories_block + watch_block + upsell
+
+
+def _render_onchain_full_table(snap: dict, symbol: str) -> str:
+    """Eski format — power-user için 14+ metriklik tam döküm. [📊 Tam Tablo]
+    callback'inde mesajı bununla edit ediyoruz."""
+    sigs = snap.get("signals", {})
+    overall_tr = snap.get("overall_tr", "❓ Veri Yok")
+    axiom_score = snap.get("axiom_score")
+    score_zone_tr = snap.get("score_zone_tr", "")
+    score_summary = snap.get("score_summary", "")
+
+    def _line(emoji: str, label: str, key: str) -> str:
+        s = sigs.get(key)
+        if not s:
+            return ""
+        return f"{emoji} <b>{label}:</b> <code>{html.escape(str(s['value_str']))}</code>  {html.escape(s['label_tr'])}\n"
+
+    score_line = ""
+    if axiom_score is not None:
+        score_line = (
+            f"\n🎯 <b>AXIOM SKOR: {axiom_score}/100</b>  {score_zone_tr}\n"
+            f"<i>{html.escape(score_summary)}</i>\n"
+        )
+
+    body = (
+        f"🔗 <b>{symbol} — TAM TABLO</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━{score_line}\n"
+        f"<b>Akıllı Para:</b>\n"
+        f"{_line('📥', 'Borsa Akışı', 'exchange_netflow')}"
+        f"{_line('🐋', 'Balina Oranı', 'whale_ratio')}"
+        f"{_line('⛏️', 'MPI (Madenci)', 'mpi')}"
+        f"{_line('💵', 'Stablecoin Net', 'stablecoin_inflow')}"
+        f"\n<b>Döngü Pusulası:</b>\n"
+        f"{_line('📐', 'MVRV', 'mvrv')}"
+        f"{_line('🧠', 'NUPL', 'nupl')}"
+        f"{_line('📊', 'SOPR', 'sopr')}"
+        f"{_line('📊', 'SOPR Ratio', 'sopr_ratio')}"
+        f"{_line('💎', 'Puell', 'puell')}"
+    )
+
+    fr = sigs.get("funding_rates")
+    oi = sigs.get("open_interest")
+    lev = sigs.get("leverage_ratio")
+    cb = sigs.get("coinbase_premium")
+    liq = sigs.get("btc_liquidations")
+    kp = sigs.get("korean_premium")
+    st = sigs.get("spot_taker")
+    if fr or oi or lev or cb or liq or kp or st:
+        body += "\n<b>Risk & Türev:</b>\n"
+        if lev: body += _line('🌡️', 'Kaldıraç', 'leverage_ratio')
+        if fr:  body += _line('⚡', 'Funding (24s)', 'funding_rates')
+        if oi:  body += f"  📈 Open Interest: <code>{html.escape(str(oi['value_str']))}</code>\n"
+        if cb:  body += _line('🇺🇸', 'Coinbase Primi', 'coinbase_premium')
+        if liq: body += _line('💥', 'Likidasyonlar', 'btc_liquidations')
+        if kp:  body += _line('🇰🇷', 'Kore Primi', 'korean_premium')
+        if st:  body += _line('🛒', 'Spot Taker', 'spot_taker')
+
+    rp = sigs.get("realized_price")
+    hr = sigs.get("hash_rate")
+    if rp or hr:
+        body += "\n<b>Bağlam:</b>\n"
+        if rp: body += f"  🏷️ Piyasa Ortalama Maliyet: <code>{html.escape(str(rp['value_str']))}</code>\n"
+        if hr: body += _line('⛓️', 'Hash Rate', 'hash_rate')
+
+    body += (
+        f"\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>Genel:</b> {overall_tr}\n"
+        f"<i>Veri: CryptoQuant Pro · /onchain ile özet görünüme dön</i>"
+    )
+    return body
+
+
 async def process_onchain_command(chat_id, user_id, symbol: str = "BTC"):
-    """On-chain snapshot from CryptoQuant — exchange flows, whale ratio,
-    miner pressure, derivatives sentiment. Premium-only (free users get
-    a teaser pointing to /upgrade)."""
+    """On-chain snapshot — verdict + 3 hero stories + dashboard upsell.
+    Free users: stronger pull-in teaser (örnek output preview + /upgrade)."""
     cooldown = _check_rate_limit(user_id, "/onchain", _LIGHT_CMD_COOLDOWN_SEC)
     if cooldown:
         send_telegram_message(chat_id, f"⏳ Lütfen {cooldown}s bekle ve tekrar dene.")
@@ -659,12 +967,20 @@ async def process_onchain_command(chat_id, user_id, symbol: str = "BTC"):
 
     tier = await _get_user_tier(user_id)
     if tier == "free":
+        # Daha güçlü teaser — somut örnekle merak uyandır, sadece "PREMIUM"
+        # demek yerine ne kaçırdıklarını göster.
         send_telegram_message(
             chat_id,
-            "🔒 <b>On-chain sinyaller PREMIUM özelliktir.</b>\n\n"
-            "Borsa akışları, balina oranı, madenci baskısı, türev piyasa "
-            "duygusu — büyük oyuncuların ne yaptığını gerçek zamanlı görün.\n\n"
-            "Yükseltmek için: /upgrade"
+            "🔒 <b>On-chain sinyaller PREMIUM özelliktir</b>\n\n"
+            "Şu an piyasada büyük oyuncular ne yapıyor?\n"
+            "  🐋 Balinalar dün borsadan kaç BTC çekti?\n"
+            "  🇺🇸 ETF'lere ne kadar para girdi?\n"
+            "  ⛏️ Madenciler satıyor mu, tutuyor mu?\n"
+            "  ⚡ Türev tarafı sıkışıyor mu?\n\n"
+            "AXIOM Skor 0-100 — tek bakışta karar.\n"
+            "Dashboard'da tam analiz: storyteller AI, döngü pusulası, "
+            "balina radarı, tarihsel benzerlik.\n\n"
+            "💎 Yükseltmek için: /upgrade  (sadece $1.99/ay)"
         )
         return
 
@@ -673,7 +989,7 @@ async def process_onchain_command(chat_id, user_id, symbol: str = "BTC"):
         send_telegram_message(chat_id, "⚠️ On-chain entegrasyonu şu an aktif değil. Daha sonra tekrar deneyin.")
         return
 
-    send_telegram_message(chat_id, f"🔗 <b>{symbol}</b> on-chain snapshot hazırlanıyor...")
+    send_telegram_message(chat_id, f"🔗 <b>{symbol}</b> on-chain hazırlanıyor...")
 
     try:
         snap = await get_onchain_snapshot(symbol)
@@ -686,73 +1002,43 @@ async def process_onchain_command(chat_id, user_id, symbol: str = "BTC"):
         send_telegram_message(chat_id, "⚠️ Şu an on-chain veriye ulaşılamıyor (CryptoQuant). Birkaç dakika sonra tekrar deneyin.")
         return
 
-    sigs = snap.get("signals", {})
-    overall_tr = snap.get("overall_tr", "❓ Veri Yok")
-    axiom_score = snap.get("axiom_score")
-    score_zone_tr = snap.get("score_zone_tr", "")
-    score_summary = snap.get("score_summary", "")
+    body = _render_onchain_brief(snap, symbol)
+    keyboard = _build_onchain_keyboard(symbol)
+    send_message_with_keyboard(chat_id, body, keyboard)
 
-    def _line(emoji: str, label: str, key: str) -> str:
-        s = sigs.get(key)
-        if not s:
-            return ""
-        return f"{emoji} <b>{label}:</b> <code>{s['value_str']}</code>  {s['label_tr']}\n"
 
-    score_line = ""
-    if axiom_score is not None:
-        score_line = (
-            f"\n🎯 <b>AXIOM SKOR: {axiom_score}/100</b>  {score_zone_tr}\n"
-            f"<i>{score_summary}</i>\n"
-        )
+async def process_onchain_full_callback(callback_query_id, chat_id, message_id, user_id, symbol: str):
+    """[📊 Tam Tablo] callback — mesajı 14+ metriklik tam dökümle edit eder.
+    Yeni mesaj göndermiyor, mevcut baloncuğu güncelliyor (ekran kirlenmesin)."""
+    answer_callback_query(callback_query_id)
 
-    body = (
-        f"🔗 <b>ON-CHAIN SNAPSHOT — {symbol}</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━{score_line}\n"
-        f"<b>Akıllı Para:</b>\n"
-        f"{_line('📥', 'Borsa Akışı', 'exchange_netflow')}"
-        f"{_line('🐋', 'Balina Oranı', 'whale_ratio')}"
-        f"{_line('⛏️', 'MPI (Madenci)', 'mpi')}"
-        f"{_line('💵', 'USDT Girişi', 'stablecoin_inflow')}"
-        f"\n<b>Döngü Pusulası:</b>\n"
-        f"{_line('📐', 'MVRV', 'mvrv')}"
-        f"{_line('🧠', 'NUPL', 'nupl')}"
-        f"{_line('📊', 'SOPR', 'sopr')}"
-        f"{_line('💎', 'Puell', 'puell')}"
-    )
+    tier = await _get_user_tier(user_id)
+    if tier == "free":
+        # Edge case — free user butona bastı (mesaj orijinal olarak premium'a
+        # gönderildi ama tier sonradan değişmiş olabilir).
+        return
 
-    # Risk + derivatives line (compact)
-    fr = sigs.get("funding_rates")
-    oi = sigs.get("open_interest")
-    lev = sigs.get("leverage_ratio")
-    cb = sigs.get("coinbase_premium")
-    if fr or oi or lev or cb:
-        body += "\n<b>Risk & Türev:</b>\n"
-        if lev:
-            body += f"{_line('🌡️', 'Kaldıraç', 'leverage_ratio')}"
-        if fr:
-            body += f"{_line('⚡', 'Funding (24s)', 'funding_rates')}"
-        if oi:
-            body += f"  📈 Open Interest: <code>{oi['value_str']}</code>\n"
-        if cb:
-            body += f"{_line('🇺🇸', 'Coinbase Primi', 'coinbase_premium')}"
+    symbol = (symbol or "BTC").strip().upper() or "BTC"
+    if not _is_valid_symbol(symbol):
+        return
 
-    # Realized price + hashrate (passive context)
-    rp = sigs.get("realized_price")
-    hr = sigs.get("hash_rate")
-    if rp or hr:
-        body += "\n<b>Bağlam:</b>\n"
-        if rp:
-            body += f"  📐 Piyasa Ortalama Maliyet: <code>{rp['value_str']}</code>\n"
-        if hr:
-            body += f"{_line('⛓️', 'Hash Rate', 'hash_rate')}"
+    from services.cryptoquant_service import get_onchain_snapshot, _is_configured
+    if not _is_configured():
+        return
 
-    body += (
-        f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"<b>Genel Sinyal:</b> {overall_tr}\n\n"
-        f"<i>Veri kaynağı: CryptoQuant on-chain</i>"
-    )
+    try:
+        snap = await get_onchain_snapshot(symbol)
+    except Exception as e:
+        logger.error(f"on-chain full callback fetch error: {e}")
+        return
 
-    send_telegram_message(chat_id, body)
+    if not snap or snap.get("error"):
+        return
+
+    body = _render_onchain_full_table(snap, symbol)
+    # Tam tablo'dan brief'e dönüş için aynı keyboard'u koru
+    keyboard = _build_onchain_keyboard(symbol)
+    edit_message_text_with_keyboard(chat_id, message_id, body, keyboard)
 
 
 async def process_login_command(chat_id, user_id, username):
@@ -1047,6 +1333,9 @@ async def start_telegram_bot():
                             elif cq_data.startswith("macro_hist:") or cq_data.startswith("macro_stocks:"):
                                 from services.macro_callback import handle_callback
                                 await handle_callback(cq_id, cq_chat_id, cq_data, user_id=cq_user_id)
+                            elif cq_data.startswith("onchain_full:"):
+                                sym = cq_data[len("onchain_full:"):].strip() or "BTC"
+                                await process_onchain_full_callback(cq_id, cq_chat_id, cq_message_id, cq_user_id, sym)
 
                     except Exception as cmd_err:
                         logger.error(f"Komut işleme hatası (update_id={update.get('update_id')}): {cmd_err}")
