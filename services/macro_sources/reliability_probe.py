@@ -65,11 +65,15 @@ SOURCE_INTERVAL: dict[str, timedelta] = {
     "fred_gdp": timedelta(minutes=60),
     "kalshi_fed": timedelta(minutes=60),
     # Day 28 part 3 — Türkiye TCMB EVDS, hepsi aylık → 60dk yeterli
-    "tcmb_tufe":          timedelta(minutes=60),
-    "tcmb_core_b":        timedelta(minutes=60),
-    "tcmb_ufe":           timedelta(minutes=60),
-    "tcmb_policy_rate":   timedelta(minutes=60),
-    "tcmb_unemployment":  timedelta(minutes=60),
+    # Day 28 part 4 — TCMB EVDS interval 60dk → 15dk (kullanıcı anlık yayın
+    # istedi; 6 series × 4/saat × 24 = 576 req/gün, EVDS quota'sının çok altında).
+    # Yeni veri yayınlandığı andan max 15dk içinde Telegram'a düşer.
+    "tcmb_tufe":          timedelta(minutes=15),
+    "tcmb_core_b":        timedelta(minutes=15),
+    "tcmb_ufe":           timedelta(minutes=15),
+    "tcmb_policy_rate":   timedelta(minutes=15),
+    "tcmb_unemployment":  timedelta(minutes=15),
+    "tcmb_current_acct":  timedelta(minutes=15),
 }
 
 # All FRED sources we probe in one batched call. Order is stable for
@@ -119,11 +123,12 @@ _STATES: dict[str, _SourceState] = {
     "tcmb_ufe":           _SourceState(name="tcmb_ufe"),
     "tcmb_policy_rate":   _SourceState(name="tcmb_policy_rate"),
     "tcmb_unemployment":  _SourceState(name="tcmb_unemployment"),
+    "tcmb_current_acct":  _SourceState(name="tcmb_current_acct"),
 }
 
 _TCMB_SOURCES = (
     "tcmb_tufe", "tcmb_core_b", "tcmb_ufe",
-    "tcmb_policy_rate", "tcmb_unemployment",
+    "tcmb_policy_rate", "tcmb_unemployment", "tcmb_current_acct",
 )
 
 

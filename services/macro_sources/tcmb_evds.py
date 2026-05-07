@@ -48,8 +48,7 @@ SERIES = {
     "tcmb_ufe":           "TP.FE.OKTG01",        # Yİ-ÜFE üretici fiyatları, aylık ✅
     "tcmb_policy_rate":   "TP.BISPOLFAIZ.TUR",   # TR politika faizi (BIS), aylık ✅
     "tcmb_unemployment":  "TP.TIG08",            # İşsizlik oranı (mevsimsellikten arındırılmış), aylık ✅
-    # TODO Day 28 part 4 — kullanıcının portaldan bulup vereceği:
-    # "tcmb_current_acct":  "TP.???",  # Cari işlemler dengesi
+    "tcmb_current_acct":  "TP.IMFCA.TUR",        # Cari işlemler dengesi (USD), çeyreklik ✅
 }
 
 _USER_AGENT = "AXIOM-Macro/0.1 (+https://axiom-dashboard-sigma.vercel.app)"
@@ -80,25 +79,31 @@ def _is_configured() -> bool:
 
 
 def _norm_date(raw: str) -> Optional[str]:
-    """EVDS3 aylık format: 'YYYY-M' veya 'YYYY-MM' → 'YYYY-MM-01' ISO.
-    Eski format 'MM-YYYY' da destekleniyor (geriye uyumluluk)."""
+    """EVDS3 tarih formatları:
+      - Aylık: 'YYYY-M' veya 'YYYY-MM' → 'YYYY-MM-01'
+      - Çeyreklik: 'YYYY-QN' (N=1..4) → çeyreğin başlangıç ayı '-01'
+      - Günlük: 'YYYY-MM-DD' aynen
+      - Eski 'MM-YYYY' formatı geriye uyumluluk için destekleniyor.
+    """
     if not raw:
         return None
     raw = raw.strip()
     try:
-        # EVDS3 yeni format: 'YYYY-M' (örn '2026-1') veya 'YYYY-MM'
         if "-" in raw:
             parts = raw.split("-")
             if len(parts) == 2:
                 a, b = parts
+                # Çeyreklik: 'YYYY-Q1'..'YYYY-Q4'
+                if len(a) == 4 and a.isdigit() and b.upper().startswith("Q"):
+                    q = int(b[1:])
+                    if 1 <= q <= 4:
+                        month = (q - 1) * 3 + 1  # Q1→01, Q2→04, Q3→07, Q4→10
+                        return f"{a}-{month:02d}-01"
                 if len(a) == 4 and a.isdigit():
-                    # 'YYYY-M' veya 'YYYY-MM'
                     return f"{a}-{b.zfill(2)}-01"
                 if len(b) == 4 and b.isdigit():
-                    # eski 'MM-YYYY' formatı
                     return f"{b}-{a.zfill(2)}-01"
             if len(raw) == 10 and raw[4] == "-":
-                # 'YYYY-MM-DD'
                 return raw
     except Exception:
         return None

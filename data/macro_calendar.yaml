@@ -37,3 +37,125 @@ events:
     label: "FOMC December 2026 Decision"
     scheduled_at: 2026-12-16T19:00:00Z   # post-DST, +1 UTC
     sources_to_accelerate: [fed_rss, kalshi_fed]
+
+  # --- 2026 TÜİK + TCMB takvimi (Day 28 part 4 — anlık yayın için) ---
+  # Tüm tarihler resmi kaynaklardan: tuik.gov.tr/Bulten/Endeks ve tcmb.gov.tr.
+  # Yayın saatleri: TÜİK 10:00 TR (07:00 UTC), TCMB PPK 14:00 TR (11:00 UTC).
+  # ±30dk içinde tcmb_* probe'ları hot polling 30s'ye düşer.
+
+  # TÜFE (TÜİK aylık, ayın 3'ü 10:00 TR)
+  - event_type: TR_TUFE
+    label: "Mayıs 2026 TÜFE"
+    scheduled_at: 2026-06-03T07:00:00Z
+    sources_to_accelerate: [tcmb_tufe, tcmb_core_b, tcmb_ufe]
+  - event_type: TR_TUFE
+    label: "Haziran 2026 TÜFE"
+    scheduled_at: 2026-07-03T07:00:00Z
+    sources_to_accelerate: [tcmb_tufe, tcmb_core_b, tcmb_ufe]
+  - event_type: TR_TUFE
+    label: "Temmuz 2026 TÜFE"
+    scheduled_at: 2026-08-04T07:00:00Z
+    sources_to_accelerate: [tcmb_tufe, tcmb_core_b, tcmb_ufe]
+  - event_type: TR_TUFE
+    label: "Ağustos 2026 TÜFE"
+    scheduled_at: 2026-09-03T07:00:00Z
+    sources_to_accelerate: [tcmb_tufe, tcmb_core_b, tcmb_ufe]
+  - event_type: TR_TUFE
+    label: "Eylül 2026 TÜFE"
+    scheduled_at: 2026-10-05T07:00:00Z
+    sources_to_accelerate: [tcmb_tufe, tcmb_core_b, tcmb_ufe]
+  - event_type: TR_TUFE
+    label: "Ekim 2026 TÜFE"
+    scheduled_at: 2026-11-03T07:00:00Z
+    sources_to_accelerate: [tcmb_tufe, tcmb_core_b, tcmb_ufe]
+  - event_type: TR_TUFE
+    label: "Kasım 2026 TÜFE"
+    scheduled_at: 2026-12-03T07:00:00Z
+    sources_to_accelerate: [tcmb_tufe, tcmb_core_b, tcmb_ufe]
+
+  # İşsizlik (TÜİK aylık, ayın 10'u 10:00 TR — 2 ay önceki dönem)
+  - event_type: TR_UNEMPLOYMENT
+    label: "Nisan 2026 İşgücü"
+    scheduled_at: 2026-06-10T07:00:00Z
+    sources_to_accelerate: [tcmb_unemployment]
+  - event_type: TR_UNEMPLOYMENT
+    label: "Mayıs 2026 İşgücü"
+    scheduled_at: 2026-07-10T07:00:00Z
+    sources_to_accelerate: [tcmb_unemployment]
+  - event_type: TR_UNEMPLOYMENT
+    label: "Haziran 2026 İşgücü"
+    scheduled_at: 2026-08-10T07:00:00Z
+    sources_to_accelerate: [tcmb_unemployment]
+  - event_type: TR_UNEMPLOYMENT
+    label: "Temmuz 2026 İşgücü"
+    scheduled_at: 2026-09-10T07:00:00Z
+    sources_to_accelerate: [tcmb_unemployment]
+  - event_type: TR_UNEMPLOYMENT
+    label: "Ağustos 2026 İşgücü"
+    scheduled_at: 2026-10-12T07:00:00Z
+    sources_to_accelerate: [tcmb_unemployment]
+  - event_type: TR_UNEMPLOYMENT
+    label: "Eylül 2026 İşgücü"
+    scheduled_at: 2026-11-10T07:00:00Z
+    sources_to_accelerate: [tcmb_unemployment]
+  - event_type: TR_UNEMPLOYMENT
+    label: "Ekim 2026 İşgücü"
+    scheduled_at: 2026-12-10T07:00:00Z
+    sources_to_accelerate: [tcmb_unemployment]
+
+  # TCMB PPK (Para Politikası Kurulu) faiz kararı — 2026 takvim:
+  # tcmb.gov.tr/wps/wcm/connect/tr/tcmb+tr/main+menu/duyurular/duyurular-yillari/2026
+  - event_type: TR_POLICY_RATE
+    label: "TCMB PPK Mayıs 2026"
+    scheduled_at: 2026-05-22T11:00:00Z
+    sources_to_accelerate: [tcmb_policy_rate]
+  - event_type: TR_POLICY_RATE
+    label: "TCMB PPK Haziran 2026"
+    scheduled_at: 2026-06-19T11:00:00Z
+    sources_to_accelerate: [tcmb_policy_rate]
+  - event_type: TR_POLICY_RATE
+    label: "TCMB PPK Temmuz 2026"
+    scheduled_at: 2026-07-24T11:00:00Z
+    sources_to_accelerate: [tcmb_policy_rate]
+  - event_type: TR_POLICY_RATE
+    label: "TCMB PPK Eylül 2026"
+    scheduled_at: 2026-09-11T11:00:00Z
+    sources_to_accelerate: [tcmb_policy_rate]
+  - event_type: TR_POLICY_RATE
+    label: "TCMB PPK Ekim 2026"
+    scheduled_at: 2026-10-23T11:00:00Z
+    sources_to_accelerate: [tcmb_policy_rate]
+  - event_type: TR_POLICY_RATE
+    label: "TCMB PPK Aralık 2026"
+    scheduled_at: 2026-12-18T11:00:00Z
+    sources_to_accelerate: [tcmb_policy_rate]
+
+  # Cari işlemler (TCMB aylık ödemeler dengesi raporu, ayın 10-15'i 10:00 TR)
+  - event_type: TR_CURRENT_ACCT
+    label: "Nisan 2026 Cari İşlemler"
+    scheduled_at: 2026-06-11T07:00:00Z
+    sources_to_accelerate: [tcmb_current_acct]
+  - event_type: TR_CURRENT_ACCT
+    label: "Mayıs 2026 Cari İşlemler"
+    scheduled_at: 2026-07-13T07:00:00Z
+    sources_to_accelerate: [tcmb_current_acct]
+  - event_type: TR_CURRENT_ACCT
+    label: "Haziran 2026 Cari İşlemler"
+    scheduled_at: 2026-08-11T07:00:00Z
+    sources_to_accelerate: [tcmb_current_acct]
+  - event_type: TR_CURRENT_ACCT
+    label: "Temmuz 2026 Cari İşlemler"
+    scheduled_at: 2026-09-11T07:00:00Z
+    sources_to_accelerate: [tcmb_current_acct]
+  - event_type: TR_CURRENT_ACCT
+    label: "Ağustos 2026 Cari İşlemler"
+    scheduled_at: 2026-10-12T07:00:00Z
+    sources_to_accelerate: [tcmb_current_acct]
+  - event_type: TR_CURRENT_ACCT
+    label: "Eylül 2026 Cari İşlemler"
+    scheduled_at: 2026-11-11T07:00:00Z
+    sources_to_accelerate: [tcmb_current_acct]
+  - event_type: TR_CURRENT_ACCT
+    label: "Ekim 2026 Cari İşlemler"
+    scheduled_at: 2026-12-11T07:00:00Z
+    sources_to_accelerate: [tcmb_current_acct]
