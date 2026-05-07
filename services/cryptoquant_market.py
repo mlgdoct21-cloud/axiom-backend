@@ -116,17 +116,31 @@ async def _fetch_erc20_token(token: str) -> Optional[dict]:
     }
 
 
-async def get_erc20_radar() -> dict:
-    """9 ERC20 token için akıllı para haritası."""
+async def get_erc20_radar(cache_only: bool = True) -> dict:
+    """9 ERC20 token için akıllı para haritası.
+
+    Default cache-only: HTTP endpoint cache hit'te değer döner, miss'te
+    `loading=True` minimal payload (rate-limit'i korumak için canlı fetch
+    YAPMAZ). Background `refresh_market_metrics()` cache'i 6h'de bir tazeler.
+    """
     if not _is_configured():
         return {"error": "cryptoquant_not_configured"}
 
     cached = await _cache_get("erc20_radar", "all", "day")
     if cached:
         return cached
+    if cache_only:
+        return {
+            "tokens": [],
+            "aggregate_score_pct": None,
+            "aggregate_label_tr": "🟡 Veri Yükleniyor",
+            "loading": True,
+        }
 
     # Sequential to avoid rate-limit. Her token try/except ile sarılı —
     # tek bir token rate-limit'e takılırsa diğerleri devam etsin.
+    # 30s sleep — Pro plan rate-limit + her token'ın 3 endpoint çağırması
+    # birleşince agresif olabiliyor; günde 4 refresh için bu süre yeterli.
     results = []
     for cfg in _ERC20_TOKENS:
         try:
@@ -139,7 +153,7 @@ async def get_erc20_radar() -> dict:
                 })
         except Exception as e:
             logger.warning(f"ERC20 fetch failed for {cfg['token']}: {e}")
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(30.0)
 
     # Aggregate sinyal: STRONG_BULLISH=+2, BULLISH=+1, NEUTRAL=0, BEARISH=-1, STRONG_BEARISH=-2
     score_map = {"STRONG_BULLISH": 2, "BULLISH": 1, "NEUTRAL": 0, "BEARISH": -1, "STRONG_BEARISH": -2}
@@ -268,22 +282,35 @@ async def _fetch_btc_market_cap_proxy() -> float:
     return 80_000.0 * BTC_CIRCULATING_SUPPLY
 
 
-async def get_stablecoin_pulse() -> dict:
+async def get_stablecoin_pulse(cache_only: bool = True) -> dict:
     """Stablecoin akış nabzı + SSR proxy.
-    Yüksek inflow + düşük SSR = altcoin için yeşil ışık."""
+    Yüksek inflow + düşük SSR = altcoin için yeşil ışık.
+
+    Cache-only by default; canlı fetch sadece scheduler'dan
+    `cache_only=False` ile çağrılırsa yapılır."""
     if not _is_configured():
         return {"error": "cryptoquant_not_configured"}
 
     cached = await _cache_get("stablecoin_pulse", "all", "day")
     if cached:
         return cached
+    if cache_only:
+        return {
+            "tokens": [],
+            "totals": {"reserve_usd": 0, "netflow_1d": 0, "netflow_7d": 0, "inflow_1d": 0},
+            "ssr_proxy": None,
+            "ssr_label_tr": "🟡 Veri Yükleniyor",
+            "flow_signal": "LOADING",
+            "flow_label_tr": "🟡 Veri Yükleniyor",
+            "loading": True,
+        }
 
     results = []
     for cfg in _STABLECOINS:
         data = await _fetch_stablecoin_token(cfg["token"])
         if data:
             results.append({"symbol": cfg["symbol"], "name": cfg["name"], **data})
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(15.0)
 
     btc_mcap = await _fetch_btc_market_cap_proxy()
     # None değerleri filtrele — bazı fetch'ler rate-limit'e takılıp None
@@ -353,7 +380,7 @@ async def get_stablecoin_pulse() -> dict:
 
 # ── Alt Season Composite Score ─────────────────────────────────────────────
 
-async def get_altseason_score() -> dict:
+async def get_altseason_score(cache_only: bool = True) -> dict:
     """5 girdili composite alt sezon pusulası (0-100).
     Yüksek skor = altcoin için elverişli ortam.
 
@@ -363,6 +390,9 @@ async def get_altseason_score() -> dict:
       3. ERC20 aggregate netflow score (%20)
       4. XRP funding rate (%20) — altcoin türev iştahı
       5. BTC vs Stablecoin reserve dengesi (%15)
+
+    Cache-only by default. Scheduler `cache_only=False` ile çağırarak
+    pulse + radar + funding hepsini taze hesaplar.
     """
     if not _is_configured():
         return {"error": "cryptoquant_not_configured"}
@@ -370,10 +400,19 @@ async def get_altseason_score() -> dict:
     cached = await _cache_get("altseason_score", "all", "day")
     if cached:
         return cached
+    if cache_only:
+        return {
+            "altseason_score": None,
+            "zone": "LOADING",
+            "zone_tr": "🟡 Veri Yükleniyor",
+            "components": [],
+            "loading": True,
+        }
 
-    # Toplu veri çek
-    pulse = await get_stablecoin_pulse()
-    radar = await get_erc20_radar()
+    # Toplu veri çek — refresh path. cache_only=False forwarda ki
+    # alt fonksiyonlar da gerçekten fetch yapsın.
+    pulse = await get_stablecoin_pulse(cache_only=False)
+    radar = await get_erc20_radar(cache_only=False)
 
     # ETH + XRP funding
     from services.cryptoquant_service import (
@@ -511,7 +550,11 @@ async def get_altseason_score() -> dict:
 # ── Refresh helper (scheduler için) ────────────────────────────────────────
 
 async def refresh_market_metrics() -> None:
-    """All market-wide metrics force-refresh."""
+    """All market-wide metrics force-refresh.
+
+    Scheduler 6h'de bir çağırır. cache_only=False ile alt fonksiyonlar
+    gerçekten fetch yapar; aralarda 30s/15s sleep CryptoQuant rate-limit
+    için yeterli buffer."""
     logger.info("CryptoQuant Market: refreshing radar + pulse + altseason...")
     try:
         from sqlalchemy import text
@@ -522,10 +565,11 @@ async def refresh_market_metrics() -> None:
         """)
         async with engine.begin() as conn:
             await conn.execute(sql)
-        # Sequential — altseason depends on the other two
-        await get_erc20_radar()
-        await get_stablecoin_pulse()
-        await get_altseason_score()
+        # Sequential — altseason depends on the other two and re-uses their
+        # cached values when called second.
+        await get_erc20_radar(cache_only=False)
+        await get_stablecoin_pulse(cache_only=False)
+        await get_altseason_score(cache_only=False)
         logger.info("CryptoQuant Market: refresh complete")
     except Exception as e:
         logger.error(f"Market refresh error: {e}")
