@@ -42,9 +42,9 @@ OVERNIGHT_INDICES = {
         ("^STOXX50E", "STOXX 50", "🇪🇺"),
     ],
     "us_futures": [
-        ("ES=F", "S&P 500 Fut", "📈"),
-        ("NQ=F", "NASDAQ Fut", "📈"),
-        ("YM=F", "DOW Fut", "📈"),
+        ("^GSPC", "S&P 500", "🇺🇸"),
+        ("^IXIC", "NASDAQ", "🇺🇸"),
+        ("^DJI", "DOW JONES", "🇺🇸"),
     ],
 }
 
