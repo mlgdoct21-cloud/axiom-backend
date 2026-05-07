@@ -46,9 +46,9 @@ SERIES = {
     "tcmb_tufe":          "TP.FG.J0",            # TÜFE Genel Endeks, aylık ✅
     "tcmb_core_b":        "TP.FE.OKTG02",        # Çekirdek B, aylık ✅
     "tcmb_ufe":           "TP.FE.OKTG01",        # Yİ-ÜFE üretici fiyatları, aylık ✅
-    "tcmb_policy_rate":   "TP.BISPOLFAIZ.TUR",   # TR politika faizi (BIS Bankası verisi), aylık ✅
-    # TODO Day 28 part 4 — EVDS3'te kod doğrulaması bekleyen seriler:
-    # "tcmb_unemployment":  "TP.???",  # İşsizlik oranı
+    "tcmb_policy_rate":   "TP.BISPOLFAIZ.TUR",   # TR politika faizi (BIS), aylık ✅
+    "tcmb_unemployment":  "TP.TIG08",            # İşsizlik oranı (mevsimsellikten arındırılmış), aylık ✅
+    # TODO Day 28 part 4 — kullanıcının portaldan bulup vereceği:
     # "tcmb_current_acct":  "TP.???",  # Cari işlemler dengesi
 }
 

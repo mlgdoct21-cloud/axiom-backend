@@ -58,6 +58,7 @@ _TCMB_EVENT_TYPE = {
     "tcmb_core_b":       "TR_CORE_TUFE",
     "tcmb_ufe":          "TR_UFE",
     "tcmb_policy_rate":  "TR_POLICY_RATE",
+    "tcmb_unemployment": "TR_UNEMPLOYMENT",
 }
 
 

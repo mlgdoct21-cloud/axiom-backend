@@ -69,6 +69,7 @@ SOURCE_INTERVAL: dict[str, timedelta] = {
     "tcmb_core_b":        timedelta(minutes=60),
     "tcmb_ufe":           timedelta(minutes=60),
     "tcmb_policy_rate":   timedelta(minutes=60),
+    "tcmb_unemployment":  timedelta(minutes=60),
 }
 
 # All FRED sources we probe in one batched call. Order is stable for
@@ -117,9 +118,13 @@ _STATES: dict[str, _SourceState] = {
     "tcmb_core_b":        _SourceState(name="tcmb_core_b"),
     "tcmb_ufe":           _SourceState(name="tcmb_ufe"),
     "tcmb_policy_rate":   _SourceState(name="tcmb_policy_rate"),
+    "tcmb_unemployment":  _SourceState(name="tcmb_unemployment"),
 }
 
-_TCMB_SOURCES = ("tcmb_tufe", "tcmb_core_b", "tcmb_ufe", "tcmb_policy_rate")
+_TCMB_SOURCES = (
+    "tcmb_tufe", "tcmb_core_b", "tcmb_ufe",
+    "tcmb_policy_rate", "tcmb_unemployment",
+)
 
 
 async def _probe_fed_rss() -> dict:
