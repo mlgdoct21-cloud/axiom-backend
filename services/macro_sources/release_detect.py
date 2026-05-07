@@ -51,13 +51,12 @@ _FRED_EVENT_TYPE = {
 }
 
 # Day 28 part 3 — Türkiye TCMB EVDS source name → event_type label mapping.
+# 3 seri aktif (kod doğrulandı); diğer 3 (policy_rate/unemployment/current_acct)
+# EVDS3'te kod değişti, Day 28 part 4'te eklenecek.
 _TCMB_EVENT_TYPE = {
-    "tcmb_policy_rate":  "TR_POLICY_RATE",
-    "tcmb_tufe":         "TR_TUFE",
-    "tcmb_core_b":       "TR_CORE_TUFE",
-    "tcmb_ufe":          "TR_UFE",
-    "tcmb_unemployment": "TR_UNEMPLOYMENT",
-    "tcmb_current_acct": "TR_CURRENT_ACCT",
+    "tcmb_tufe":   "TR_TUFE",
+    "tcmb_core_b": "TR_CORE_TUFE",
+    "tcmb_ufe":    "TR_UFE",
 }
 
 

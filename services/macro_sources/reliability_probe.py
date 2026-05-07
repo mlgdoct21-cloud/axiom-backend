@@ -65,12 +65,9 @@ SOURCE_INTERVAL: dict[str, timedelta] = {
     "fred_gdp": timedelta(minutes=60),
     "kalshi_fed": timedelta(minutes=60),
     # Day 28 part 3 — Türkiye TCMB EVDS, hepsi aylık → 60dk yeterli
-    "tcmb_policy_rate":   timedelta(minutes=60),
     "tcmb_tufe":          timedelta(minutes=60),
     "tcmb_core_b":        timedelta(minutes=60),
     "tcmb_ufe":           timedelta(minutes=60),
-    "tcmb_unemployment":  timedelta(minutes=60),
-    "tcmb_current_acct":  timedelta(minutes=60),
 }
 
 # All FRED sources we probe in one batched call. Order is stable for
@@ -114,19 +111,13 @@ _STATES: dict[str, _SourceState] = {
     "fred_housing_starts": _SourceState(name="fred_housing_starts"),
     "fred_gdp": _SourceState(name="fred_gdp"),
     "kalshi_fed": _SourceState(name="kalshi_fed"),
-    # Day 28 part 3 — TCMB EVDS sources
-    "tcmb_policy_rate":   _SourceState(name="tcmb_policy_rate"),
+    # Day 28 part 3 — TCMB EVDS sources (3 aktif; kalan 3 kod EVDS3'te değişti)
     "tcmb_tufe":          _SourceState(name="tcmb_tufe"),
     "tcmb_core_b":        _SourceState(name="tcmb_core_b"),
     "tcmb_ufe":           _SourceState(name="tcmb_ufe"),
-    "tcmb_unemployment":  _SourceState(name="tcmb_unemployment"),
-    "tcmb_current_acct":  _SourceState(name="tcmb_current_acct"),
 }
 
-_TCMB_SOURCES = (
-    "tcmb_policy_rate", "tcmb_tufe", "tcmb_core_b",
-    "tcmb_ufe", "tcmb_unemployment", "tcmb_current_acct",
-)
+_TCMB_SOURCES = ("tcmb_tufe", "tcmb_core_b", "tcmb_ufe")
 
 
 async def _probe_fed_rss() -> dict:

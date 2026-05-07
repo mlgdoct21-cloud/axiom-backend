@@ -32,21 +32,24 @@ from core.logger import get_logger
 
 logger = get_logger("macro.tcmb_evds")
 
-EVDS_BASE_URL = "https://evds2.tcmb.gov.tr/service/evds"
+# EVDS3 base URL (2026-04 migration; eski evds2 → evds3.tcmb.gov.tr/igmevdsms-dis)
+# URL formatı eskisinden FARKLI:
+#   - params query yerine path'in içinde: /series=KOD&startDate=...&type=json
+#   - key query param DEĞİL, "key" header olarak gönderiliyor
+EVDS_BASE_URL = "https://evds3.tcmb.gov.tr/igmevdsms-dis"
 
-# Canonical TR series. Frequencies vary — TCMB returns monthly for most TÜFE
-# series, weekly for some, daily for FX. `frequency` query param is optional;
-# we default to monthly (5) which matches CPI/UNRATE/UNEMPLOYMENT cadence.
-#
-# Source codes verified manually against EVDS UI as of 2026-05; if a code
-# returns 0 rows the probe will log + degrade gracefully (no narrative fired).
+# Canonical TR series codes (2026-05-07 EVDS3 üzerinde live probe ile doğrulandı).
+# Aktif olarak çalışan 3 seri: TÜFE manşet + Çekirdek B + Yİ-ÜFE. Diğer 3 kod
+# (politika faizi, işsizlik, cari işlemler) EVDS3'te kod değişikliği gördü;
+# doğru sürümleri kullanıcıyla birlikte teyit edilecek.
 SERIES = {
-    "tcmb_policy_rate":   "TP.AB.A1.GERCEK",   # TCMB 1-week repo (Politika Faizi), aylık ortalama
-    "tcmb_tufe":          "TP.FG.J0",          # TÜFE Genel Endeks (manşet TR enflasyon), aylık
-    "tcmb_core_b":        "TP.FE.OKTG02",      # Çekirdek B (gıda+enerji+alkol+tütün hariç), aylık
-    "tcmb_ufe":           "TP.FE.OKTG01",      # Yİ-ÜFE (üretici fiyatları), aylık
-    "tcmb_unemployment":  "TP.HKFE01",         # İşsizlik oranı, aylık
-    "tcmb_current_acct":  "TP.ODEMGZS.ABFE",   # Cari işlemler dengesi (USD milyon), aylık
+    "tcmb_tufe":          "TP.FG.J0",          # TÜFE Genel Endeks (manşet TR enflasyon), aylık ✅
+    "tcmb_core_b":        "TP.FE.OKTG02",      # Çekirdek B (gıda+enerji+alkol+tütün hariç), aylık ✅
+    "tcmb_ufe":           "TP.FE.OKTG01",      # Yİ-ÜFE (üretici fiyatları), aylık ✅
+    # TODO Day 28 part 4 — EVDS3'te kod doğrulaması bekleyen seriler:
+    # "tcmb_policy_rate":   "TP.???",  # TCMB 1-haftalık repo
+    # "tcmb_unemployment":  "TP.???",  # İşsizlik oranı
+    # "tcmb_current_acct":  "TP.???",  # Cari işlemler dengesi
 }
 
 _USER_AGENT = "AXIOM-Macro/0.1 (+https://axiom-dashboard-sigma.vercel.app)"
@@ -77,17 +80,26 @@ def _is_configured() -> bool:
 
 
 def _norm_date(raw: str) -> Optional[str]:
-    """EVDS aylık format: 'MM-YYYY' → 'YYYY-MM-01' ISO. Veri yoksa None."""
+    """EVDS3 aylık format: 'YYYY-M' veya 'YYYY-MM' → 'YYYY-MM-01' ISO.
+    Eski format 'MM-YYYY' da destekleniyor (geriye uyumluluk)."""
     if not raw:
         return None
     raw = raw.strip()
-    # Format genelde MM-YYYY, bazen YYYY-MM-DD
     try:
-        if len(raw) == 7 and raw[2] == "-":
-            mm, yyyy = raw.split("-")
-            return f"{yyyy}-{mm.zfill(2)}-01"
-        if len(raw) == 10 and raw[4] == "-":
-            return raw
+        # EVDS3 yeni format: 'YYYY-M' (örn '2026-1') veya 'YYYY-MM'
+        if "-" in raw:
+            parts = raw.split("-")
+            if len(parts) == 2:
+                a, b = parts
+                if len(a) == 4 and a.isdigit():
+                    # 'YYYY-M' veya 'YYYY-MM'
+                    return f"{a}-{b.zfill(2)}-01"
+                if len(b) == 4 and b.isdigit():
+                    # eski 'MM-YYYY' formatı
+                    return f"{b}-{a.zfill(2)}-01"
+            if len(raw) == 10 and raw[4] == "-":
+                # 'YYYY-MM-DD'
+                return raw
     except Exception:
         return None
     return None
@@ -108,17 +120,20 @@ async def fetch_tcmb_series(series_code: str, *, lookback_months: int = 18) -> T
     # EVDS bekliyor: 'DD-MM-YYYY'
     fmt_date = lambda d: f"{d.day:02d}-{d.month:02d}-{d.year}"
 
-    params = {
-        "series": series_code,
-        "startDate": fmt_date(start),
-        "endDate": fmt_date(today),
-        "type": "json",
-        "key": api_key,
-    }
-    headers = {"User-Agent": _USER_AGENT}
+    # EVDS3 kuralı: query string DEĞİL, parametreler path'in içinde verbatim.
+    # Örn /igmevdsms-dis/series=TP.FG.J0&startDate=01-01-2025&endDate=15-05-2026&type=json
+    # ve key query yerine HEADER olarak.
+    path_params = (
+        f"series={series_code}"
+        f"&startDate={fmt_date(start)}"
+        f"&endDate={fmt_date(today)}"
+        f"&type=json"
+    )
+    url = f"{EVDS_BASE_URL}/{path_params}"
+    headers = {"User-Agent": _USER_AGENT, "key": api_key}
     try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            resp = await client.get(EVDS_BASE_URL, params=params, headers=headers)
+            resp = await client.get(url, headers=headers)
     except Exception as e:
         return TCMBSeriesResult(
             series_code=series_code,
