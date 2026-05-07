@@ -92,12 +92,13 @@ async def _fetch_spot_price(symbol: str) -> float:
 _FLOW_TABLE_REQUIRED_HEADERS = {"Time(UTC)", "Total"}
 
 
-async def _find_flow_table_handle(page):
-    """Return the (table_handle, total_col_index) for the flow table.
+async def _find_total_col_index(page) -> Optional[int]:
+    """Return the Total column index from whichever table holds the flow header.
 
-    We pick the table whose <thead> has both Time(UTC) and Total. This avoids
-    the failure mode where `cells[-1]` of the wrong table (e.g. the ETF list
-    with fee% as the last column) is parsed as a flow total."""
+    CoinGlass renders the flow table as TWO sibling <table> elements: one
+    holds <thead> (data cells empty) and another holds <tbody> (header empty).
+    So we can't trust one table to give us both columns + rows. This function
+    only locates the *header* table to learn the column layout."""
     tables = await page.locator("table").all()
     for t in tables:
         try:
@@ -107,32 +108,34 @@ async def _find_flow_table_handle(page):
         headers = [h.strip() for h in header_cells]
         if not _FLOW_TABLE_REQUIRED_HEADERS.issubset(set(headers)):
             continue
-        # Total column index — defensive: prefer the last "Total" if there
-        # were ever subtotals, but in practice there's exactly one.
         total_idx = next(
             (i for i in range(len(headers) - 1, -1, -1) if headers[i] == "Total"),
             None,
         )
         if total_idx is None:
             continue
-        return t, total_idx
-    return None, None
+        return total_idx
+    return None
 
 
 async def _read_first_complete_row(page) -> Optional[dict]:
-    """Return the first flow-table row with a date != today and a non-zero total.
+    """Return the first flow row with a date != today and a non-zero total.
 
-    Uses the flow table located by header signature and reads the *Total*
-    column by header index (not `cells[-1]`), so a table-order shuffle or a
-    new trailing column on CoinGlass cannot silently corrupt the value.
-    Today's row is skipped (CoinGlass shows it as "0" while incomplete)."""
+    Strategy:
+      1. Learn the Total column index from the flow header table.
+      2. Scan *all* tbody rows on the page and pick the first one whose
+         first cell is a YYYY-MM-DD date and which has at least
+         total_idx+1 cells. This handles CoinGlass's split-table render
+         where header and body live in separate <table> elements.
+      3. Skip today's UTC row and zero/placeholder rows.
+    """
     today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    table, total_idx = await _find_flow_table_handle(page)
-    if table is None:
-        logger.warning("flow table with Time(UTC)+Total headers not found")
+    total_idx = await _find_total_col_index(page)
+    if total_idx is None:
+        logger.warning("flow header table (Time(UTC)+Total) not found")
         return None
-    rows = await table.locator("tbody tr").all()
-    for row in rows[:12]:
+    rows = await page.locator("table tbody tr").all()
+    for row in rows[:30]:
         cells = await row.locator("td").all()
         if len(cells) <= total_idx:
             continue
