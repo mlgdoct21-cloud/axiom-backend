@@ -283,9 +283,9 @@ async def _call_gemini(prompt: str) -> Optional[dict]:
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.55,
-            # 4500 yetmiyordu — 6 Türkçe paragraf 2700 char civarında JSON-encode
-            # edilince max'ı dolduruyor ve cevap mid-string truncate oluyordu.
-            "maxOutputTokens": 8000,
+            # 4500 → 8000 → 12000: 6 Türkçe paragraf JSON-encode edilince
+            # 3000+ char çıkıyor, lower limitler mid-string truncate ediyordu.
+            "maxOutputTokens": 12000,
             "responseMimeType": "application/json",
             "thinkingConfig": {"thinkingBudget": 0},
         },
