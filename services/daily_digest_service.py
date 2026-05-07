@@ -137,40 +137,32 @@ class DailyDigestService:
             if sorted_asia and sorted_asia[0].get("change_pct", 0) < -0.5:
                 biggest_drop = sorted_asia[0]
 
-        # On-chain yön sinyali (BTC) — exchange netflow + funding rate.
-        # Veri varsa daima gösterilir (nötr durumda da kullanıcıya bilgi
-        # verir). Şiddetli eşikler cryptoquant_service.py ile birebir aynı
-        # (netflow ±5000 BTC, funding ±0.001 = ±0.1%/24h).
+        # On-chain yön sinyali (BTC) — SSoT: cryptoquant_service'in zaten
+        # yorumladığı signals dict'ten oku. Burada tekrar threshold mantığı
+        # YOK — eşikler bir tek _interpret_signals'da tanımlı, böylece
+        # Daily Digest ile On-Chain modal AYNI verdict'i gösterir.
         netflow_part: Optional[str] = None
         funding_part: Optional[str] = None
-        onchain_risk = False  # red flag: hem netflow BEARISH hem funding aşırı long mu?
-        if onchain and not onchain.get("error"):
-            nf = onchain.get("exchange_netflow")
-            if nf and nf.get("netflow_total") is not None:
-                val = float(nf["netflow_total"])
-                if val > 5000:
-                    netflow_part = f"borsalara +{val:,.0f} BTC giriş (satış baskısı)"
+        onchain_risk = False  # red flag: hem netflow hem funding BEARISH mi?
+        signals = (onchain or {}).get("signals") or {}
+        if signals:
+            nf_sig = signals.get("exchange_netflow")
+            if nf_sig:
+                netflow_part = (
+                    f"borsa akışı {nf_sig.get('value_str','')} "
+                    f"({nf_sig.get('label_tr','')})"
+                )
+                if nf_sig.get("signal") == "BEARISH":
                     onchain_risk = True
-                elif val > 500:
-                    netflow_part = f"borsalara +{val:,.0f} BTC giriş (hafif baskı)"
-                elif val < -5000:
-                    netflow_part = f"borsalardan {abs(val):,.0f} BTC çıkış (birikim)"
-                elif val < -500:
-                    netflow_part = f"borsalardan {abs(val):,.0f} BTC çıkış (hafif birikim)"
-                else:
-                    netflow_part = f"borsa akışı dengeli ({val:+,.0f} BTC)"
 
-            fr = onchain.get("funding_rates")
-            if fr and fr.get("avg_24h") is not None:
-                avg = float(fr["avg_24h"])
-                pct = avg * 100
-                if avg > 0.001:
-                    funding_part = f"funding {pct:+.3f}% (aşırı long, squeeze riski)"
+            fr_sig = signals.get("funding_rates")
+            if fr_sig:
+                funding_part = (
+                    f"funding {fr_sig.get('value_str','')} "
+                    f"({fr_sig.get('label_tr','')})"
+                )
+                if fr_sig.get("signal") == "BEARISH":
                     onchain_risk = True
-                elif avg < -0.001:
-                    funding_part = f"funding {pct:+.3f}% (short dominant)"
-                else:
-                    funding_part = f"funding {pct:+.3f}% (dengeli)"
 
         # Metin oluştur (template-based, Türkçe). En değerli sinyal en önde.
         parts = []

@@ -538,29 +538,53 @@ def _format_briefing(snap: dict, yesterday: Optional[dict] = None, next_macro: O
             lines.append(f"  {n['contribution']:>3d}  {n['label_tr']}")
         lines.append("")
 
-    # Auto-narrative based on dominant signal balance
-    pos_count = len(positives)
-    neg_count = len(negatives)
-    if pos_count > neg_count and score and score >= 70:
-        narrative = (
-            "Uzun vadeli tabloda akıllı para birikim yapıyor. "
-            "Ancak kısa vadede aceleci hareket etmeyin — geri çekilmeleri "
-            "fırsat olarak değerlendirin."
-        )
-    elif neg_count > pos_count and score and score <= 40:
-        narrative = (
-            "Satış baskısı baskın — yeni long pozisyon açmaktan kaçının, "
-            "stop-loss seviyelerinizi sıkı tutun. Toparlanma için akıllı "
-            "para sinyallerinin değişmesini bekleyin."
-        )
-    elif score and score >= 70:
-        narrative = "Genel tablo olumlu, ama her sinyali izlemeye devam edin."
-    elif score and score <= 40:
-        narrative = "Risk yönetimi öncelikli — pozisyon büyüklüğünü düşük tutun."
+    # Auto-narrative — SSoT: top contributors'tan label'ı AYNEN al,
+    # genel template + listelenen sinyaller arasında çelişki olmasın.
+    # (Önceki sürüm "akıllı para birikim yapıyor" gibi soyut cümleler
+    # üretiyordu; üstte "🔴 Madenci Satıyor" listelenmesine rağmen.)
+    top_pos_label = positives[0]["label_tr"] if positives else None
+    top_neg_label = negatives[0]["label_tr"] if negatives else None
+
+    if score is None:
+        narrative = "On-chain veri henüz yeterli değil; brifing yarın yenilenir."
+    elif score >= 70:
+        if top_pos_label and top_neg_label:
+            narrative = (
+                f"Güç tarafında {top_pos_label} domine ediyor; baskı tarafında "
+                f"{top_neg_label} izleniyor. Skor olumlu bölgede, ancak baskı "
+                "sinyallerinden biri sertleşirse erken uyarı veririz."
+            )
+        elif top_pos_label:
+            narrative = (
+                f"Güç tarafında {top_pos_label} öne çıkıyor; baskı tarafı "
+                "şu an sessiz. Skor olumlu bölgede."
+            )
+        else:
+            narrative = "Skor olumlu bölgede; her sinyali izlemeye devam edin."
+    elif score <= 40:
+        if top_neg_label and top_pos_label:
+            narrative = (
+                f"Baskı tarafında {top_neg_label} domine ediyor; güç tarafında "
+                f"{top_pos_label} hâlâ devrede. Skor riskli bölgede — pozisyon "
+                "büyüklüğünü düşük tutun."
+            )
+        elif top_neg_label:
+            narrative = (
+                f"Baskı tarafında {top_neg_label} öne çıkıyor; güç sinyali "
+                "şu an zayıf. Skor riskli bölgede — risk yönetimi öncelikli."
+            )
+        else:
+            narrative = "Skor riskli bölgede — pozisyon büyüklüğünü düşük tutun."
     else:
-        narrative = (
-            "Karışık tablo: kuvvetler dengeli. Belirgin bir trend için "
-            "yön sinyalini bekleyin."
+        # 41-69 dikkatli/karışık bölge
+        parts = ["Skor karışık bölgede"]
+        if top_pos_label:
+            parts.append(f"güç: {top_pos_label}")
+        if top_neg_label:
+            parts.append(f"baskı: {top_neg_label}")
+        narrative = "; ".join(parts) + (
+            ". Belirgin yön sinyali için bu sinyallerden birinin sertleşmesini "
+            "bekleyin."
         )
 
     lines.extend([

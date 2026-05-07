@@ -107,8 +107,30 @@ def _direction_source(snapshot: dict) -> Optional[dict]:
     }
 
 
+def _etf_verdict_tr(net_flow_usd: Optional[float], symbol: str) -> str:
+    """ETF flow için tek-kaynak verdict. BTC daha büyük ölçek (>$100M güçlü),
+    ETH daha küçük (>$30M güçlü). Çelişki önlemek için Gemini bunu
+    aynen kullanır — kendi yorumu yapmaz."""
+    if net_flow_usd is None:
+        return "📊 Veri yok"
+    v = float(net_flow_usd)
+    thresholds = (100_000_000, 20_000_000) if symbol == "BTC" else (30_000_000, 5_000_000)
+    strong, mild = thresholds
+    if v >= strong:
+        return "🟢 Güçlü Kurumsal Birikim (günlük)"
+    if v >= mild:
+        return "🟢 Hafif Kurumsal Giriş (günlük)"
+    if v <= -strong:
+        return "🔴 Güçlü Kurumsal Çıkış (günlük)"
+    if v <= -mild:
+        return "🔴 Hafif Kurumsal Çıkış (günlük)"
+    return "🟡 Nötr Kurumsal Akış (günlük)"
+
+
 async def _etf_block(symbol: str) -> Optional[dict]:
-    """BTC + ETH için ETF flow özeti — spot kurumsal talep göstergesi."""
+    """BTC + ETH için ETF flow özeti — spot kurumsal talep göstergesi.
+    Gemini'ye GÜNLÜK pencere etiketi + tek-kaynak verdict ile gider;
+    Coinbase Premium (anlık spot) ile karıştırılmasın."""
     if symbol not in ("BTC", "ETH"):
         return None
     try:
@@ -118,12 +140,15 @@ async def _etf_block(symbol: str) -> Optional[dict]:
         return None
     if not flow:
         return None
+    net_usd = flow.get("net_flow_usd")
     return {
-        "net_flow_usd": flow.get("net_flow_usd"),
+        "net_flow_usd": net_usd,
         "net_flow_coins": flow.get("net_flow_coins"),
         "scraped_at": flow.get("scraped_at"),
         "is_fresh": flow.get("is_fresh"),
         "age_hours": flow.get("age_hours"),
+        "window": "günlük (T-1)",
+        "verdict_tr": _etf_verdict_tr(net_usd, symbol),
     }
 
 
@@ -168,10 +193,53 @@ _SYMBOL_PERSONALITY = {
 }
 
 
+_METRIC_WINDOW_TR: dict[str, str] = {
+    # Per-metric zaman penceresi etiketi — Gemini'nin "kurumsal alım" gibi
+    # ifadeleri farklı zamanlarda ölçülen metriklerle karıştırmaması için.
+    "exchange_netflow":  "anlık (son gün)",
+    "whale_ratio":       "anlık (son gün)",
+    "miner_outflow":     "anlık (gün) — 7G ortalamaya göre",
+    "miner_reserve":     "trend (7G değişim)",
+    "stablecoin_inflow": "anlık (son gün)",
+    "funding_rates":     "anlık (son gün)",
+    "open_interest":     "anlık (son gün)",
+    "sopr":              "günlük (zincir-üstü tüketim)",
+    "sopr_ratio":        "trend (LTH/STH dengesi)",
+    "coinbase_premium":  "anlık (spot fiyat farkı)",
+    "korean_premium":    "anlık (spot fiyat farkı)",
+    "mvrv":              "trend (network değerleme)",
+    "nupl":              "trend (network kâr/zarar)",
+    "mpi":               "anlık (madenci satış endeksi)",
+    "puell":             "trend (madenci kâr katsayısı)",
+    "leverage_ratio":    "anlık (türev kaldıraç)",
+    "realized_price":    "trend (network maliyet ortalaması)",
+    "hash_rate":         "trend (7G değişim)",
+    "spot_taker":        "anlık (son gün)",
+    "btc_liquidations":  "anlık (son gün)",
+}
+
+
+def _annotate_signals_with_window(ctx: dict) -> dict:
+    """signals[].window alanını ekle — Gemini metriklerin ölçtüğü zamanı
+    metinde açıkça belirtsin. Ayrıca direction_source'a 'window: anlık'
+    bandrolü vurgu için ekle."""
+    out = dict(ctx)
+    sigs = list(out.get("signals") or [])
+    for s in sigs:
+        m = s.get("metric")
+        if m and m in _METRIC_WINDOW_TR:
+            s["window"] = _METRIC_WINDOW_TR[m]
+    out["signals"] = sigs
+    if out.get("direction_source"):
+        out["direction_source"] = {**out["direction_source"], "window": "anlık (son gün)"}
+    return out
+
+
 def _build_prompt(ctx: dict) -> str:
     sym = ctx.get("symbol", "?")
     personality = _SYMBOL_PERSONALITY.get(sym, "")
     has_etf = bool(ctx.get("etf_flow"))
+    annotated = _annotate_signals_with_window(ctx)
     return (
         f"Sen 'Axiom Analistleri' takımısın — {sym} için on-chain veriyi "
         "Türk kripto yatırımcısına KARAR ÇERÇEVESİ olarak sunuyorsun. "
@@ -180,7 +248,7 @@ def _build_prompt(ctx: dict) -> str:
         "açıkça ilan etme + revizyon koşulu, sıcak ama kurumsal Türkçe.\n\n"
         f"### {sym} kişiliği:\n{personality}\n\n"
         f"### INPUT JSON (TÜM sayılar buradan; başka kaynak YASAK):\n"
-        f"{json.dumps(ctx, ensure_ascii=False)}\n\n"
+        f"{json.dumps(annotated, ensure_ascii=False)}\n\n"
         "### ÇIKTI ŞEMASI (sadece JSON):\n"
         "{\n"
         '  "headline": string,        // max 120 karakter; başlık-soru veya net iddia\n'
@@ -211,9 +279,11 @@ def _build_prompt(ctx: dict) -> str:
         "     sell biteliyor (dip onayı), short sıkışması baskın = ralli "
         "     yapay olabilir; çift yönlü tasfiye = türev tarafı temizleniyor.\n"
         + (
-            "   • etf_flow.net_flow_usd POZİTİF (>50M) = spot ETF kurumsal "
-            "talebi destekliyor; NEGATİF = kurumsal çıkış. ETF rakamını "
-            "açıkça yaz (örn '$67M giriş' veya '$112M çıkış').\n"
+            "   • etf_flow.net_flow_usd ve etf_flow.verdict_tr alanlarını "
+            "AYNEN kullan (örn '🟢 Güçlü Kurumsal Birikim (günlük)'). Verdict'i "
+            "kendin yeniden yorumlama. ETF rakamını da açıkça yaz "
+            "(örn '$478M giriş'). ETF flow GÜNLÜK pencere; Coinbase Premium "
+            "ANLIK spot fiyat farkı — ikisini KARIŞTIRMA.\n"
             if has_etf else ""
         ) +
         "   Bu blok yoksa çıkarma — 'yön kaynağı net okunmuyor' diye yaz.\n"
@@ -247,6 +317,34 @@ def _build_prompt(ctx: dict) -> str:
         "- spot taker ratio → 'spot alıcı/satıcı oranı'\n"
         "- open interest → 'açık pozisyon hacmi'\n"
         "- ETF flow → 'spot ETF net girişi/çıkışı'\n\n"
+        "### ÇELİŞKİ UZLAŞTIRMA (kritik — yayın öncesi):\n"
+        "Aşağıdaki çiftlerden biri varsa AYNI paragrafta bahsediyorsan "
+        "ZAMAN PENCERESİ farkını AÇIK CÜMLE ile uzlaştırmak ZORUNDASIN. "
+        "İki sinyal birbirine zıt görünebilir ama aslında farklı şeyleri "
+        "ölçer:\n"
+        "  • ETF flow (günlük kurumsal birikim) ↔ Coinbase Premium (anlık "
+        "    spot fiyat farkı): 'ETF kanalında günlük kurumsal alım sürerken "
+        "    Coinbase spot tarafı kısa vadeli satış baskısı' gibi.\n"
+        "  • miner_outflow (anlık günlük transfer) ↔ miner_reserve (7G "
+        "    trend değişimi): 'Bugün borsalara madenci transferi yüksek "
+        "    olsa da 7G rezerv trendi sabit; tek günlük spike, trend değil' "
+        "    gibi.\n"
+        "  • stablecoin_inflow (anlık) ↔ axiom_score'un genel havası: "
+        "    'Stablecoin akışı düşük olmasına rağmen sinyal dengesi pozitifte' "
+        "    diye uzlaştır.\n"
+        "  • exchange_netflow ↔ whale_ratio: birinin bullish, diğerinin "
+        "    bearish/neutral olması olağan; balina davranışı netflow'dan "
+        "    bağımsız okunabilir.\n"
+        "ASLA aynı paragrafta uzlaştırma cümlesi olmadan zıt verdict bırakma. "
+        "İki sinyalin verdict'i çelişiyorsa SEMBOL adı + zaman penceresi + "
+        "uzlaştırma cümlesi şart.\n\n"
+        "### SİNYAL ETİKETİ KULLANIM KURALI (SSoT):\n"
+        "INPUT'taki her signals[].label etiketi (örn '🔴 Madenci Satıyor', "
+        "'🟢 ABD Kurumsal Alım', '🟡 Dengeli') Axiom'un TEK GERÇEKLİĞİDİR. "
+        "Bunları YENİDEN YORUMLAMA. Eğer label '🔴 Düşük Giriş' diyorsa "
+        "metinde 'düşük giriş' veya eşdeğer ifade kullan; ASLA 'yüksek "
+        "stablecoin akışı' yazma. Bir metriğin label'ı ile metnindeki "
+        "verdict'in BİRBİRİYLE TUTARLI olmak zorunda.\n\n"
         "### KESİN YASAKLAR:\n"
         "- Sayı UYDURMA — INPUT'taki signals[].value veya axiom_score "
         "  veya direction_source veya etf_flow alanlarından gelmeyen sayı YOK.\n"
@@ -476,6 +574,69 @@ def _validate_against_context(
     return parsed, bad
 
 
+# ── Çelişki validator: aynı paragrafta zıt verdict ────────────────────────
+#
+# Aynı paragrafta uzlaştırma cümlesi olmadan birbirine zıt iki ifade
+# bulunursa retry tetikler. Day 28 part 8: kullanıcı sayfalar arası
+# tutarsızlık şikayeti — bu Gemini'nin aynı paragrafta hem bullish hem
+# bearish söylemesini engeller.
+
+# (positive_pattern, negative_pattern, reconcile_keywords)
+_CONTRADICTION_PAIRS: list[tuple[str, str, tuple[str, ...]]] = [
+    # Madenci: satış vs tutma
+    (
+        r"madenci\w*\s+(sat|çıkış|baskı|dağıtım)",
+        r"madenci\w*\s+(tut|birik|akümül|güven|stabil)",
+        ("trend", "anlık", "7g", "7 g", "uzlaştır", "günlük", "tek gün", "bağımsız"),
+    ),
+    # Stablecoin akışı: giriş vs çıkış
+    (
+        r"stablecoin\w*\s+(giriş|inflow|alım gücü|akış arttı|akış yüksek)",
+        r"stablecoin\w*\s+(çıkış|outflow|düşük giriş|akış düşük)",
+        ("zıt", "aslında", "birbirin", "rağmen", "ancak"),
+    ),
+    # Kurumsal: alım vs çıkış (en kritik — ETF + Coinbase Premium çakışması)
+    (
+        r"(kurumsal|institutional)\s*(alım|giriş|birikim|talep)",
+        r"(kurumsal|institutional)\s*(satış|çıkış|kaçış)",
+        ("etf", "coinbase", "spot", "günlük", "anlık", "rağmen", "ancak", "farklı", "ayrı"),
+    ),
+    # Boğa vs ayı aynı paragrafta uzlaştırmasız
+    (
+        r"\b(boğa|bull|yükseliş)",
+        r"\b(ayı|bear|düşüş|kapitülasyon)",
+        ("ancak", "rağmen", "fakat", "ama", "öte yandan", "yine de", "buna karşın"),
+    ),
+]
+
+
+def _find_contradictions(paragraphs: list[str]) -> list[dict]:
+    """Her paragrafta zıt verdict çiftlerini ara. Uzlaştırma kelimelerinden
+    biri varsa skip — yazar zaten farkın altını çizmiş demektir.
+    Returns: [{paragraph_idx, pair_idx, pos_match, neg_match}]."""
+    out: list[dict] = []
+    for i, p in enumerate(paragraphs):
+        if not isinstance(p, str):
+            continue
+        low = p.lower()
+        for pi, (pos_re, neg_re, recon_kws) in enumerate(_CONTRADICTION_PAIRS):
+            pos = re.search(pos_re, low)
+            neg = re.search(neg_re, low)
+            if not (pos and neg):
+                continue
+            # Uzlaştırma anahtarı paragrafta var mı?
+            if any(kw in low for kw in recon_kws):
+                continue
+            out.append({
+                "paragraph_idx": i,
+                "pair_idx": pi,
+                "pos": pos.group(0)[:40],
+                "neg": neg.group(0)[:40],
+                "excerpt": p[:140],
+            })
+    return out
+
+
 def _validate(out: dict) -> Optional[dict]:
     if not isinstance(out, dict):
         return None
@@ -529,24 +690,53 @@ async def get_onchain_story(symbol: str = "BTC", *, force: bool = False) -> dict
     prompt = _build_prompt(ctx)
     raw_out = await _call_gemini(prompt)
     parsed, bad = _validate_against_context(raw_out or {}, ctx)
+    contradictions = _find_contradictions(parsed["paragraphs"]) if parsed else []
 
-    # 2. tur — uydurma sayı varsa Gemini'ye geri besleme + sıkıştırılmış yeniden dene
-    if not parsed and bad:
-        logger.warning(
-            f"storyteller {sym}: hallucinated numbers detected: {bad[:5]} — retrying"
-        )
+    # 2. tur — sayı uydurma VEYA uzlaştırılmamış çelişki varsa retry
+    needs_retry = (not parsed and bad) or (parsed and contradictions)
+    if needs_retry:
+        retry_notes = []
+        if bad:
+            retry_notes.append(
+                f"Şu sayılar INPUT JSON'da YOK ve uydurma kabul edildi: {bad[:8]}\n"
+                "Sadece INPUT'taki signals[].value, axiom_score, direction_source, "
+                "etf_flow alanlarındaki sayıları kullan."
+            )
+        if contradictions:
+            samples = "; ".join(
+                f"P{c['paragraph_idx']+1}: '{c['pos']}' + '{c['neg']}' "
+                f"→ '{c['excerpt']}…'"
+                for c in contradictions[:3]
+            )
+            logger.warning(
+                f"storyteller {sym}: contradictions detected: {samples}"
+            )
+            retry_notes.append(
+                "Aynı paragrafta uzlaştırma cümlesi olmadan zıt verdict var:\n"
+                f"  {samples}\n"
+                "ÇELİŞKİ UZLAŞTIRMA bölümündeki kuralı uygula: zıt görünen "
+                "iki ifadeyi ya AYRI paragraflara taşı ya da AÇIK uzlaştırma "
+                "cümlesi ekle (zaman penceresi farkı, vehicle farkı, vs)."
+            )
+        if bad:
+            logger.warning(
+                f"storyteller {sym}: hallucinated numbers: {bad[:5]} — retrying"
+            )
         retry_prompt = (
             prompt
             + "\n\n### KRİTİK DÜZELTME (önceki cevabınız reddedildi):\n"
-            + f"Şu sayılar INPUT JSON'da YOK ve uydurma kabul edildi: {bad[:8]}\n"
-            + "Yeniden üret. Sadece INPUT'taki signals[].value, axiom_score, "
-            + "direction_source, etf_flow alanlarındaki sayıları kullan. "
-            + "Bilmediğin bir sayıyı yazmak yerine sayısız anlatım yap."
+            + "\n\n".join(retry_notes)
+            + "\nYeniden üret."
         )
         raw_out2 = await _call_gemini(retry_prompt)
-        parsed, bad = _validate_against_context(raw_out2 or {}, ctx, max_bad=4)
+        parsed2, bad2 = _validate_against_context(raw_out2 or {}, ctx, max_bad=4)
         # 2. tur biraz daha gevşek (max_bad=4): kullanıcıya hiç hikaye
         # vermemektense ufak şüpheli sayılı bir hikaye iyi.
+        contradictions2 = (
+            _find_contradictions(parsed2["paragraphs"]) if parsed2 else []
+        )
+        if parsed2 and len(contradictions2) <= len(contradictions):
+            parsed, bad, contradictions = parsed2, bad2, contradictions2
 
     if not parsed:
         # 1. tur şema-fail veya 2 tur halüsinasyon — yine de düşmemek için
@@ -564,6 +754,12 @@ async def get_onchain_story(symbol: str = "BTC", *, force: bool = False) -> dict
         "_validator": {
             "hallucinated_count": len(bad),
             "samples": [str(n) for n in bad[:5]],
+            "contradiction_count": len(contradictions),
+            "contradiction_samples": [
+                {"p_idx": c["paragraph_idx"], "pair": c["pair_idx"],
+                 "pos": c["pos"], "neg": c["neg"]}
+                for c in contradictions[:3]
+            ],
         },
     }
     await _cache_set("story", sym, "day", payload, _CACHE_TTL)
