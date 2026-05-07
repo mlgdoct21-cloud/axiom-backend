@@ -24,6 +24,7 @@ from core.database import AsyncSessionLocal, engine
 from core.logger import get_logger
 from models.user import User
 from services.cryptoquant_service import get_onchain_snapshot
+from services.onchain_storyteller import get_onchain_story
 from services.telegram_bot import send_telegram_message
 
 logger = get_logger("cryptoquant_alerts")
@@ -406,8 +407,76 @@ async def morning_briefing() -> dict:
             logger.warning(f"briefing send fail for {u.telegram_id}: {e}")
             fail += 1
 
-    logger.info(f"morning briefing: {sent}/{len(paying)} sent, {fail} failed")
-    return {"sent": sent, "failed": fail, "eligible": len(paying)}
+    # Storyteller follow-ups: 3 ayrı mesaj (BTC/ETH/XRP). Cache miss ise burada
+    # generate olur — bir sonraki briefing'e kadar 12h cache geçerli.
+    story_msgs: list[str] = []
+    for sym in ("BTC", "ETH", "XRP"):
+        try:
+            story = await get_onchain_story(sym)
+            if story and story.get("headline"):
+                story_msgs.append(_format_story_message(story, sym))
+        except Exception as e:
+            logger.warning(f"briefing: storyteller {sym} failed: {e}")
+
+    story_sent = story_fail = 0
+    for u in paying:
+        for sm in story_msgs:
+            try:
+                send_telegram_message(int(u.telegram_id), sm)
+                story_sent += 1
+            except Exception as e:
+                logger.warning(f"briefing story send fail for {u.telegram_id}: {e}")
+                story_fail += 1
+
+    logger.info(
+        f"morning briefing: {sent}/{len(paying)} sent, {fail} failed; "
+        f"storyteller {story_sent} sent, {story_fail} failed ({len(story_msgs)} symbols)"
+    )
+    return {
+        "sent": sent,
+        "failed": fail,
+        "eligible": len(paying),
+        "story_sent": story_sent,
+        "story_failed": story_fail,
+        "story_symbols": len(story_msgs),
+    }
+
+
+_STORY_HEADER = {
+    "BTC": "🟧 <b>BTC — AXIOM ANALİSTLERİ</b>",
+    "ETH": "🟦 <b>ETH — AXIOM ANALİSTLERİ</b>",
+    "XRP": "🟢 <b>XRP — AXIOM ANALİSTLERİ</b>",
+}
+
+
+def _format_story_message(story: dict, symbol: str) -> str:
+    """6-blok storyteller çıktısını Telegram HTML mesajına dönüştürür.
+    Telegram 4096 char limiti var — storyteller payload genelde 1500-2500 char
+    aralığında, güvenli."""
+    header = _STORY_HEADER.get(symbol, f"<b>{symbol} — AXIOM ANALİSTLERİ</b>")
+    score = story.get("axiom_score")
+    zone = story.get("score_zone", "")
+    headline = (story.get("headline") or "").strip()
+    paragraphs = story.get("paragraphs") or []
+    footer = (story.get("footer") or "").strip()
+
+    score_line = ""
+    if score is not None:
+        score_line = f"📊 Axiom Skor <b>{score:.0f}/100</b> · {zone}"
+
+    lines = [header]
+    if score_line:
+        lines.append(score_line)
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append(f"<b>{headline}</b>")
+    lines.append("")
+    for p in paragraphs:
+        if p:
+            lines.append(p)
+            lines.append("")
+    if footer:
+        lines.append(f"<i>{footer}</i>")
+    return "\n".join(lines)[:4000]
 
 
 def _format_briefing(snap: dict, yesterday: Optional[dict] = None, next_macro: Optional[dict] = None) -> str:
