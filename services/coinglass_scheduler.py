@@ -87,21 +87,61 @@ async def _fetch_spot_price(symbol: str) -> float:
 
 # ─── Playwright scrape ─────────────────────────────────────────────────────
 
+# CoinGlass renders 4 tables on /etf/* pages. The flow table has these
+# headers; we lock onto it via signature instead of guessing tables[0|1|3].
+_FLOW_TABLE_REQUIRED_HEADERS = {"Time(UTC)", "Total"}
+
+
+async def _find_flow_table_handle(page):
+    """Return the (table_handle, total_col_index) for the flow table.
+
+    We pick the table whose <thead> has both Time(UTC) and Total. This avoids
+    the failure mode where `cells[-1]` of the wrong table (e.g. the ETF list
+    with fee% as the last column) is parsed as a flow total."""
+    tables = await page.locator("table").all()
+    for t in tables:
+        try:
+            header_cells = await t.locator("thead th").all_inner_texts()
+        except Exception:
+            continue
+        headers = [h.strip() for h in header_cells]
+        if not _FLOW_TABLE_REQUIRED_HEADERS.issubset(set(headers)):
+            continue
+        # Total column index — defensive: prefer the last "Total" if there
+        # were ever subtotals, but in practice there's exactly one.
+        total_idx = next(
+            (i for i in range(len(headers) - 1, -1, -1) if headers[i] == "Total"),
+            None,
+        )
+        if total_idx is None:
+            continue
+        return t, total_idx
+    return None, None
+
+
 async def _read_first_complete_row(page) -> Optional[dict]:
-    """Return the first table row with a date != today and a non-zero total.
-    CoinGlass renders today's incomplete row as "0" so we explicitly skip it."""
+    """Return the first flow-table row with a date != today and a non-zero total.
+
+    Uses the flow table located by header signature and reads the *Total*
+    column by header index (not `cells[-1]`), so a table-order shuffle or a
+    new trailing column on CoinGlass cannot silently corrupt the value.
+    Today's row is skipped (CoinGlass shows it as "0" while incomplete)."""
     today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    rows = await page.locator("table tbody tr").all()
-    for row in rows[:10]:
+    table, total_idx = await _find_flow_table_handle(page)
+    if table is None:
+        logger.warning("flow table with Time(UTC)+Total headers not found")
+        return None
+    rows = await table.locator("tbody tr").all()
+    for row in rows[:12]:
         cells = await row.locator("td").all()
-        if len(cells) < 2:
+        if len(cells) <= total_idx:
             continue
         date_text = (await cells[0].inner_text()).strip()
         if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_text):
             continue
         if date_text == today_iso:
             continue
-        total_text = (await cells[-1].inner_text()).strip()
+        total_text = (await cells[total_idx].inner_text()).strip()
         val = _parse_compact(total_text)
         if val is None or val == 0.0:
             continue
@@ -110,12 +150,24 @@ async def _read_first_complete_row(page) -> Optional[dict]:
 
 
 async def _scrape_one(page, symbol: str) -> Optional[dict]:
-    """Returns {date, coin_total, usd_total} or None on failure."""
+    """Returns {date, coin_total, usd_total} or None on failure.
+
+    Waits for networkidle so the JS-driven table values settle before
+    reading; without this, CoinGlass occasionally exposes a stale snapshot
+    that gets revised within a few seconds (root-cause of the ±sign-flip
+    we saw on 2026-05-07 where the 00:33 UTC scrape captured -610.91 BTC
+    while the same row settled at +571.36 BTC by 06:50 UTC)."""
     url = PAGES[symbol]
     logger.info(f"[{symbol}] navigate → {url}")
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         await page.wait_for_selector("text=/^20\\d{2}-\\d{2}-\\d{2}$/", timeout=30_000)
+        # Let CoinGlass XHR-settle so the values aren't a half-rendered snapshot.
+        try:
+            await page.wait_for_load_state("networkidle", timeout=15_000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(2_000)
     except Exception as e:
         logger.warning(f"[{symbol}] page render failed: {e}")
         return None
@@ -128,14 +180,14 @@ async def _scrape_one(page, symbol: str) -> Optional[dict]:
     # Try USD toggle for accurate dollar total; fall back to coin × spot.
     usd_total: Optional[float] = None
     toggles = [
-        page.get_by_role("button", name=re.compile(r"^\s*USD\s*$", re.I)).first,
         page.get_by_role("tab", name=re.compile(r"^\s*USD\s*$", re.I)).first,
+        page.get_by_role("button", name=re.compile(r"^\s*USD\s*$", re.I)).first,
         page.locator("button:has-text('USD')").first,
     ]
     for loc in toggles:
         try:
             await loc.click(timeout=3_000)
-            await page.wait_for_timeout(1_500)
+            await page.wait_for_timeout(2_000)
             usd_row = await _read_first_complete_row(page)
             if usd_row and usd_row["date"] == coin_row["date"]:
                 usd_total = usd_row["total"]
@@ -150,6 +202,16 @@ async def _scrape_one(page, symbol: str) -> Optional[dict]:
             f"[{symbol}] USD toggle unavailable — derived usd={usd_total:+,.0f} "
             f"from coin={coin_row['total']:+,.2f} × spot={spot:,.2f}"
         )
+
+    # Sanity guard: USD and coin sign must match (catches the case where a
+    # toggle click landed on a different table's row).
+    if (usd_total > 0) != (coin_row["total"] > 0):
+        logger.warning(
+            f"[{symbol}] sign mismatch usd={usd_total:+,.0f} vs coin={coin_row['total']:+,.2f}"
+            " — falling back to spot derivation"
+        )
+        spot = await _fetch_spot_price(symbol)
+        usd_total = coin_row["total"] * spot
 
     return {
         "date": coin_row["date"],
