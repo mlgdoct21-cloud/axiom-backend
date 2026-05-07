@@ -139,6 +139,7 @@ async def _cache_set(metric_key: str, symbol: str, window: str, data: dict, ttl:
 
 
 async def _cache_get(metric_key: str, symbol: str, window: str) -> Optional[dict]:
+    """Fresh cache only (expires_at > NOW)."""
     sql = text("""
         SELECT data FROM cryptoquant_cache
         WHERE metric_key = :key AND symbol = :sym AND "window" = :win
@@ -155,20 +156,44 @@ async def _cache_get(metric_key: str, symbol: str, window: str) -> Optional[dict
     return None
 
 
+async def _cache_get_any(metric_key: str, symbol: str, window: str) -> Optional[dict]:
+    """Cache lookup ignoring expiry — for stale fallback when fresh fetch fails."""
+    sql = text("""
+        SELECT data FROM cryptoquant_cache
+        WHERE metric_key = :key AND symbol = :sym AND "window" = :win
+        ORDER BY fetched_at DESC LIMIT 1
+    """)
+    try:
+        async with engine.begin() as conn:
+            row = (await conn.execute(sql, {"key": metric_key, "sym": symbol, "win": window})).fetchone()
+            if row:
+                return dict(row[0]) if isinstance(row[0], dict) else row[0]
+    except Exception as e:
+        logger.warning(f"Cache stale get error {metric_key}: {e}")
+    return None
+
+
 async def _fetch_cached(
     metric_key: str,
     symbol: str,
     ttl: timedelta,
     fetcher,
 ) -> Optional[dict]:
-    """Per-metric cache fallback wrapper.
+    """Cache-first per-metric fetcher with stale-fallback.
 
-    1) Fresh fetch dener — başarılıysa cache'e yazıp döner.
-    2) Fetch None dönerse (429/timeout/silent fail) son geçerli cache'e
-       fallback yapar; cache de yoksa None döner.
+    1) Fresh cache hit (within TTL) → return immediately, no API call.
+       Bu kritik: snapshot endpoint her 30 sn çağrılıyor, fresh-fetch
+       her seferinde 20×CryptoQuant request → rate limit + 60sn timeout.
+    2) Cache miss → fresh fetch. Başarılıysa cache'e yaz.
+    3) Fresh fetch fail (429/timeout/error) → expired cache'e düş.
+       4 saat eski veri 0 sinyalden iyi.
+    """
+    # 1) Fresh cache hit
+    cached = await _cache_get(metric_key, symbol, "day")
+    if cached:
+        return cached
 
-    Bu sayede tek bir 429 burst snapshot'ı asla 4 saat boyunca poisonlamaz —
-    eksik fetcher önceki başarılı değeriyle hayatta kalır."""
+    # 2) Cache miss → fresh fetch
     try:
         result = await fetcher()
     except Exception as e:
@@ -179,11 +204,11 @@ async def _fetch_cached(
         await _cache_set(metric_key, symbol, "day", result, ttl)
         return result
 
-    # Fresh fetch fail → fallback to cached
-    cached = await _cache_get(metric_key, symbol, "day")
-    if cached:
-        logger.info(f"CQ cache fallback: {metric_key}/{symbol}")
-    return cached
+    # 3) Fresh fetch failed → stale cache fallback
+    stale = await _cache_get_any(metric_key, symbol, "day")
+    if stale:
+        logger.info(f"CQ stale fallback: {metric_key}/{symbol}")
+    return stale
 
 
 # ── Metric fetchers ────────────────────────────────────────────────────────────
