@@ -1069,11 +1069,28 @@ async def get_onchain_story(symbol: str = "BTC", *, force: bool = False) -> dict
                     f"issues {len(issues)}→{len(audit_2nd['issues'])}"
                 )
 
+    # Veri-yaşı özeti — frontend rozet için
+    sig_dates = [
+        s.get("data_date") for s in (ctx.get("signals") or [])
+        if s.get("data_date")
+    ]
+    data_age_summary = None
+    if sig_dates:
+        sig_dates_sorted = sorted(set(sig_dates))
+        data_age_summary = {
+            "oldest_date": sig_dates_sorted[0],
+            "newest_date": sig_dates_sorted[-1],
+            "stale_count": len(ctx.get("stale_metrics") or {}),
+            "stale_metrics": list((ctx.get("stale_metrics") or {}).keys()),
+            "today_utc": (ctx.get("today") or {}).get("today_utc"),
+        }
+
     payload = {
         **parsed,
         "symbol": sym,
         "axiom_score": ctx.get("axiom_score"),
         "score_zone": ctx.get("score_zone"),
+        "data_age_summary": data_age_summary,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "_validator": {
             "hallucinated_count": len(bad),
