@@ -157,13 +157,28 @@ def _validate_story(
         except Exception:
             return False
 
-    # L1 — sayı whitelist (yıllar exempt)
+    # L1 — sayı whitelist. İki tip exempt:
+    #   (a) yıl literali 1900-2099 → tarih damgası, citation'sız OK
+    #   (b) küçük integer |d| ≤ 10 ve % içermeyen → "son 3 ayda", "6 aylık"
+    #       tarzı paragraf-içi anlatım sayıları; whitelist'e koymak imkansız
+    def _is_small_int(raw: str) -> bool:
+        if "%" in raw:
+            return False
+        body = raw.replace(",", ".")
+        try:
+            d = Decimal(body)
+        except Exception:
+            return False
+        return d == d.to_integral_value() and abs(d) <= Decimal("10")
+
     unk_all = validate_numbers(
         story_md, allowed_numbers, tolerance=Decimal("0.05"),
     )
     rep.unknown_numbers = [
         u for u in unk_all
-        if not _is_year_literal(Decimal(u.replace(",", ".")), u) if u
+        if u
+        and not _is_year_literal(Decimal(u.replace(",", ".")), u)
+        and not _is_small_int(u)
     ]
 
     # L2 — her sayının 60-char penceresinde [SRC] var mı (yıllar exempt)
