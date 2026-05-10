@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 import os
+import uuid
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -29,7 +30,9 @@ else:
     # asyncpg bağlantı ayarları
     connect_args = {
         "server_settings": {"application_name": "axiom_bot"},
-        "statement_cache_size": 0,  # PgBouncer/Session Pooler uyumluluğu için ZORUNLU
+        "statement_cache_size": 0,  # asyncpg local cache off (PgBouncer transaction mode)
+        "prepared_statement_cache_size": 0,  # SQLAlchemy compiled-cache prep-stmt off
+        "prepared_statement_name_func": lambda: f"__asyncpg_{uuid.uuid4()}__",
     }
 
 engine_kwargs = {
