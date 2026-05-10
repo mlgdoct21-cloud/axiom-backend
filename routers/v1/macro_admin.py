@@ -20,6 +20,7 @@ from services.macro_calendar import (
 from services.macro_sources.fred_calendar import cache_status as fred_calendar_cache_status
 from services.macro_broadcaster import broadcast_release
 from services.macro_narrative import generate_narrative
+from services.macro_storyteller import generate_story
 from services.macro_sources.reliability_probe import (
     probe_once,
     rolling_health_report,
@@ -245,4 +246,41 @@ async def set_expected(
         "event_type": row["event_type"],
         "expected_mom_pct": float(row["expected_mom_pct"]) if row["expected_mom_pct"] is not None else None,
         "expected_yoy_pct": float(row["expected_yoy_pct"]) if row["expected_yoy_pct"] is not None else None,
+    }
+
+
+@router.post("/story/{event_id:path}")
+async def force_generate_story(
+    event_id: str,
+    tier: str = Query("premium", pattern="^(premium|advance)$"),
+    force: bool = Query(False, description="Overwrite existing story for this (event_id, tier)"),
+    x_internal_secret: Optional[str] = Header(None),
+):
+    """Trigger the storyteller for one release + tier. Returns the validator
+    report so we can see why a rejection happened.
+
+    Free tier'a yazmıyor (zaten `macro_releases.narrative_md` Free hap'tır).
+    Premium/Advance için ayrı çıktı `macro_stories` tablosuna gider, public
+    `/macro/story/{event_id}` endpoint'i tier'a göre serve eder.
+    """
+    _check_auth(x_internal_secret)
+    result = await generate_story(event_id, tier=tier, force=force)
+    validator = result.validator
+    return {
+        "event_id": result.event_id,
+        "tier": result.tier,
+        "written": result.written,
+        "rejection_reason": result.rejection_reason,
+        "story_md_preview": (result.story_md[:300] + "…") if result.story_md and len(result.story_md) > 300 else result.story_md,
+        "sources_cited": result.sources_cited,
+        "validator": {
+            "ok": validator.ok if validator else None,
+            "word_count": validator.word_count if validator else None,
+            "unknown_numbers": validator.unknown_numbers if validator else None,
+            "numbers_without_citation": validator.numbers_without_citation if validator else None,
+            "missing_temporal_marker": validator.missing_temporal_marker if validator else None,
+            "banned_phrases_found": validator.banned_phrases_found if validator else None,
+            "out_of_word_bounds": validator.out_of_word_bounds if validator else None,
+            "unknown_sources": validator.unknown_sources if validator else None,
+        } if validator else None,
     }

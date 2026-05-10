@@ -15,13 +15,44 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, Header, Query, Request, Response
 from sqlalchemy import text
 
 from core.database import engine
 from core.logger import get_logger
+from services.auth import AuthService
 
 logger = get_logger("macro_public")
+
+
+async def _peek_tier(authorization: Optional[str]) -> str:
+    """Best-effort tier read from Bearer token. Returns 'free' on any failure.
+
+    Public macro/story endpoint is **optional-auth** — anonymous callers get
+    the Free preview + upgrade CTA, JWT'li çağrılar Premium/Advance içeriği
+    görür. JWT eksik/bozuksa 401 fırlatmak yerine 'free' davranırız.
+    """
+    if not authorization:
+        return "free"
+    parts = authorization.strip().split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return "free"
+    token = parts[1]
+    payload = AuthService.verify_token(token) or {}
+    user_id = payload.get("sub")
+    if not user_id:
+        return "free"
+    try:
+        uid_int = int(user_id)
+    except (TypeError, ValueError):
+        return "free"
+    sql = text("SELECT tier FROM users WHERE id = :uid")
+    async with engine.begin() as conn:
+        row = (await conn.execute(sql, {"uid": uid_int})).first()
+    if not row or not row[0]:
+        return "free"
+    tier = str(row[0]).lower().strip()
+    return tier if tier in ("free", "premium", "advance") else "free"
 
 router = APIRouter(prefix="/macro", tags=["macro"])
 
@@ -453,3 +484,113 @@ async def release_detail(event_id: str, response: Response):
         enriched = await _enrich_release(conn, row)
         core = await _fetch_paired_core(conn, row)
     return {"release": enriched, "core_release": core}
+
+
+# ---------- Storyteller (tiered) ----------
+#
+# Free  → narrative_md (tek paragraf, var olan macro_narrative çıktısı) +
+#         upgrade_cta yapısı
+# Premium → macro_stories.story_md (tier='premium'), 4-5 paragraf hikaye
+# Advance → macro_stories.story_md (tier='advance'), 6-7 paragraf + senaryo
+#
+# Optional auth: JWT'siz çağrı → tier='free'.
+
+_STORY_CACHE_HEADER = "public, max-age=120, stale-while-revalidate=300"
+
+
+@router.get("/story/{event_id:path}")
+async def get_story(
+    event_id: str,
+    response: Response,
+    authorization: Optional[str] = Header(None),
+):
+    """Tiered story view. JWT optional — anonymous → free preview.
+
+    Response shape (consistent across tiers):
+    {
+      "event_id": "...",
+      "tier_active": "free|premium|advance",
+      "narrative_md": "..." (free hap, her tier'da dolu),
+      "story": {                       # null for free
+        "tier": "premium|advance",
+        "story_md": "...",
+        "generated_at": "ISO",
+        "sources_cited": ["FRED:CPIAUCSL", "BLS"],
+        "sources_registry": {code: {name, url}}
+      },
+      "upgrade_cta": null | {           # null for advance
+        "target_tier": "premium|advance",
+        "reason": "..."
+      }
+    }
+    """
+    response.headers["Cache-Control"] = _STORY_CACHE_HEADER
+
+    tier = await _peek_tier(authorization)
+
+    sql_release = text("""
+        SELECT event_id, event_type, country, released_at,
+               narrative_md, source_url
+        FROM macro_releases WHERE event_id = :eid
+    """)
+    async with engine.begin() as conn:
+        rel = (await conn.execute(sql_release, {"eid": event_id})).mappings().first()
+        if not rel:
+            return {"event_id": event_id, "release": None}
+
+        # Premium veya Advance ise macro_stories'i çek
+        story_payload = None
+        if tier in ("premium", "advance"):
+            # Advance kullanıcı önce 'advance' arasın, yoksa 'premium'a fallback
+            tier_order = ["advance", "premium"] if tier == "advance" else ["premium"]
+            sql_story = text("""
+                SELECT tier, story_md, meta, generated_at
+                FROM macro_stories
+                WHERE event_id = :eid AND tier = ANY(:tiers)
+                ORDER BY array_position(:tiers, tier) ASC
+                LIMIT 1
+            """)
+            srow = (await conn.execute(sql_story, {
+                "eid": event_id, "tiers": tier_order,
+            })).mappings().first()
+            if srow:
+                meta = srow["meta"] or {}
+                if isinstance(meta, str):
+                    import json as _json
+                    try:
+                        meta = _json.loads(meta)
+                    except Exception:
+                        meta = {}
+                story_payload = {
+                    "tier": srow["tier"],
+                    "story_md": srow["story_md"],
+                    "generated_at": srow["generated_at"].isoformat() if srow["generated_at"] else None,
+                    "sources_cited": (meta.get("validator", {}) or {}).get("sources_cited", []),
+                    "sources_registry": meta.get("sources_registry", {}),
+                }
+
+    upgrade_cta = None
+    if tier == "free":
+        upgrade_cta = {
+            "target_tier": "premium",
+            "reason": "Tam yorum, ağırlık matematiği, Fed reaksiyonu ve "
+                      "portföy etkisi Premium aboneliği ile erişilir.",
+        }
+    elif tier == "premium" and story_payload and story_payload["tier"] == "premium":
+        upgrade_cta = {
+            "target_tier": "advance",
+            "reason": "Trend matematiği, senaryo hesabı ve revizyon push "
+                      "alert'leri Advance aboneliği ile erişilir.",
+        }
+
+    return {
+        "event_id": event_id,
+        "tier_active": tier,
+        "event_type": rel["event_type"],
+        "country": rel["country"],
+        "released_at": rel["released_at"].isoformat() if rel["released_at"] else None,
+        "narrative_md": rel["narrative_md"],  # Free hap, her tier'da görünür
+        "source_url": rel["source_url"],
+        "story": story_payload,
+        "upgrade_cta": upgrade_cta,
+    }
