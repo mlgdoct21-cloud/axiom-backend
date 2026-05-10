@@ -763,10 +763,16 @@ _METRIC_PARAGRAPH_NAMES: dict[str, tuple[str, ...]] = {
 }
 
 
+_TEMPORAL_WINDOW_CHARS = 100  # metric bahsi ±100 char içinde marker yoksa violation
+
+
 def _find_temporal_violations(
     paragraphs: list[str], stale_metrics: dict[str, dict]
 ) -> list[dict]:
-    """Stale metrikler paragraflarda tarih damgası olmadan geçiyor mu?
+    """Stale metrik paragrafta tarih damgası olmadan geçiyor mu?
+    Paragraf-level değil — metrik bahsinin ±100 char penceresinde marker
+    aranır. Aksi halde 'paragrafın başka yerinde Cuma kapanışı var' diye
+    yanlış pass verebilir (false-negative).
     Returns: [{paragraph_idx, metric, age_days, data_date, excerpt}]."""
     out: list[dict] = []
     if not stale_metrics:
@@ -775,23 +781,32 @@ def _find_temporal_violations(
         if not isinstance(p, str):
             continue
         low = p.lower()
-        has_marker = any(m in low for m in _DATE_MARKERS_TR)
-        if has_marker:
-            continue
         for m_key, info in stale_metrics.items():
             names = _METRIC_PARAGRAPH_NAMES.get(m_key)
             if not names:
                 continue
             if isinstance(names, str):
                 names = (names,)
-            if any(n in low for n in names):
-                out.append({
-                    "paragraph_idx": i,
-                    "metric": m_key,
-                    "age_days": info.get("age_days"),
-                    "data_date": info.get("data_date"),
-                    "excerpt": p[:160],
-                })
+            # Metriğin ilk bahsi
+            metric_idx = -1
+            for n in names:
+                idx = low.find(n)
+                if idx >= 0 and (metric_idx < 0 or idx < metric_idx):
+                    metric_idx = idx
+            if metric_idx < 0:
+                continue  # bu metrik paragrafta geçmiyor
+            lo = max(0, metric_idx - _TEMPORAL_WINDOW_CHARS)
+            hi = min(len(low), metric_idx + _TEMPORAL_WINDOW_CHARS)
+            window = low[lo:hi]
+            if any(m in window for m in _DATE_MARKERS_TR):
+                continue
+            out.append({
+                "paragraph_idx": i,
+                "metric": m_key,
+                "age_days": info.get("age_days"),
+                "data_date": info.get("data_date"),
+                "excerpt": p[max(0, metric_idx - 40):metric_idx + 120],
+            })
     return out
 
 
