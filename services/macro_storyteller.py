@@ -444,10 +444,14 @@ def _nfp_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
     paired = payload.get("paired") or {}
     unrate_actual = float(paired.get("actual_value")) if paired.get("actual_value") is not None else None
     unrate_prior = float(paired.get("prior_value")) if paired.get("prior_value") is not None else None
-    unrate_delta_pp = (
+    unrate_delta_pp_raw = (
         round(unrate_actual - unrate_prior, 2)
         if unrate_actual is not None and unrate_prior is not None else None
     )
+    # Delta sıfırsa rakamı tamamen payload'dan çıkar; LLM "0.0 puan değişim"
+    # diye çift-bildirim yapmasın diye fiziksel olarak yazamayacak.
+    unrate_delta_pp = unrate_delta_pp_raw if (unrate_delta_pp_raw not in (None, 0, 0.0)) else None
+    unrate_change_label = "sabit" if unrate_delta_pp_raw == 0 else None
 
     history = payload.get("history") or []
     # NFP için 3-ay rolling = son 3 ayın change_k ortalaması
@@ -479,6 +483,7 @@ def _nfp_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
             "actual_pct": unrate_actual,
             "prior_pct": unrate_prior,
             "delta_pp": unrate_delta_pp,
+            "change_label": unrate_change_label,  # delta=0 ise "sabit"
             "source_code": "FRED:UNRATE",
         } if paired else None,
         "trend": {
@@ -493,6 +498,8 @@ def _nfp_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
     # NOT: actual/prior (158545/158637) whitelist'e girmiyor — hikayede o
     # absolute level rakamı yer almamalı, sadece change_k.
+    # unrate_delta_pp=0 da whitelist'e girmiyor (0 zaten sentinel olarak
+    # otomatik ekleniyor + change_label='sabit' anlatım yapacak).
     allowed_inputs = [
         change_k, expected_change_k, surprise_k,
         unrate_actual, unrate_prior, unrate_delta_pp,
@@ -562,9 +569,10 @@ def _nfp_prompt(llm_input: dict, tier: Tier) -> str:
         "8. 'beklenti' SADECE expected_change_k dolu ise. None ise yazma.\n"
         "9. Sayı birimleri NFP için 'bin' (K) — '92 bin istihdam' veya "
         "'92K' yaz, '92.000' yazma (INPUT'ta 92, kullanıcıya bin).\n"
-        "10. SIFIR DELTA: change_k, surprise_k veya unrate_delta_pp tam 0 "
-        "ise 'sabit kaldı' / 'değişmedi' diye anlat; '0.0 puan değişim' gibi "
-        "rakamlı çift-bildirim YAPMA.\n"
+        "10. SIFIR DELTA: INPUT'ta `change_label: \"sabit\"` veya delta_pp "
+        "null ise paragrafta '0' rakamını veya 'puan' birimini KESİNLİKLE "
+        "YAZMA. Sadece 'sabit kaldı' / 'değişmedi' diye anlat. Örnek: "
+        "'işsizlik %4.3 [FRED:UNRATE] seviyesinde sabit kaldı.' (devam yok).\n"
         "11. TARİH: paragrafta sadece INPUT'taki `release_date` field'ında "
         "yazıldığı gibi kullan ('1 Nisan 2026'). ISO formatı veya köşeli "
         "parantezli timestamp YAZMA.\n"
