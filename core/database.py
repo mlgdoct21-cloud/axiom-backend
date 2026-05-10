@@ -42,9 +42,9 @@ engine_kwargs = {
 # SQLite single-connection olduğu için pool config sadece PostgreSQL'de anlamlı
 if "sqlite" not in DATABASE_URL:
     engine_kwargs.update({
-        "pool_size": int(os.getenv("DB_POOL_SIZE", "10")),
-        "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "20")),
-        "pool_timeout": int(os.getenv("DB_POOL_TIMEOUT", "30")),
+        "pool_size": int(os.getenv("DB_POOL_SIZE", "5")),
+        "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "10")),
+        "pool_timeout": int(os.getenv("DB_POOL_TIMEOUT", "10")),
     })
 
 engine = create_async_engine(DATABASE_URL, **engine_kwargs)
