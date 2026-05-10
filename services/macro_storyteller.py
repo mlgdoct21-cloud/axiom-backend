@@ -101,6 +101,29 @@ _SOURCES: dict[str, SourceCitation] = {
 }
 
 
+# ---------- Date helpers ----------
+
+_TR_MONTHS = (
+    "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+    "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık",
+)
+
+
+def _format_tr_date(dt) -> Optional[str]:
+    """ISO datetime → '1 Nisan 2026' okunabilir Türkçe format.
+
+    Model paragraf içinde ISO formatı (2026-04-01T00:00:00+00:00) yapıştırdığında
+    çirkin duruyordu. Payload'a önceden human-readable formla geçiriyoruz, modele
+    sadece bunu yazması söyleniyor.
+    """
+    if dt is None:
+        return None
+    try:
+        return f"{dt.day} {_TR_MONTHS[dt.month - 1]} {dt.year}"
+    except Exception:
+        return None
+
+
 # ---------- Validator ----------
 
 # Sayı sonrası 60 char penceresinde [SRC] etiketi aramak için
@@ -356,7 +379,7 @@ def _cpi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
         sources_used.append("FRED:CPILFESL")
 
     llm_input = {
-        "release_date": payload["released_at"].isoformat() if payload.get("released_at") else None,
+        "release_date": _format_tr_date(payload.get("released_at")),
         "country": payload.get("country"),
         "headline_cpi": {
             "actual_index": actual,
@@ -441,7 +464,7 @@ def _nfp_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
         sources_used.append("FRED:UNRATE")
 
     llm_input = {
-        "release_date": payload["released_at"].isoformat() if payload.get("released_at") else None,
+        "release_date": _format_tr_date(payload.get("released_at")),
         "country": payload.get("country"),
         "headline_nfp": {
             # NOT: total_payrolls level (158545) hikayeye girmemeli — sayı çok
@@ -539,7 +562,13 @@ def _nfp_prompt(llm_input: dict, tier: Tier) -> str:
         "8. 'beklenti' SADECE expected_change_k dolu ise. None ise yazma.\n"
         "9. Sayı birimleri NFP için 'bin' (K) — '92 bin istihdam' veya "
         "'92K' yaz, '92.000' yazma (INPUT'ta 92, kullanıcıya bin).\n"
-        "10. Çıktı sadece JSON; satır sonları için \\n.\n"
+        "10. SIFIR DELTA: change_k, surprise_k veya unrate_delta_pp tam 0 "
+        "ise 'sabit kaldı' / 'değişmedi' diye anlat; '0.0 puan değişim' gibi "
+        "rakamlı çift-bildirim YAPMA.\n"
+        "11. TARİH: paragrafta sadece INPUT'taki `release_date` field'ında "
+        "yazıldığı gibi kullan ('1 Nisan 2026'). ISO formatı veya köşeli "
+        "parantezli timestamp YAZMA.\n"
+        "12. Çıktı sadece JSON; satır sonları için \\n.\n"
     )
 
 
@@ -602,7 +631,12 @@ def _cpi_prompt(llm_input: dict, tier: Tier) -> str:
         "None ise beklenti yazma.\n"
         "9. Emoji bölüm başlıklarında olabilir (📊🔬⚖️🎯💡) — paragraf içinde "
         "abartma.\n"
-        "10. Çıktı sadece JSON — story_md tek string, satır sonları için \\n.\n"
+        "10. SIFIR DELTA: mom_pct veya surprise_mom_pp tam 0 ise 'değişmedi' "
+        "diye anlat, rakamı verme.\n"
+        "11. TARİH: paragrafta INPUT'taki `release_date` field'ında yazılan "
+        "formatı kullan ('1 Mart 2026'). ISO formatı veya köşeli parantezli "
+        "timestamp YAZMA.\n"
+        "12. Çıktı sadece JSON — story_md tek string, satır sonları için \\n.\n"
     )
 
 
