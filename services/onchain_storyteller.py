@@ -55,6 +55,41 @@ _METRIC_DATE_FIELD: dict[str, str] = {
     "coinbase_premium": "ts",
 }
 
+# Per-metric stale eşiği (gün). Eşik aşılırsa context'te is_stale=True işaretlenir
+# ve drivers.supports/pressures listesinden ÇIKARILIR (Gemini'nin ana odağına
+# girmesin). Hash/miner_outflow/miner_reserve zaten 7G trend metriği — eşik
+# yüksek; kısa-vade pencere metrikleri (spot_taker, funding) için sıkı.
+_METRIC_FRESHNESS_LIMIT: dict[str, int] = {
+    "spot_taker": 2,
+    "funding_rates": 2,
+    "coinbase_premium": 2,
+    "exchange_netflow": 2,
+    "stablecoin_inflow": 2,
+    "btc_liquidations": 2,
+    "open_interest": 2,
+    "korean_premium": 2,
+    "leverage_ratio": 2,
+    "whale_ratio": 3,
+    "mpi": 3,
+    "mvrv": 3,
+    "nupl": 3,
+    "sopr": 3,
+    "sopr_ratio": 3,
+    "puell": 3,
+    "realized_price": 3,
+    "miner_outflow": 7,
+    "miner_reserve": 10,
+    "hash_rate": 10,
+}
+_DEFAULT_FRESHNESS_LIMIT = 3
+
+
+def _is_stale(metric: str, age_days: Optional[int]) -> bool:
+    if age_days is None:
+        return False
+    limit = _METRIC_FRESHNESS_LIMIT.get(metric, _DEFAULT_FRESHNESS_LIMIT)
+    return age_days > limit
+
 
 def _today_context() -> dict:
     """LLM'in 'bugün' kavramını netleştirmesi için. is_weekend=true iken
@@ -90,7 +125,7 @@ def _age_days(date_str: Optional[str], today: date) -> Optional[int]:
 
 def _compact_signals(snapshot: dict, today: date) -> list[dict]:
     """Snapshot içindeki signals dict'ini sıkıştırılmış liste olarak döner.
-    Her satırda metrik adı, değer, ne diyor + VERİ TARİHİ + YAŞ (gün).
+    Her satırda metrik adı, değer, ne diyor + VERİ TARİHİ + YAŞ (gün) + STALE flag.
     LLM stale veriye 'anlık' diyemesin diye age_days zorunlu alan."""
     out: list[dict] = []
     signals = snapshot.get("signals") or {}
@@ -98,20 +133,42 @@ def _compact_signals(snapshot: dict, today: date) -> list[dict]:
         if not isinstance(s, dict):
             continue
         d = _extract_metric_date(snapshot, key)
+        age = _age_days(d, today)
         out.append({
             "metric": key,
             "value": s.get("value_str", ""),
             "label": s.get("label_tr", ""),
             "direction": s.get("signal", "NEUTRAL"),
             "data_date": d,
-            "age_days": _age_days(d, today),
+            "age_days": age,
+            "is_stale": _is_stale(key, age),
         })
     return out
 
 
-def _top_contributors(snapshot: dict, n: int = 3) -> dict:
-    """En etkili 3 pozitif + 3 negatif signal — Gemini odağı belirlesin diye."""
+def _stale_metrics_index(signals: list[dict]) -> dict[str, dict]:
+    """Stale metrikleri {metric_key: {age_days, data_date}} olarak döner —
+    validator ve drivers filtresinde kullanılır."""
+    out: dict[str, dict] = {}
+    for s in signals:
+        if s.get("is_stale"):
+            out[s["metric"]] = {
+                "age_days": s.get("age_days"),
+                "data_date": s.get("data_date"),
+            }
+    return out
+
+
+def _top_contributors(
+    snapshot: dict,
+    n: int = 3,
+    exclude_stale: Optional[set[str]] = None,
+) -> dict:
+    """En etkili 3 pozitif + 3 negatif signal — Gemini odağı belirlesin diye.
+    exclude_stale: bu set'teki metrik anahtarları drivers'a girmez (Layer 3)."""
     breakdown = snapshot.get("score_breakdown") or []
+    if exclude_stale:
+        breakdown = [b for b in breakdown if b.get("metric") not in exclude_stale]
     pos = sorted(
         [b for b in breakdown if (b.get("contribution") or 0) > 0],
         key=lambda x: -(x.get("contribution") or 0),
@@ -213,6 +270,13 @@ async def _build_context(snapshot: dict) -> dict:
     sym = snapshot.get("symbol")
     today_ctx = _today_context()
     today_d = date.fromisoformat(today_ctx["today_utc"])
+    signals = _compact_signals(snapshot, today_d)
+    stale = _stale_metrics_index(signals)
+    if stale:
+        logger.info(
+            f"storyteller {sym}: stale metrics excluded from drivers: "
+            f"{ {k: v['age_days'] for k, v in stale.items()} }"
+        )
     return {
         "symbol": sym,
         "today": today_ctx,
@@ -220,8 +284,9 @@ async def _build_context(snapshot: dict) -> dict:
         "score_zone": snapshot.get("score_zone_tr"),
         "score_summary": snapshot.get("score_summary"),
         "overall": snapshot.get("overall_tr"),
-        "signals": _compact_signals(snapshot, today_d),
-        "drivers": _top_contributors(snapshot),
+        "signals": signals,
+        "stale_metrics": stale,
+        "drivers": _top_contributors(snapshot, exclude_stale=set(stale.keys())),
         "direction_source": _direction_source(snapshot),
         "etf_flow": await _etf_block(sym, today_ctx) if sym else None,
         "fetched_at": snapshot.get("fetched_at"),
@@ -653,6 +718,83 @@ def _validate_against_context(
     return parsed, bad
 
 
+# ── Temporal validator: stale metrik 'anlık' diye narrate ediliyor mu ────
+#
+# Stale metrik (age_days >= eşik) paragrafta geçiyorsa, paragrafta zorunlu
+# DATE_MARKER (ay adı, 'gün önce', 'kapanış', 'son ölçüm') bulunmalı; aksi
+# halde retry tetikler. Bu, prompt'taki "age 2-3 → açık tarih" kuralının
+# regex emniyet ağı.
+
+# Türkçe ay isimleri + tarih marker kelimeleri — paragrafta bunlardan biri
+# varsa "stale metrik tarihsiz narrate" suçlaması düşer.
+_DATE_MARKERS_TR = (
+    "ocak", "şubat", "mart", "nisan", "mayıs", "haziran",
+    "temmuz", "ağustos", "eylül", "ekim", "kasım", "aralık",
+    "pazartesi", "salı", "çarşamba", "perşembe", "cuma", "cumartesi", "pazar",
+    "gün önce", "gün önceki", "gün önceden", "kapanış", "kapanışı",
+    "son raporlanan", "son ölçüm", "son okuma", "geçen", "önceki",
+    "haftalık", "7g", "7 g", "günlük", "tarihinde", "tarihli",
+    "geçen hafta", "geçtiğimiz",
+)
+
+# Metrik anahtarı → paragrafta görünme ihtimali olan Türkçe ifadeler.
+# Birden çok ifade veriyoruz çünkü Gemini farklı çeviriler kullanabilir.
+_METRIC_PARAGRAPH_NAMES: dict[str, tuple[str, ...]] = {
+    "spot_taker": ("spot alıcı/satıcı", "spot taker", "alıcı/satıcı oranı"),
+    "funding_rates": ("fonlama oran", "funding"),
+    "coinbase_premium": ("coinbase prim", "coinbase spot"),
+    "exchange_netflow": ("borsa akış", "exchange netflow", "netflow"),
+    "stablecoin_inflow": ("stablecoin"),
+    "btc_liquidations": ("tasfiye", "liquidation", "likidasyon"),
+    "open_interest": ("açık pozisyon", "open interest"),
+    "korean_premium": ("upbit prim", "korean premium", "kore prim"),
+    "leverage_ratio": ("kaldıraç oran", "leverage"),
+    "whale_ratio": ("balina oran", "whale"),
+    "mpi": ("mpi", "madenci pozisyon"),
+    "mvrv": ("mvrv", "gerçekleşmiş kâr/zarar"),
+    "nupl": ("nupl", "net kâr/zarar"),
+    "sopr": ("sopr",),
+    "sopr_ratio": ("sopr ratio", "uzun/kısa vadeci"),
+    "puell": ("puell",),
+    "realized_price": ("gerçekleşmiş fiyat", "realized price", "maliyet ortalaması"),
+    "miner_outflow": ("madenci transfer", "miner outflow"),
+    "miner_reserve": ("madenci stoğu", "madenci rezerv"),
+    "hash_rate": ("hash",),
+}
+
+
+def _find_temporal_violations(
+    paragraphs: list[str], stale_metrics: dict[str, dict]
+) -> list[dict]:
+    """Stale metrikler paragraflarda tarih damgası olmadan geçiyor mu?
+    Returns: [{paragraph_idx, metric, age_days, data_date, excerpt}]."""
+    out: list[dict] = []
+    if not stale_metrics:
+        return out
+    for i, p in enumerate(paragraphs):
+        if not isinstance(p, str):
+            continue
+        low = p.lower()
+        has_marker = any(m in low for m in _DATE_MARKERS_TR)
+        if has_marker:
+            continue
+        for m_key, info in stale_metrics.items():
+            names = _METRIC_PARAGRAPH_NAMES.get(m_key)
+            if not names:
+                continue
+            if isinstance(names, str):
+                names = (names,)
+            if any(n in low for n in names):
+                out.append({
+                    "paragraph_idx": i,
+                    "metric": m_key,
+                    "age_days": info.get("age_days"),
+                    "data_date": info.get("data_date"),
+                    "excerpt": p[:160],
+                })
+    return out
+
+
 # ── Çelişki validator: aynı paragrafta zıt verdict ────────────────────────
 #
 # Aynı paragrafta uzlaştırma cümlesi olmadan birbirine zıt iki ifade
@@ -770,9 +912,17 @@ async def get_onchain_story(symbol: str = "BTC", *, force: bool = False) -> dict
     raw_out = await _call_gemini(prompt)
     parsed, bad = _validate_against_context(raw_out or {}, ctx)
     contradictions = _find_contradictions(parsed["paragraphs"]) if parsed else []
+    temporal = (
+        _find_temporal_violations(parsed["paragraphs"], ctx.get("stale_metrics") or {})
+        if parsed else []
+    )
 
-    # 2. tur — sayı uydurma VEYA uzlaştırılmamış çelişki varsa retry
-    needs_retry = (not parsed and bad) or (parsed and contradictions)
+    # 2. tur — sayı uydurma VEYA çelişki VEYA stale-metrik tarihsiz narrate
+    needs_retry = (
+        (not parsed and bad)
+        or (parsed and contradictions)
+        or (parsed and temporal)
+    )
     if needs_retry:
         retry_notes = []
         if bad:
@@ -797,6 +947,24 @@ async def get_onchain_story(symbol: str = "BTC", *, force: bool = False) -> dict
                 "iki ifadeyi ya AYRI paragraflara taşı ya da AÇIK uzlaştırma "
                 "cümlesi ekle (zaman penceresi farkı, vehicle farkı, vs)."
             )
+        if temporal:
+            samples_t = "; ".join(
+                f"P{t['paragraph_idx']+1}: {t['metric']} "
+                f"(age={t['age_days']}g, data_date={t['data_date']}) "
+                f"→ '{t['excerpt']}…'"
+                for t in temporal[:3]
+            )
+            logger.warning(
+                f"storyteller {sym}: temporal violations: {samples_t}"
+            )
+            retry_notes.append(
+                "Stale metrikler (>=2 gün eski) tarih damgası OLMADAN narrate "
+                f"edilmiş:\n  {samples_t}\n"
+                "ZAMAN ÇERÇEVESİ kuralı: age_days >= 2 olan metriği "
+                "yazarken AÇIK TARİH veya 'X gün önceki ölçümde' / 'Salı "
+                "kapanışında' gibi marker EKLE. 'anlık/şu an/şimdi/bugün' "
+                "stale metrik için YASAK."
+            )
         if bad:
             logger.warning(
                 f"storyteller {sym}: hallucinated numbers: {bad[:5]} — retrying"
@@ -814,8 +982,22 @@ async def get_onchain_story(symbol: str = "BTC", *, force: bool = False) -> dict
         contradictions2 = (
             _find_contradictions(parsed2["paragraphs"]) if parsed2 else []
         )
-        if parsed2 and len(contradictions2) <= len(contradictions):
-            parsed, bad, contradictions = parsed2, bad2, contradictions2
+        temporal2 = (
+            _find_temporal_violations(
+                parsed2["paragraphs"], ctx.get("stale_metrics") or {}
+            ) if parsed2 else []
+        )
+        # 2. tur 1. tur'dan kötü değilse kabul (her iki kategoride de
+        # gerileme olmasın)
+        improved = (
+            parsed2
+            and len(contradictions2) <= len(contradictions)
+            and len(temporal2) <= len(temporal)
+        )
+        if improved:
+            parsed, bad, contradictions, temporal = (
+                parsed2, bad2, contradictions2, temporal2
+            )
 
     if not parsed:
         # 1. tur şema-fail veya 2 tur halüsinasyon — yine de düşmemek için
@@ -887,6 +1069,13 @@ async def get_onchain_story(symbol: str = "BTC", *, force: bool = False) -> dict
                  "pos": c["pos"], "neg": c["neg"]}
                 for c in contradictions[:3]
             ],
+            "temporal_violation_count": len(temporal),
+            "temporal_samples": [
+                {"p_idx": t["paragraph_idx"], "metric": t["metric"],
+                 "age_days": t["age_days"], "data_date": t["data_date"]}
+                for t in temporal[:3]
+            ],
+            "stale_metrics_excluded": list((ctx.get("stale_metrics") or {}).keys()),
             "auditor_ok": auditor_result["ok"],
             "auditor_issues": [
                 {"verdict": i.get("verdict"),
