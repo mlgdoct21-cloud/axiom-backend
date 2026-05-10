@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, date, timezone, timedelta
 from typing import Any, Optional
 
 import httpx
@@ -47,19 +47,64 @@ _SUPPORTED = ("BTC", "ETH", "XRP")
 
 # ── Snapshot → LLM context ────────────────────────────────────────────────
 
-def _compact_signals(snapshot: dict) -> list[dict]:
+_WEEKDAY_TR = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
+
+# Bazı metrikler 'date' yerine 'ts' alanında tutuyor
+_METRIC_DATE_FIELD: dict[str, str] = {
+    "funding_rates": "ts",
+    "coinbase_premium": "ts",
+}
+
+
+def _today_context() -> dict:
+    """LLM'in 'bugün' kavramını netleştirmesi için. is_weekend=true iken
+    ETF/funding/spot-taker verisi T-2/T-3 olur, prompt bunu zorunlu kılıyor."""
+    d = datetime.now(timezone.utc).date()
+    return {
+        "today_utc": d.isoformat(),
+        "weekday_tr": _WEEKDAY_TR[d.weekday()],
+        "is_weekend": d.weekday() >= 5,
+    }
+
+
+def _extract_metric_date(snapshot: dict, metric_key: str) -> Optional[str]:
+    """Snapshot[metric_key].date veya .ts'i 'YYYY-MM-DD' olarak döner."""
+    blk = snapshot.get(metric_key)
+    if not isinstance(blk, dict):
+        return None
+    field = _METRIC_DATE_FIELD.get(metric_key, "date")
+    raw = blk.get(field) or blk.get("date") or blk.get("ts")
+    if not raw:
+        return None
+    return str(raw)[:10]
+
+
+def _age_days(date_str: Optional[str], today: date) -> Optional[int]:
+    if not date_str:
+        return None
+    try:
+        return (today - date.fromisoformat(date_str[:10])).days
+    except Exception:
+        return None
+
+
+def _compact_signals(snapshot: dict, today: date) -> list[dict]:
     """Snapshot içindeki signals dict'ini sıkıştırılmış liste olarak döner.
-    LLM kısa bir tablo görsün — her satırda metrik adı, değer, ne diyor."""
+    Her satırda metrik adı, değer, ne diyor + VERİ TARİHİ + YAŞ (gün).
+    LLM stale veriye 'anlık' diyemesin diye age_days zorunlu alan."""
     out: list[dict] = []
     signals = snapshot.get("signals") or {}
     for key, s in signals.items():
         if not isinstance(s, dict):
             continue
+        d = _extract_metric_date(snapshot, key)
         out.append({
             "metric": key,
             "value": s.get("value_str", ""),
             "label": s.get("label_tr", ""),
             "direction": s.get("signal", "NEUTRAL"),
+            "data_date": d,
+            "age_days": _age_days(d, today),
         })
     return out
 
@@ -128,10 +173,12 @@ def _etf_verdict_tr(net_flow_usd: Optional[float], symbol: str) -> str:
     return "🟡 Nötr Kurumsal Akış (günlük)"
 
 
-async def _etf_block(symbol: str) -> Optional[dict]:
+async def _etf_block(symbol: str, today_ctx: dict) -> Optional[dict]:
     """BTC + ETH için ETF flow özeti — spot kurumsal talep göstergesi.
     Gemini'ye GÜNLÜK pencere etiketi + tek-kaynak verdict ile gider;
-    Coinbase Premium (anlık spot) ile karıştırılmasın."""
+    Coinbase Premium (anlık spot) ile karıştırılmasın.
+    Hafta sonunda 'trading_date_hint' Cuma kapanışını açıkça söyler — Gemini
+    'bugün kurumsal çıkış' diye yanlış narrate etmesin diye."""
     if symbol not in ("BTC", "ETH"):
         return None
     try:
@@ -142,6 +189,14 @@ async def _etf_block(symbol: str) -> Optional[dict]:
     if not flow:
         return None
     net_usd = flow.get("net_flow_usd")
+    if today_ctx.get("is_weekend"):
+        hint = (
+            f"Bugün {today_ctx['weekday_tr']} (hafta sonu) — bu rakam Cuma "
+            "kapanışına ait. 'bugün kurumsal çıkış' veya 'şu an' YASAK; "
+            "'Cuma kapanışında' veya 'geçen Cuma' diye yaz."
+        )
+    else:
+        hint = "Önceki iş günü kapanışıdır (T-1). 'günlük' pencere — anlık değil."
     return {
         "net_flow_usd": net_usd,
         "net_flow_coins": flow.get("net_flow_coins"),
@@ -149,22 +204,26 @@ async def _etf_block(symbol: str) -> Optional[dict]:
         "is_fresh": flow.get("is_fresh"),
         "age_hours": flow.get("age_hours"),
         "window": "günlük (T-1)",
+        "trading_date_hint": hint,
         "verdict_tr": _etf_verdict_tr(net_usd, symbol),
     }
 
 
 async def _build_context(snapshot: dict) -> dict:
     sym = snapshot.get("symbol")
+    today_ctx = _today_context()
+    today_d = date.fromisoformat(today_ctx["today_utc"])
     return {
         "symbol": sym,
+        "today": today_ctx,
         "axiom_score": snapshot.get("axiom_score"),
         "score_zone": snapshot.get("score_zone_tr"),
         "score_summary": snapshot.get("score_summary"),
         "overall": snapshot.get("overall_tr"),
-        "signals": _compact_signals(snapshot),
+        "signals": _compact_signals(snapshot, today_d),
         "drivers": _top_contributors(snapshot),
         "direction_source": _direction_source(snapshot),
-        "etf_flow": await _etf_block(sym) if sym else None,
+        "etf_flow": await _etf_block(sym, today_ctx) if sym else None,
         "fetched_at": snapshot.get("fetched_at"),
     }
 
@@ -346,6 +405,25 @@ def _build_prompt(ctx: dict) -> str:
         "metinde 'düşük giriş' veya eşdeğer ifade kullan; ASLA 'yüksek "
         "stablecoin akışı' yazma. Bir metriğin label'ı ile metnindeki "
         "verdict'in BİRBİRİYLE TUTARLI olmak zorunda.\n\n"
+        "### ZAMAN ÇERÇEVESİ (KRİTİK — yanıltıcı temporal claim YASAK):\n"
+        "INPUT.today.today_utc = bugünün tarihi. INPUT.today.weekday_tr = "
+        "bugünün günü (Pazartesi/.../Pazar). INPUT.today.is_weekend = hafta "
+        "sonu mu.\n"
+        "Her signals[] satırı `data_date` (metriğin gerçek ölçüm günü) ve "
+        "`age_days` (bugün − data_date) içerir. Bu alanları SAYILMAYAN "
+        "OBLİGATUVAR şekilde dikkate al:\n"
+        "  • age_days ≤ 1 → 'anlık', 'şu an', 'şimdi', 'bugün' KULLANILABİLİR.\n"
+        "  • age_days 2-3 → 'son raporlanan', 'X gün önceki ölçümde', "
+        "    'data_date'i AÇIK YAZ (örn 'Salı 7 Mayıs verisinde'). "
+        "    'anlık/şu an/şimdi' YASAK.\n"
+        "  • age_days ≥ 4 → 'X gün önceki son ölçüm' + AÇIK TARİH zorunlu; "
+        "    'anlık/şu an/şimdi/bugün' YASAK. Bu kadar eski veriyi 'mevcut "
+        "    durum' diye sunma — 'son güvenilir okuma' diye sun.\n"
+        "STALE METRİKLERİ HİÇ kullanmayacaksan da olur (drivers.supports/"
+        "pressures yeterince taze metrik içeriyorsa zayıf/eski olanı atla).\n"
+        "ETF flow için: INPUT.etf_flow.trading_date_hint ne diyorsa AYNEN "
+        "ona uy. is_weekend=true ise 'bugün ETF kanalında çıkış' YASAK — "
+        "'Cuma kapanışında ETF kanalında çıkış' yaz.\n\n"
         "### KESİN YASAKLAR:\n"
         "- Sayı UYDURMA — INPUT'taki signals[].value veya axiom_score "
         "  veya direction_source veya etf_flow alanlarından gelmeyen sayı YOK.\n"
