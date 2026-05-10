@@ -505,7 +505,7 @@ def _nfp_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
 def _nfp_prompt(llm_input: dict, tier: Tier) -> str:
     if tier == "premium":
-        word_min, word_max = 180, 480
+        word_min, word_max = 150, 500
         sections = (
             "(1) Manşet rakam (change_k) vs beklenti (expected_change_k) — "
             "sürprizi kelime ile anlat ('beklentinin üzerinde/altında geldi').\n"
@@ -574,7 +574,7 @@ def _nfp_prompt(llm_input: dict, tier: Tier) -> str:
 
 def _cpi_prompt(llm_input: dict, tier: Tier) -> str:
     if tier == "premium":
-        word_min, word_max = 180, 480
+        word_min, word_max = 150, 500
         sections = (
             "(1) Manşet vs beklenti — sürpriz büyüklüğü kelime ile anlatılır "
             "(z-score yazma).\n"
@@ -767,7 +767,7 @@ async def generate_story(
     llm_input, allowed, allowed_codes = payload_fn(payload)
     prompt = prompt_fn(llm_input, tier)
 
-    word_bounds = (180, 480) if tier == "premium" else (340, 680)
+    word_bounds = (150, 500) if tier == "premium" else (340, 680)
 
     llm_out = await _call_gemini(prompt)
     if not llm_out or not (llm_out.get("story_md") or "").strip():
