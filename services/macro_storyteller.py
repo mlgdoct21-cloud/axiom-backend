@@ -147,22 +147,37 @@ def _validate_story(
 ) -> ValidatorReport:
     rep = ValidatorReport()
 
-    # L1 — sayı whitelist
-    rep.unknown_numbers = validate_numbers(
+    # Yıl literal'leri (1900-2099) her iki katmandan da exempt — tarih damgası
+    # için "Şubat 2026" yazmanın citation chip'i olmamalı.
+    def _is_year_literal(d: Decimal, raw: str) -> bool:
+        if "%" in raw or "," in raw or "." in raw:
+            return False
+        try:
+            return Decimal("1900") <= d <= Decimal("2099") and d == d.to_integral_value()
+        except Exception:
+            return False
+
+    # L1 — sayı whitelist (yıllar exempt)
+    unk_all = validate_numbers(
         story_md, allowed_numbers, tolerance=Decimal("0.05"),
     )
+    rep.unknown_numbers = [
+        u for u in unk_all
+        if not _is_year_literal(Decimal(u.replace(",", ".")), u) if u
+    ]
 
-    # L2 — her sayının 60-char penceresinde [SRC] var mı
+    # L2 — her sayının 60-char penceresinde [SRC] var mı (yıllar exempt)
     missing: list[str] = []
     for m in _NUM_TOKEN_RE.finditer(story_md):
-        # Boilerplate sayıları (0, 1, 2 vb tek karakterli ve %0 değil) atla
         body = m.group(0).rstrip("%").replace(",", ".")
         try:
             d = Decimal(body)
         except Exception:
             continue
-        # Çok küçük integer'ları (paragraf/madde no gibi) atla — 0..10 hariç tut
-        # ama bunlar zaten allowed'a 0/100 olarak girer
+        # Yıl literal'i (1900-2099) — citation gerektirmez
+        if _is_year_literal(d, m.group(0)):
+            continue
+        # Çok küçük integer'ları (paragraf/madde no gibi) atla
         is_int = (d == d.to_integral_value())
         if is_int and abs(d) <= Decimal("10") and "%" not in m.group(0):
             continue
@@ -414,8 +429,9 @@ def _nfp_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
         "release_date": payload["released_at"].isoformat() if payload.get("released_at") else None,
         "country": payload.get("country"),
         "headline_nfp": {
-            "total_payrolls_k": actual,
-            "prior_total_payrolls_k": prior,
+            # NOT: total_payrolls level (158545) hikayeye girmemeli — sayı çok
+            # büyük ve model onu "158 bin" gibi yuvarlayıp hata yapıyor. Anlam
+            # taşıyan değişim rakamı `change_k`, asıl manşet o.
             "change_k": change_k,
             "expected_change_k": expected_change_k,
             "surprise_k": surprise_k,
@@ -437,8 +453,10 @@ def _nfp_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
         ],
     }
 
+    # NOT: actual/prior (158545/158637) whitelist'e girmiyor — hikayede o
+    # absolute level rakamı yer almamalı, sadece change_k.
     allowed_inputs = [
-        actual, prior, change_k, expected_change_k, surprise_k,
+        change_k, expected_change_k, surprise_k,
         unrate_actual, unrate_prior, unrate_delta_pp,
         avg_3m_change_k, avg_6m_change_k,
     ]
@@ -449,7 +467,7 @@ def _nfp_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
 def _nfp_prompt(llm_input: dict, tier: Tier) -> str:
     if tier == "premium":
-        word_min, word_max = 220, 480
+        word_min, word_max = 180, 480
         sections = (
             "(1) Manşet rakam (change_k) vs beklenti (expected_change_k) — "
             "sürprizi kelime ile anlat ('beklentinin üzerinde/altında geldi').\n"
@@ -462,7 +480,7 @@ def _nfp_prompt(llm_input: dict, tier: Tier) -> str:
             "yapma — INPUT'ta yok diye yazma."
         )
     else:  # advance
-        word_min, word_max = 380, 680
+        word_min, word_max = 340, 680
         sections = (
             "(1) Manşet (change_k) vs beklenti + tarihsel bağlam ('son X ayın "
             "en kötüsü' / 'en iyisi' INPUT history'sine bakarak).\n"
@@ -512,7 +530,7 @@ def _nfp_prompt(llm_input: dict, tier: Tier) -> str:
 
 def _cpi_prompt(llm_input: dict, tier: Tier) -> str:
     if tier == "premium":
-        word_min, word_max = 220, 480
+        word_min, word_max = 180, 480
         sections = (
             "(1) Manşet vs beklenti — sürpriz büyüklüğü kelime ile anlatılır "
             "(z-score yazma).\n"
@@ -523,7 +541,7 @@ def _cpi_prompt(llm_input: dict, tier: Tier) -> str:
             "(5) Aklında tut + 'Senin için 1-cümle' (BTC veya portföy)."
         )
     else:  # advance
-        word_min, word_max = 380, 680
+        word_min, word_max = 340, 680
         sections = (
             "(1) Manşet vs beklenti + tarihsel bağlam.\n"
             "(2) Çekirdek + süper çekirdek detayı.\n"
@@ -700,7 +718,7 @@ async def generate_story(
     llm_input, allowed, allowed_codes = payload_fn(payload)
     prompt = prompt_fn(llm_input, tier)
 
-    word_bounds = (220, 480) if tier == "premium" else (380, 680)
+    word_bounds = (180, 480) if tier == "premium" else (340, 680)
 
     llm_out = await _call_gemini(prompt)
     if not llm_out or not (llm_out.get("story_md") or "").strip():
