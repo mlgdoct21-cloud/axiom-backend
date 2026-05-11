@@ -94,8 +94,18 @@ _SOURCES: dict[str, SourceCitation] = {
         "FRED:PCEPILFE", "FRED Core PCE Price Index",
         "https://fred.stlouisfed.org/series/PCEPILFE",
     ),
+    "FRED:PPIFIS": SourceCitation(
+        "FRED:PPIFIS", "FRED PPI Final Demand",
+        "https://fred.stlouisfed.org/series/PPIFIS",
+    ),
+    "FRED:WPSFD49116": SourceCitation(
+        "FRED:WPSFD49116", "FRED Core PPI Final Demand (Less Foods & Energy)",
+        "https://fred.stlouisfed.org/series/WPSFD49116",
+    ),
+    # Legacy basket — eski PPIACO citation'larının resolve olabilmesi için tutuldu.
+    # Yeni stories PPIFIS + WPSFD49116 emit eder (basket switch 2026-05-11).
     "FRED:PPIACO": SourceCitation(
-        "FRED:PPIACO", "FRED Producer Price Index (All Commodities)",
+        "FRED:PPIACO", "FRED Producer Price Index (All Commodities, legacy)",
         "https://fred.stlouisfed.org/series/PPIACO",
     ),
     "BLS": SourceCitation(
@@ -282,7 +292,7 @@ async def _load_event_payload(event_id: str) -> Optional[dict]:
         payload = {k: row[k] for k in row.keys()}
         # Paired core (CPI ↔ CORE_CPI aynı released_at)
         et = (row["event_type"] or "").upper()
-        pair_map = {"CPI": "CORE_CPI", "PCE": "CORE_PCE", "NFP": "UNRATE"}
+        pair_map = {"CPI": "CORE_CPI", "PCE": "CORE_PCE", "PPI": "CORE_PPI", "NFP": "UNRATE"}
         pair = pair_map.get(et)
         payload["paired"] = None
         if pair and row["released_at"]:
@@ -814,8 +824,9 @@ def _pce_prompt(llm_input: dict, tier: Tier) -> str:
 
 def _ppi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
     """PPI = üretici fiyat endeksi. CPI'dan 1-3 ay önce hareket eder (pipeline
-    basıncı). Bizim DB'de paired CORE_PPI yok (FRED PPIFIS henüz adapter'da
-    yok), o yüzden sadece manşet + 3m/6m trend.
+    basıncı). 2026-05-11 basket switch: headline FRED:PPIFIS (Final Demand SA,
+    market-standard), core FRED:WPSFD49116 (Final Demand Less Foods & Energy
+    SA). Paired core CPI/PCE pattern'iyle aynı.
     """
     actual = float(payload["actual_value"]) if payload.get("actual_value") is not None else None
     prior = float(payload["prior_value"]) if payload.get("prior_value") is not None else None
@@ -833,11 +844,22 @@ def _ppi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
         if mom is not None and expected_mom is not None else None
     )
 
+    paired = payload.get("paired") or {}
+    core_actual = float(paired.get("actual_value")) if paired.get("actual_value") is not None else None
+    core_prior = float(paired.get("prior_value")) if paired.get("prior_value") is not None else None
+    core_mom = _pct(core_actual, core_prior)
+    core_expected_mom = (
+        float(paired.get("expected_mom_pct"))
+        if paired.get("expected_mom_pct") is not None else None
+    )
+
     history = payload.get("history") or []
     avg_3m_mom = _mom_3m_avg(history, n=3)
     avg_6m_mom = _mom_3m_avg(history, n=6)
 
-    sources_used = ["FRED:PPIACO", "BLS"]
+    sources_used = ["FRED:PPIFIS", "BLS"]
+    if paired:
+        sources_used.append("FRED:WPSFD49116")
 
     llm_input = {
         "release_date": _format_tr_date(payload.get("released_at")),
@@ -849,8 +871,15 @@ def _ppi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
             "expected_mom_pct": expected_mom,
             "expected_yoy_pct": expected_yoy,
             "surprise_mom_pp": surprise_mom_pp,
-            "source_code": "FRED:PPIACO",
+            "source_code": "FRED:PPIFIS",
         },
+        "core_ppi": {
+            "actual_index": core_actual,
+            "prior_index": core_prior,
+            "mom_pct": core_mom,
+            "expected_mom_pct": core_expected_mom,
+            "source_code": "FRED:WPSFD49116",
+        } if paired else None,
         "trend": {
             "mom_avg_3m_pct": avg_3m_mom,
             "mom_avg_6m_pct": avg_6m_mom,
@@ -863,6 +892,7 @@ def _ppi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
     allowed_inputs = [
         actual, prior, mom, expected_mom, expected_yoy, surprise_mom_pp,
+        core_actual, core_prior, core_mom, core_expected_mom,
         avg_3m_mom, avg_6m_mom,
     ]
     allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
@@ -874,33 +904,39 @@ def _ppi_prompt(llm_input: dict, tier: Tier) -> str:
     if tier == "premium":
         word_min, word_max = 150, 500
         sections = (
-            "(1) Manşet PPI vs beklenti — sürpriz büyüklüğü kelime ile anlat.\n"
-            "(2) PPI ne anlama gelir kavramı — üretici maliyeti, CPI'ya 1-3 ay "
-            "önden hareket eden 'pipeline basıncı'. Kavram olarak anlat, fake "
-            "lead lag rakamı yazma.\n"
-            "(3) 3-aylık MoM trend — yön net mi yoksa volatil mi.\n"
+            "(1) Manşet PPI Final Demand vs beklenti — sürpriz büyüklüğü kelime "
+            "ile anlat.\n"
+            "(2) Çekirdek PPI (gıda + enerji hariç) — Fed bunu manşet PPI'dan "
+            "neden daha çok takip eder (volatil emtia gürültüsü çıkarılmış, "
+            "altta yatan üretici fiyat baskısını gösterir). KAVRAM olarak "
+            "anlat, yeni rakam üretme.\n"
+            "(3) PPI ne demek — üretici maliyeti, CPI'ya 1-3 ay önden hareket "
+            "eden 'pipeline basıncı'. Kavram olarak anlat, fake lead-lag "
+            "rakamı yazma.\n"
             "(4) Tüketiciye geçiş — PPI yukarı çıkıyorsa şirket marjı sıkışır "
             "veya fiyatı tüketiciye yansır. Hangi senaryo daha olası, INPUT "
             "verisine bakarak kelime ile anlat.\n"
             "(5) Aklında tut + 'Senin için 1-cümle'."
         )
     else:  # advance
-        # PPI'da paired core (CORE_PPI) yok → payload doğal olarak yalın,
-        # min 280'e indirildi. _DECODER_WORD_BOUNDS ile validator senkron.
-        word_min, word_max = 280, 680
+        word_min, word_max = 340, 680
         sections = (
             "(1) Manşet vs beklenti + tarihsel bağlam (history'ye bakarak "
             "'son X ayın en yüksek/düşük MoM'u').\n"
-            "(2) PPI lead-CPI ilişkisi detayı — 'pipeline basıncı' kavramı + "
+            "(2) Çekirdek PPI detayı — gıda ve enerji çıkarılmış 'temiz' "
+            "üretici fiyat sinyali; manşet ile divergence varsa adlandır "
+            "(emtia-driven vs altta yatan demand-pull).\n"
+            "(3) PPI lead-CPI ilişkisi detayı — 'pipeline basıncı' kavramı + "
             "marj sıkışması tezi (somut lead-lag rakamı YAZMA, INPUT'ta yok).\n"
-            "(3) 3-ay ve 6-ay rolling — momentum trendi (yön + ivme).\n"
-            "(4) Supply-side vs demand-side enflasyon ayrımı — PPI hızlı yukarı "
-            "çıkıyorsa supply, CPI önde ise demand. Kavramsal anlat.\n"
-            "(5) Fed kararına etki — Fed PPI'a direkt bakmaz ama 'core PCE'ye "
-            "geçiş kanalı' okuyabilir.\n"
-            "(6) Risk dengesi — emtia + enerji PPI'ı tetikliyorsa hangi sektör "
+            "(4) 3-ay ve 6-ay rolling — momentum trendi (yön + ivme).\n"
+            "(5) Supply-side vs demand-side enflasyon ayrımı — manşet hızlı "
+            "yukarı + çekirdek yumuşaksa supply-driven, ikisi birlikte "
+            "yukarı ise demand-driven. Kavramsal anlat.\n"
+            "(6) Fed kararına etki — Fed PPI'a direkt bakmaz ama 'core PCE'ye "
+            "geçiş kanalı' okuyabilir. Çekirdek PPI'ın yönü kritik.\n"
+            "(7) Risk dengesi — emtia + enerji PPI'ı tetikliyorsa hangi sektör "
             "marjı en çok sıkışır (kavramsal, sayı yok).\n"
-            "(7) Aklında tut + 'Senin için 1-cümle' (DXY/BTC/altın yönü)."
+            "(8) Aklında tut + 'Senin için 1-cümle' (DXY/BTC/altın yönü)."
         )
 
     available_codes = [s["code"] for s in llm_input["available_sources"]]
@@ -919,10 +955,10 @@ def _ppi_prompt(llm_input: dict, tier: Tier) -> str:
         "1. Her sayı INPUT JSON'da geçen bir değer olmalı. Aritmetik yapma — "
         "mom_pct, surprise_mom_pp, avg_3m_mom_pct INPUT'ta hazır.\n"
         "2. HER sayının 60 karakter içinde [KAYNAK_KODU] olmalı — manşet, "
-        "beklenti, sürpriz, TREND ortalamaları (3-ay, 6-ay) DAHİL. "
-        f"Geçerli kodlar: {available_codes}. Örnekler: '%1.78 [FRED:PPIACO]', "
-        "'son 3 ay ortalaması %1.42 [FRED:PPIACO]', '6-aylık ortalama %1.10 "
-        "[FRED:PPIACO]'.\n"
+        "çekirdek, beklenti, sürpriz, TREND ortalamaları (3-ay, 6-ay) DAHİL. "
+        f"Geçerli kodlar: {available_codes}. Örnekler: '%0.32 [FRED:PPIFIS]', "
+        "'çekirdek %0.18 [FRED:WPSFD49116]', 'son 3 ay ortalaması %0.28 "
+        "[FRED:PPIFIS]', '6-aylık ortalama %0.21 [FRED:PPIFIS]'.\n"
         "3. Politik yorum YASAK.\n"
         "4. Mutlaklık YASAK ('kesin', 'garanti', 'asla').\n"
         "5. Yatırım tavsiyesi YASAK.\n"
@@ -1026,13 +1062,10 @@ _DECODER_DISPATCH = {
     "PPI": (_ppi_payload, _ppi_prompt),
 }
 
-# Per-decoder word count bounds. PPI'da paired core yok (FRED PPIFIS adapter
-# yok); payload doğal olarak daha yalın → Advance min 340 imkansız, 280'e
-# çekildi. CORE_PPI eklendiğinde 340'a geri çekilebilir.
+# Per-decoder word count bounds. PPI paired core eklendi (2026-05-11 basket
+# switch: PPIFIS + WPSFD49116) → Advance default 340'a revert.
 _DEFAULT_BOUNDS = {"premium": (150, 500), "advance": (340, 680)}
-_DECODER_WORD_BOUNDS = {
-    "PPI": {"premium": (150, 500), "advance": (280, 680)},
-}
+_DECODER_WORD_BOUNDS = {}
 
 
 async def generate_story(

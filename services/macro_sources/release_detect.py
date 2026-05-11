@@ -46,6 +46,7 @@ _FRED_EVENT_TYPE = {
     "fred_jobless_continuing": "JOBLESS_CONTINUING",
     "fred_retail_sales": "RETAIL_SALES",
     "fred_ppi": "PPI",
+    "fred_core_ppi": "CORE_PPI",
     "fred_housing_starts": "HOUSING_STARTS",
     "fred_gdp": "GDP",
 }

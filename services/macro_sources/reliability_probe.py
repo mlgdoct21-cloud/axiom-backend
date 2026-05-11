@@ -61,6 +61,7 @@ SOURCE_INTERVAL: dict[str, timedelta] = {
     "fred_jobless_continuing": timedelta(minutes=30),
     "fred_retail_sales": timedelta(minutes=60),
     "fred_ppi": timedelta(minutes=60),
+    "fred_core_ppi": timedelta(minutes=60),
     "fred_housing_starts": timedelta(minutes=60),
     "fred_gdp": timedelta(minutes=60),
     "kalshi_fed": timedelta(minutes=60),
@@ -81,7 +82,7 @@ SOURCE_INTERVAL: dict[str, timedelta] = {
 _FRED_SOURCES = (
     "fred_cpi", "fred_core_cpi", "fred_nfp", "fred_unrate", "fred_pce", "fred_core_pce",
     "fred_jobless_initial", "fred_jobless_continuing", "fred_retail_sales",
-    "fred_ppi", "fred_housing_starts", "fred_gdp",
+    "fred_ppi", "fred_core_ppi", "fred_housing_starts", "fred_gdp",
 )
 
 # Number of historical observations to fetch per probe. 13 lets the public
@@ -114,6 +115,7 @@ _STATES: dict[str, _SourceState] = {
     "fred_jobless_continuing": _SourceState(name="fred_jobless_continuing"),
     "fred_retail_sales": _SourceState(name="fred_retail_sales"),
     "fred_ppi": _SourceState(name="fred_ppi"),
+    "fred_core_ppi": _SourceState(name="fred_core_ppi"),
     "fred_housing_starts": _SourceState(name="fred_housing_starts"),
     "fred_gdp": _SourceState(name="fred_gdp"),
     "kalshi_fed": _SourceState(name="kalshi_fed"),

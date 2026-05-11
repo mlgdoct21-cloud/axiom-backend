@@ -37,7 +37,8 @@ SERIES = {
     "fred_jobless_initial": "ICSA",           # Initial Jobless Claims SA, weekly Thursday 08:30 ET
     "fred_jobless_continuing": "CCSA",        # Continuing Claims SA, weekly Thursday 08:30 ET
     "fred_retail_sales": "RSAFS",             # Advance Monthly Retail Sales (ex food services) SA, ~mid-month
-    "fred_ppi": "PPIACO",                     # Producer Price Index All Commodities NSA, ~13th
+    "fred_ppi": "PPIFIS",                     # PPI Final Demand SA, monthly index (market-standard headline, was PPIACO basket switch 2026-05-11)
+    "fred_core_ppi": "WPSFD49116",            # PPI Final Demand Less Foods & Energy SA = Core PPI
     "fred_housing_starts": "HOUST",           # Housing Starts: Total New Privately Owned SA, ~17th
     "fred_gdp": "GDPC1",                      # Real GDP, Quarterly Annualized SA, ~25th of quarter+1
 }

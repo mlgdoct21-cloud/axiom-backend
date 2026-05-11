@@ -55,7 +55,7 @@ _RELEASES = {
     # Day 28 part 3 — haftalık jobless + aylık retail/PPI/housing + çeyreklik GDP
     180: ("JOBLESS_CLAIMS", "08:30", ("fred_jobless_initial", "fred_jobless_continuing")),
     9:   ("RETAIL_SALES",   "08:30", ("fred_retail_sales",)),
-    46:  ("PPI",            "08:30", ("fred_ppi",)),
+    46:  ("PPI",            "08:30", ("fred_ppi", "fred_core_ppi")),
     27:  ("HOUSING_STARTS", "08:30", ("fred_housing_starts",)),
     53:  ("GDP",            "08:30", ("fred_gdp",)),
 }
