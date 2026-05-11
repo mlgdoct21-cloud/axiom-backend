@@ -214,6 +214,12 @@ async def create_checkout_session(telegram_id: str, tier: str) -> CheckoutResult
         }
         if customer_id:
             params["customer"] = customer_id
+            # Required by Stripe whenever `customer` is paired with
+            # `tax_id_collection` OR `automatic_tax` — without `name: auto`,
+            # the API rejects the session with "Tax ID collection requires
+            # updating business name on the customer." Address sync is also
+            # needed for automatic_tax to compute correct VAT later.
+            params["customer_update"] = {"name": "auto", "address": "auto"}
 
         # Stripe Tax: requires the merchant's VAT registration to be configured
         # in Stripe Dashboard (Romania VAT + EU OSS opt-in) before flipping
@@ -221,10 +227,6 @@ async def create_checkout_session(telegram_id: str, tier: str) -> CheckoutResult
         # nothing changes on the customer's side when we eventually enable it.
         if os.getenv("STRIPE_AUTOMATIC_TAX_ENABLED", "").strip().lower() == "true":
             params["automatic_tax"] = {"enabled": True}
-            if customer_id:
-                # Required by Stripe when `customer` is passed with automatic_tax
-                # — lets Stripe sync the address back onto the Customer record.
-                params["customer_update"] = {"address": "auto", "name": "auto"}
 
         sess = stripe.checkout.Session.create(**params)  # type: ignore[union-attr]
     except Exception as e:
