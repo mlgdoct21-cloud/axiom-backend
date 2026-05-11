@@ -20,6 +20,7 @@ from services.macro_calendar import (
 from services.macro_sources.fred_calendar import cache_status as fred_calendar_cache_status
 from services.macro_broadcaster import broadcast_release, broadcast_story
 from services.macro_narrative import generate_narrative
+from services.macro_revisions import broadcast_revision
 from services.macro_storyteller import generate_story
 from services.macro_sources.reliability_probe import (
     probe_once,
@@ -246,6 +247,76 @@ async def set_expected(
         "event_type": row["event_type"],
         "expected_mom_pct": float(row["expected_mom_pct"]) if row["expected_mom_pct"] is not None else None,
         "expected_yoy_pct": float(row["expected_yoy_pct"]) if row["expected_yoy_pct"] is not None else None,
+    }
+
+
+@router.post("/revision/broadcast/{event_id:path}")
+async def trigger_revision_broadcast(
+    event_id: str,
+    force: bool = Query(False, description="Re-broadcast even if already stamped"),
+    x_internal_secret: Optional[str] = Header(None),
+):
+    """Manual Advance-tier revision push. Useful for backfilling old
+    revisions that landed before this wiring shipped, or re-pushing after
+    a Telegram outage. Eşik altı revizyonlar `below_threshold` döner ve
+    stamp'lenir; force=True ile eşik kontrolü atlanmaz (eşik tasarım
+    kararı — gerçekten anlamlı revizyonu push'luyoruz).
+    """
+    _check_auth(x_internal_secret)
+    return await broadcast_revision(event_id, force=force)
+
+
+@router.post("/revision/simulate/{event_id:path}")
+async def simulate_revision(
+    event_id: str,
+    new_actual_value: float = Query(..., description="Simulated new actual_value"),
+    x_internal_secret: Optional[str] = Header(None),
+):
+    """Test/smoke endpoint — manually inject a revision audit row + fire
+    broadcast without waiting for FRED to revise. Reads current actual_value,
+    writes a macro_release_revisions audit, then triggers broadcast_revision.
+    Used in non-prod / staging to verify the loop end-to-end.
+
+    NOT FOR PRODUCTION ROUTINE USE — actual_value on macro_releases is NOT
+    overwritten; this only seeds the audit table so the broadcast path can
+    exercise.
+    """
+    _check_auth(x_internal_secret)
+    from decimal import Decimal
+    new_val = Decimal(str(new_actual_value))
+    sql_read = text(
+        "SELECT event_type, actual_value, source FROM macro_releases "
+        "WHERE event_id = :eid"
+    )
+    sql_insert = text("""
+        INSERT INTO macro_release_revisions
+        (event_id, event_type, source, old_actual_value, new_actual_value,
+         delta_abs, delta_pct)
+        VALUES
+        (:eid, :etype, :src, :old, :new, :delta_abs, :delta_pct)
+        RETURNING id
+    """)
+    async with engine.begin() as conn:
+        row = (await conn.execute(sql_read, {"eid": event_id})).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"release {event_id} not found")
+        old_val = row["actual_value"]
+        if old_val is None:
+            raise HTTPException(status_code=400, detail="release has no actual_value")
+        delta_abs = new_val - old_val
+        delta_pct = (delta_abs / abs(old_val) * Decimal("100")) if old_val != 0 else None
+        ins = (await conn.execute(sql_insert, {
+            "eid": event_id, "etype": row["event_type"], "src": row["source"],
+            "old": old_val, "new": new_val,
+            "delta_abs": delta_abs, "delta_pct": delta_pct,
+        })).mappings().first()
+    broadcast_result = await broadcast_revision(event_id, force=False)
+    return {
+        "simulated_revision_id": ins["id"] if ins else None,
+        "old_actual_value": float(old_val),
+        "new_actual_value": float(new_val),
+        "delta_abs": float(delta_abs),
+        "broadcast": broadcast_result,
     }
 
 

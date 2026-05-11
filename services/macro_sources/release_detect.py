@@ -81,6 +81,139 @@ def _parse_obs_date(raw: Optional[str]) -> Optional[datetime]:
         return None
 
 
+async def _upsert_release_with_revision(
+    *,
+    event_id: str,
+    event_type: str,
+    country: str,
+    released_at: datetime,
+    prior: Optional[Decimal],
+    actual: Decimal,
+    source: str,
+    source_url: str,
+    trigger_narrative: bool,
+) -> str:
+    """Idempotent upsert for a macro_releases row with revision detection.
+
+    Returns one of:
+        'inserted'   — brand-new event_id (fires narrative)
+        'revised'    — event_id existed with a different actual_value
+                       (writes audit row + fires revision broadcast)
+        'unchanged'  — event_id existed with the same actual_value (no-op)
+        'error'      — DB error logged, no side-effects
+
+    Detection is done in a single transaction: SELECT old value, INSERT or
+    UPDATE, then conditionally append to `macro_release_revisions`. The
+    SELECT-then-write race is acceptable — FRED poller is a single async
+    task per process; a duplicate revision audit row would be a harmless
+    cosmetic duplicate, not a correctness bug.
+    """
+    try:
+        async with engine.begin() as conn:
+            old_row = (await conn.execute(
+                text("SELECT actual_value FROM macro_releases WHERE event_id = :eid"),
+                {"eid": event_id},
+            )).mappings().first()
+
+            if old_row is None:
+                # Brand-new release. Standard INSERT path.
+                await conn.execute(
+                    text("""
+                        INSERT INTO macro_releases
+                        (event_id, event_type, country, released_at,
+                         prior_value, actual_value, source, source_url)
+                        VALUES
+                        (:event_id, :event_type, :country, :released_at,
+                         :prior_value, :actual_value, :source, :source_url)
+                        ON CONFLICT (event_id) DO NOTHING
+                    """),
+                    {
+                        "event_id": event_id,
+                        "event_type": event_type,
+                        "country": country,
+                        "released_at": released_at,
+                        "prior_value": prior,
+                        "actual_value": actual,
+                        "source": source,
+                        "source_url": source_url,
+                    },
+                )
+                outcome = "inserted"
+            else:
+                old_actual = old_row["actual_value"]
+                # Decimal equality. Treat None==None as same; None vs new
+                # as a "no-op" since the original could have arrived as
+                # missing data and we'd want to back-fill quietly.
+                if old_actual == actual:
+                    return "unchanged"
+                if old_actual is None:
+                    # Edge: existing row has NULL actual; treat as silent
+                    # backfill (no revision broadcast — that case is a
+                    # data-quality fix, not a real revision).
+                    await conn.execute(
+                        text("""
+                            UPDATE macro_releases
+                            SET actual_value = :actual_value
+                            WHERE event_id = :event_id
+                        """),
+                        {"event_id": event_id, "actual_value": actual},
+                    )
+                    return "unchanged"
+
+                # Real revision — actual changed.
+                delta_abs = actual - old_actual
+                try:
+                    delta_pct = (delta_abs / abs(old_actual)) * Decimal("100") \
+                        if old_actual != 0 else None
+                except (InvalidOperation, ZeroDivisionError):
+                    delta_pct = None
+
+                await conn.execute(
+                    text("""
+                        UPDATE macro_releases
+                        SET actual_value = :actual_value,
+                            revision_count = revision_count + 1
+                        WHERE event_id = :event_id
+                    """),
+                    {"event_id": event_id, "actual_value": actual},
+                )
+                await conn.execute(
+                    text("""
+                        INSERT INTO macro_release_revisions
+                        (event_id, event_type, source,
+                         old_actual_value, new_actual_value,
+                         delta_abs, delta_pct)
+                        VALUES
+                        (:event_id, :event_type, :source,
+                         :old, :new, :delta_abs, :delta_pct)
+                    """),
+                    {
+                        "event_id": event_id,
+                        "event_type": event_type,
+                        "source": source,
+                        "old": old_actual,
+                        "new": actual,
+                        "delta_abs": delta_abs,
+                        "delta_pct": delta_pct,
+                    },
+                )
+                outcome = "revised"
+    except Exception as e:
+        logger.error(f"upsert {event_id} failed: {e}")
+        return "error"
+
+    if outcome == "inserted":
+        logger.info(f"new release: {event_id} actual={actual} prior={prior}")
+        if trigger_narrative:
+            _trigger_narrative(event_id)
+    elif outcome == "revised":
+        logger.info(
+            f"REVISION detected: {event_id} {old_row['actual_value']} → {actual}"
+        )
+        _trigger_revision_broadcast(event_id)
+    return outcome
+
+
 async def record_fred_observation(
     source: str,
     latest_date: Optional[str],
@@ -91,11 +224,11 @@ async def record_fred_observation(
 ) -> bool:
     """Insert one FRED observation as a `macro_releases` row.
 
-    Returns True only when a new row was inserted (deterministic event_id +
-    ON CONFLICT DO NOTHING). Missing observations ("." values) are skipped.
-
-    `trigger_narrative=False` for backfill — we only want narrative + Telegram
-    fan-out for the freshest observation, not for 12 months of history.
+    Returns True only when a new row was inserted. Revisions (same event_id,
+    different actual_value) trigger a separate Advance-tier broadcast and
+    write a `macro_release_revisions` audit row, but still return False to
+    keep the legacy "new release count" semantics intact for callers like
+    `backfill_fred_series`.
     """
     event_type = _FRED_EVENT_TYPE.get(source)
     if not event_type or not latest_date:
@@ -112,34 +245,18 @@ async def record_fred_observation(
     if actual is None:
         return False
 
-    sql = text("""
-        INSERT INTO macro_releases
-        (event_id, event_type, country, released_at, prior_value, actual_value, source, source_url)
-        VALUES
-        (:event_id, :event_type, 'US', :released_at, :prior_value, :actual_value, 'fred', :source_url)
-        ON CONFLICT (event_id) DO NOTHING
-        RETURNING event_id
-    """)
-    params = {
-        "event_id": event_id,
-        "event_type": event_type,
-        "released_at": released_at,
-        "prior_value": prior,
-        "actual_value": actual,
-        "source_url": f"https://fred.stlouisfed.org/series/{series_id}",
-    }
-    try:
-        async with engine.begin() as conn:
-            row = (await conn.execute(sql, params)).first()
-        if row is not None:
-            logger.info(f"new release: {event_id} actual={actual} prior={prior}")
-            if trigger_narrative:
-                _trigger_narrative(event_id)
-            return True
-        return False
-    except Exception as e:
-        logger.error(f"record_fred_observation failed for {event_id}: {e}")
-        return False
+    outcome = await _upsert_release_with_revision(
+        event_id=event_id,
+        event_type=event_type,
+        country="US",
+        released_at=released_at,
+        prior=prior,
+        actual=actual,
+        source="fred",
+        source_url=f"https://fred.stlouisfed.org/series/{series_id}",
+        trigger_narrative=trigger_narrative,
+    )
+    return outcome == "inserted"
 
 
 async def record_tcmb_observation(
@@ -164,34 +281,23 @@ async def record_tcmb_observation(
     prior = _decimal_or_none(prior_value)
     if actual is None:
         return False
-    sql = text("""
-        INSERT INTO macro_releases
-        (event_id, event_type, country, released_at, prior_value, actual_value, source, source_url)
-        VALUES
-        (:event_id, :event_type, 'TR', :released_at, :prior_value, :actual_value, 'tcmb_evds', :source_url)
-        ON CONFLICT (event_id) DO NOTHING
-        RETURNING event_id
-    """)
-    params = {
-        "event_id": event_id,
-        "event_type": event_type,
-        "released_at": released_at,
-        "prior_value": prior,
-        "actual_value": actual,
-        "source_url": f"https://evds2.tcmb.gov.tr/index.php?/evds/serieMarket/collapse_2/5949/DataGroup/turkish/bie_{series_code.replace('.', '')}/",
-    }
-    try:
-        async with engine.begin() as conn:
-            row = (await conn.execute(sql, params)).first()
-        if row is not None:
-            logger.info(f"new TR release: {event_id} actual={actual} prior={prior}")
-            if trigger_narrative:
-                _trigger_narrative(event_id)
-            return True
-        return False
-    except Exception as e:
-        logger.error(f"record_tcmb_observation failed for {event_id}: {e}")
-        return False
+
+    source_url = (
+        f"https://evds2.tcmb.gov.tr/index.php?/evds/serieMarket/collapse_2/5949/"
+        f"DataGroup/turkish/bie_{series_code.replace('.', '')}/"
+    )
+    outcome = await _upsert_release_with_revision(
+        event_id=event_id,
+        event_type=event_type,
+        country="TR",
+        released_at=released_at,
+        prior=prior,
+        actual=actual,
+        source="tcmb_evds",
+        source_url=source_url,
+        trigger_narrative=trigger_narrative,
+    )
+    return outcome == "inserted"
 
 
 async def backfill_fred_series(
@@ -299,3 +405,22 @@ def _trigger_narrative(event_id: str) -> None:
         asyncio.create_task(generate_narrative_safe(event_id))
     except Exception as e:
         logger.error(f"narrative trigger failed for {event_id}: {e}")
+
+
+# Strong-ref set so fire-and-forget revision broadcast tasks aren't GC'd
+# while waiting on Telegram. Matches the _DELAYED_INFLIGHT pattern from
+# macro_broadcaster and _STORY_BROADCAST_INFLIGHT from macro_storyteller.
+_REVISION_BROADCAST_INFLIGHT: set = set()
+
+
+def _trigger_revision_broadcast(event_id: str) -> None:
+    """Fire-and-forget Advance-tier revision broadcast. Lazy import keeps
+    macro_revisions ↔ release_detect import order safe.
+    """
+    try:
+        from services.macro_revisions import broadcast_revision_safe
+        task = asyncio.create_task(broadcast_revision_safe(event_id))
+        _REVISION_BROADCAST_INFLIGHT.add(task)
+        task.add_done_callback(_REVISION_BROADCAST_INFLIGHT.discard)
+    except Exception as e:
+        logger.error(f"revision broadcast trigger failed for {event_id}: {e}")
