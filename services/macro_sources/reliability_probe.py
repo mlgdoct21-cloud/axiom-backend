@@ -111,6 +111,15 @@ _FRED_SOURCES = (
 # newest row when a fresh observation lands.
 _FRED_FETCH_LIMIT = 15
 
+# Per-source override. FED_FUNDS_UPPER/LOWER günlük seri — varsayılan 15 satır
+# sadece 15 gün geriye gidiyor, oysa FOMC kararları 6 hafta aralıklı. 2-yıl
+# history = 500 satır (~8 toplantı backfill için yeterli + tüm DFEDTARU
+# değişiklikleri yakalanır).
+_FRED_FETCH_LIMIT_OVERRIDE: dict[str, int] = {
+    "fred_fed_funds_upper": 500,
+    "fred_fed_funds_lower": 500,
+}
+
 
 @dataclass
 class _SourceState:
@@ -218,7 +227,8 @@ async def _probe_fred_all(due_sources: tuple[str, ...] = _FRED_SOURCES) -> list[
         if not series_id:
             continue
         t0 = time.monotonic()
-        per = await fetch_fred_series(series_id, limit=_FRED_FETCH_LIMIT)
+        fetch_limit = _FRED_FETCH_LIMIT_OVERRIDE.get(source_name, _FRED_FETCH_LIMIT)
+        per = await fetch_fred_series(series_id, limit=fetch_limit)
         latency_ms = int((time.monotonic() - t0) * 1000)
         success = bool(per and per.success)
         rows.append({
