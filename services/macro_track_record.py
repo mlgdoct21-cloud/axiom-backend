@@ -62,9 +62,13 @@ _VERDICT_PATTERNS = [
     # Genel risk
     (r"\brisk[\s-]?on\b|\briski[\s-]?al[ıi][şs]\b", "risk_on"),
     (r"\brisk[\s-]?off\b|\bsavunmac[ıi]\b", "risk_off"),
-    # Enflasyon
-    (r"\benflasyon[^.]{0,40}(?:yukar[ıi]|art[ıi][şs]|hızlan)", "inflation_up"),
-    (r"\benflasyon[^.]{0,40}(?:aşağ[ıi]|gerile|yavaş|düş)", "inflation_down"),
+    # Enflasyon / fiyat / maliyet — PPI hikâyeleri 'enflasyon' yerine
+    # 'üretici maliyeti', 'tüketici fiyatları' kullanır; pattern bunları da
+    # yakalayacak şekilde genişletildi.
+    (r"\b(?:enflasyon|fiyat|maliyet)[^.]{0,40}(?:yukar[ıi]|art[ıi][şs]|hızlan|yükseli[şs])",
+     "inflation_up"),
+    (r"\b(?:enflasyon|fiyat|maliyet)[^.]{0,40}(?:aşağ[ıi]|gerile|yavaş|düş)",
+     "inflation_down"),
 ]
 
 
@@ -84,10 +88,15 @@ def extract_verdict_from_story(story_md: str) -> VerdictExtraction:
     if not story_md:
         return VerdictExtraction(all_matches=[])
 
-    # 'Senin için' / 'sen icin' / 'senin icin' başlığını bul
+    # 'Senin için' / 'sen icin' / 'Aklında tut' / 'Aklınızda bulunsun' varyantları
+    # LLM serbest paraphrase ile "Aklınızda kalsın", "Aklında tut" gibi formlar
+    # üretiyor — pattern'i ikinci-tekil ('Aklında') ve ikinci-çoğul ('Aklınızda')
+    # ekleri kapsayacak şekilde genişlettik.
     excerpt = story_md
-    m = re.search(r"(?:Senin için|Sen[\s-]?icin|Aklında tut)[^.]*\.?[^.]{0,300}",
-                  story_md, re.IGNORECASE)
+    m = re.search(
+        r"(?:Senin için|Sen[\s-]?icin|Akl[ıi]n(?:[ıi]z)?da)[^.]*\.?[^.]{0,300}",
+        story_md, re.IGNORECASE
+    )
     if m:
         excerpt = m.group(0)
 
