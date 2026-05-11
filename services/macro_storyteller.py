@@ -158,6 +158,10 @@ _SOURCES: dict[str, SourceCitation] = {
         "FED:SEP", "Fed Summary of Economic Projections (Dot Plot)",
         "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
     ),
+    "FED:PRESS_CONF": SourceCitation(
+        "FED:PRESS_CONF", "Powell FOMC Press Conference Transcript",
+        "https://www.federalreserve.gov/monetarypolicy/fomcpresconf.htm",
+    ),
     "BLS": SourceCitation(
         "BLS", "BLS Employment / CPI release",
         "https://www.bls.gov/news.release/",
@@ -592,6 +596,7 @@ async def _load_event_payload(event_id: str) -> Optional[dict]:
     # FAZ C — FOMC statement language diff. DB conn kapandıktan sonra HTTP
     # fetch (cari + önceki statement HTML) + difflib cümle bazlı diff.
     payload["statement_diff"] = None
+    payload["transcript_sentiment"] = None
     et2 = (payload.get("event_type") or "").upper()
     if et2 == "FOMC_STATEMENT":
         curr_url = payload.get("source_url")
@@ -609,6 +614,25 @@ async def _load_event_payload(event_id: str) -> Optional[dict]:
                     }
             except Exception as e:
                 logger.warning(f"statement_diff fetch failed: {e}")
+        # FAZ D — Powell press conference transcript sentiment (hawkish/dovish
+        # lexicon scan). PDF Fed sitesinden ~1-2 saat gecikmeli yayımlanır;
+        # ilk story üretiminde None gelirse Advance prompt sessiz fallback.
+        ts = payload.get("released_at")
+        if ts is not None:
+            try:
+                from services.macro_sources.fed_transcript import fetch_powell_sentiment
+                sent = await fetch_powell_sentiment(ts)
+                if sent.success:
+                    payload["transcript_sentiment"] = {
+                        "score": sent.score,
+                        "hawkish_count": sent.hawkish_count,
+                        "dovish_count": sent.dovish_count,
+                        "hawkish_phrases": sent.hawkish_phrases,
+                        "dovish_phrases": sent.dovish_phrases,
+                        "word_count": sent.word_count,
+                    }
+            except Exception as e:
+                logger.warning(f"powell transcript fetch failed: {e}")
     return payload
 
 
@@ -1499,6 +1523,35 @@ def _fomc_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
             "source_code": "FED:STATEMENT",
         }
 
+    # FAZ D — Powell press conference transcript sentiment (hawkish/dovish
+    # lexicon scan). Sayısal score'a dokunmuyoruz; rakamlar (count'lar)
+    # zaten allowed'a girer ama LLM'in skoru yazma şartı yok — kelime ile
+    # anlat (mild dovish, decidedly hawkish vb).
+    trans = payload.get("transcript_sentiment") or None
+    transcript_block = None
+    if trans and (trans.get("hawkish_count") or trans.get("dovish_count")):
+        score = trans.get("score") or 0.0
+        if score >= 0.4:
+            tone = "belirgin güvercin"
+        elif score >= 0.15:
+            tone = "yumuşak güvercin"
+        elif score <= -0.4:
+            tone = "belirgin şahin"
+        elif score <= -0.15:
+            tone = "yumuşak şahin"
+        else:
+            tone = "dengeli"
+        transcript_block = {
+            "tone_label_tr": tone,
+            "score": score,
+            "hawkish_count": trans.get("hawkish_count"),
+            "dovish_count": trans.get("dovish_count"),
+            "hawkish_phrases_en": (trans.get("hawkish_phrases") or [])[:3],
+            "dovish_phrases_en": (trans.get("dovish_phrases") or [])[:3],
+            "source_code": "FED:PRESS_CONF",
+        }
+        sources_used.append("FED:PRESS_CONF")
+
     llm_input = {
         "release_date": _format_tr_date(payload.get("released_at")),
         "country": payload.get("country") or "US",
@@ -1517,6 +1570,7 @@ def _fomc_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
         },
         "sep": sep_block,
         "statement_diff": diff_block,
+        "powell_transcript": transcript_block,
         "available_sources": [
             {"code": c, "name": _SOURCES[c].name}
             for c in sources_used if c in _SOURCES
@@ -1564,6 +1618,13 @@ def _fomc_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
                     allowed_inputs.append(v)
                     if v < 0:
                         allowed_inputs.append(abs(v))
+    # FAZ D — transcript count'ları allowed listesine ekle (model "5 şahin
+    # vs 2 güvercin ifade" yazabilir).
+    if transcript_block:
+        for k in ("hawkish_count", "dovish_count"):
+            v = transcript_block.get(k)
+            if v is not None:
+                allowed_inputs.append(v)
     allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
     allowed_codes = {s["code"] for s in llm_input["available_sources"]}
     return llm_input, allowed, allowed_codes
@@ -1572,6 +1633,7 @@ def _fomc_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 def _fomc_prompt(llm_input: dict, tier: Tier) -> str:
     has_sep = llm_input.get("sep") is not None
     has_diff = llm_input.get("statement_diff") is not None
+    has_transcript = llm_input.get("powell_transcript") is not None
     # Söylem şifti bölümü Premium için kısa, Advance için detaylı.
     diff_section_premium = (
         "(2.5) **Söylem şifti** — INPUT.statement_diff.added_sentences_en "
@@ -1683,6 +1745,25 @@ def _fomc_prompt(llm_input: dict, tier: Tier) -> str:
         sections = sections + "\n" + diff_section_advance
         word_min, word_max = word_min + 60, word_max + 120
 
+    # FAZ D — Powell press conference transcript sentiment, Advance-only.
+    # Statement diff ile aynı gerekçe: Premium kompakt, language nuance
+    # Advance'e bırakılıyor.
+    transcript_section_advance = (
+        "(3.6) **Powell söylem tonu** — INPUT.powell_transcript'a bak. "
+        "`tone_label_tr` (mild dovish/hawkish vb) ile basın toplantısının "
+        "genel tonunu adlandır. hawkish_count + dovish_count rakamlarını "
+        "kullan; her sayıdan sonra [FED:PRESS_CONF] chip zorunlu. "
+        "hawkish_phrases_en ve dovish_phrases_en'deki 1-2 İngilizce "
+        "ifadeyi TÜRKÇE'ye paraphrase et (örn 'inflation remains elevated' "
+        "→ 'enflasyonun yüksek kaldığına dair vurgu'), her paraphrase'in "
+        "sonunda [FED:PRESS_CONF]. İngilizce orijinali yapıştırma. Tonun "
+        "karar yönüyle (hold/cut/hike) tutarlılığını yorumla — örn dovish "
+        "ton + hold = sonraki toplantıda indirim sinyali.\n"
+    )
+    if has_transcript and tier == "advance":
+        sections = sections + "\n" + transcript_section_advance
+        word_min, word_max = word_min + 50, word_max + 100
+
     available_codes = [s["code"] for s in llm_input["available_sources"]]
 
     return (
@@ -1703,7 +1784,8 @@ def _fomc_prompt(llm_input: dict, tier: Tier) -> str:
         "[FRED:DFEDTARU]', '%5.25 alt sınır [FRED:DFEDTARL]', '25 baz puan "
         "indirim [FED:STATEMENT]'. SEP rakamlarında ('2026 sonu medyanı "
         "%3.4', '-0.2 puan kayma' vb) HER sayıdan sonra [FED:SEP] etiketi "
-        "ZORUNLU — atlama yok.\n"
+        "ZORUNLU — atlama yok. Powell transcript count'larında ('5 şahin "
+        "vs 2 güvercin ifade') [FED:PRESS_CONF] zorunlu.\n"
         "3. Politik yorum YASAK (Powell hariç — kurumsal isim olarak "
         "geçebilir; ama 'Cumhuriyetçi/Demokrat/AKP/CHP/seçim/parti' yasak).\n"
         "4. Mutlaklık YASAK ('kesin', 'garanti', 'asla').\n"
