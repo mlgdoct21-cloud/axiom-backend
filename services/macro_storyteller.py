@@ -1201,8 +1201,12 @@ _DECODER_DISPATCH = {
 
 # Per-decoder word count bounds. PPI paired core eklendi (2026-05-11 basket
 # switch: PPIFIS + WPSFD49116) → Advance default 340'a revert.
+# NFP Advance 8-bölüm format (sektörel kırılım dahil) ile gemini-2.5-flash
+# tipik 320-340w yazıyor; min 340 sık takılıyor → 300'e indirildi.
 _DEFAULT_BOUNDS = {"premium": (150, 500), "advance": (340, 680)}
-_DECODER_WORD_BOUNDS = {}
+_DECODER_WORD_BOUNDS = {
+    "NFP": {"premium": (150, 500), "advance": (300, 680)},
+}
 
 
 async def generate_story(
