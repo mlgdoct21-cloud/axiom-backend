@@ -630,6 +630,14 @@ def _nfp_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
         avg_3m_change_k, avg_6m_change_k,
         *sector_change_ks,
     ]
+    # NFP'de negative change_k (örn -13K) LLM tarafından "13 bin daralma" diye
+    # yazılıyor (pozitif rakam + yön kelimesi). Validator için iki tarafı da
+    # whitelist'e ekle — sign-flip exempt.
+    abs_changes = [
+        abs(v) for v in [change_k, surprise_k, avg_3m_change_k, avg_6m_change_k, *sector_change_ks]
+        if v is not None and v < 0
+    ]
+    allowed_inputs.extend(abs_changes)
     allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
     allowed_codes = {s["code"] for s in llm_input["available_sources"]}
     return llm_input, allowed, allowed_codes
