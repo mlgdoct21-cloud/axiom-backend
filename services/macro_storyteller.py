@@ -1578,7 +1578,9 @@ def _fomc_prompt(llm_input: dict, tier: Tier) -> str:
         "2. HER sayının 60 karakter içinde [KAYNAK_KODU] olmalı. "
         f"Geçerli kodlar: {available_codes}. Örnekler: '%5.50 üst sınır "
         "[FRED:DFEDTARU]', '%5.25 alt sınır [FRED:DFEDTARL]', '25 baz puan "
-        "indirim [FED:STATEMENT]'.\n"
+        "indirim [FED:STATEMENT]'. SEP rakamlarında ('2026 sonu medyanı "
+        "%3.4', '-0.2 puan kayma' vb) HER sayıdan sonra [FED:SEP] etiketi "
+        "ZORUNLU — atlama yok.\n"
         "3. Politik yorum YASAK (Powell hariç — kurumsal isim olarak "
         "geçebilir; ama 'Cumhuriyetçi/Demokrat/AKP/CHP/seçim/parti' yasak).\n"
         "4. Mutlaklık YASAK ('kesin', 'garanti', 'asla').\n"
@@ -1592,7 +1594,12 @@ def _fomc_prompt(llm_input: dict, tier: Tier) -> str:
         "kullan; ISO formatı YAZMA.\n"
         "10. 'data-dependent', 'gevşeme döngüsü', 'sıkılaştırma', 'yumuşak "
         "iniş' gibi mental modelleri kullan — somut yeni rakam üretme.\n"
-        "11. Çıktı sadece JSON; satır sonları için \\n.\n"
+        "11. Midpoint (current_midpoint_pct, prior_midpoint_pct) hesaplaması "
+        "PAYLOAD'da var ama paragrafına YAZMA — sadece üst sınır (upper) + "
+        "alt sınır (lower) ikilisini kullan (her birinden sonra ilgili "
+        "FRED:DFEDTARU/L chip'i). Midpoint kullanılırsa chip eşleştirmesi "
+        "zorlaşır.\n"
+        "12. Çıktı sadece JSON; satır sonları için \\n.\n"
     )
 
 
