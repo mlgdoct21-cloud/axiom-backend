@@ -72,12 +72,15 @@ def _is_data_point_event(event_type: str) -> bool:
     """True for sub-series event_types that are payload data only —
     they don't trigger their own narrative or revision broadcast.
 
-    Includes NFP supersector breakdown (NFP_HEALTH, NFP_GOVT, ...) and
-    FOMC fed funds target range (FED_FUNDS_UPPER, FED_FUNDS_LOWER).
+    Includes NFP supersector breakdown (NFP_HEALTH, NFP_GOVT, ...),
+    FOMC fed funds target range (FED_FUNDS_UPPER, FED_FUNDS_LOWER),
+    and SEP projection medians (SEP_FUNDS_END_0, SEP_GDP_0, ...).
     """
     if event_type.startswith("NFP_") and event_type != "NFP":
         return True
     if event_type.startswith("FED_FUNDS_"):
+        return True
+    if event_type.startswith("SEP_"):
         return True
     return False
 

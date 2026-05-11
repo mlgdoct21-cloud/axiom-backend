@@ -154,6 +154,10 @@ _SOURCES: dict[str, SourceCitation] = {
         "FED:STATEMENT", "Federal Reserve FOMC Statement",
         "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
     ),
+    "FED:SEP": SourceCitation(
+        "FED:SEP", "Fed Summary of Economic Projections (Dot Plot)",
+        "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+    ),
     "BLS": SourceCitation(
         "BLS", "BLS Employment / CPI release",
         "https://www.bls.gov/news.release/",
@@ -406,6 +410,7 @@ async def _load_event_payload(event_id: str) -> Optional[dict]:
         # DFEDTARU/L günlük seri; çoğu gün değer aynı. "Prior decision" =
         # actual_value değiştiği son tarih (FOMC decision day).
         payload["fed_funds"] = None
+        payload["sep"] = None
         if et == "FOMC_STATEMENT" and row["released_at"]:
             ts = row["released_at"]
             ff_sql = text("""
@@ -443,6 +448,59 @@ async def _load_event_payload(event_id: str) -> Optional[dict]:
                     "et": "FED_FUNDS_LOWER",
                     "cur": lo_row["actual_value"], "ts": ts,
                 })).mappings().first()
+            # SEP (FAZ B) — same FOMC day veya ±2 gün içinde Fed projection
+            # medians varsa current + prior SEP'i çek (dot plot şift için).
+            # event_id format: 'sep:FUNDS_END_0:<YYYY-MM-DD>' (current year),
+            # 'sep:FUNDS_END_1:<...>' (year+1), 'sep:FUNDS_END_2:<...>'
+            # (year+2), 'sep:FUNDS_LONGER_RUN:<...>'.
+            sep_keys = ("SEP_FUNDS_END_0", "SEP_FUNDS_END_1",
+                        "SEP_FUNDS_END_2", "SEP_FUNDS_LONGER_RUN")
+            sep_current = {}
+            sep_sql = text("""
+                SELECT event_type, actual_value FROM macro_releases
+                WHERE event_type = :et
+                  AND released_at BETWEEN :ts - interval '2 days'
+                                      AND :ts + interval '2 days'
+                ORDER BY released_at DESC LIMIT 1
+            """)
+            for k in sep_keys:
+                r = (await conn.execute(sep_sql, {
+                    "et": k, "ts": ts,
+                })).mappings().first()
+                if r and r["actual_value"] is not None:
+                    sep_current[k] = float(r["actual_value"])
+            sep_prior = {}
+            sep_prior_date = None
+            if sep_current:
+                # Önceki SEP (en az 60 gün önce — SEP 3-aylık)
+                prior_sep_sql = text("""
+                    SELECT released_at FROM macro_releases
+                    WHERE event_type = 'SEP_FUNDS_END_0'
+                      AND released_at < :ts - interval '60 days'
+                    ORDER BY released_at DESC LIMIT 1
+                """)
+                p = (await conn.execute(prior_sep_sql, {"ts": ts})).mappings().first()
+                if p and p.get("released_at"):
+                    prior_ts = p["released_at"]
+                    sep_prior_date = prior_ts.isoformat()
+                    prior_sep_get_sql = text("""
+                        SELECT event_type, actual_value FROM macro_releases
+                        WHERE event_type = :et
+                          AND released_at BETWEEN :ts - interval '2 days'
+                                              AND :ts + interval '2 days'
+                        ORDER BY released_at DESC LIMIT 1
+                    """)
+                    for k in sep_keys:
+                        r = (await conn.execute(prior_sep_get_sql, {
+                            "et": k, "ts": prior_ts,
+                        })).mappings().first()
+                        if r and r["actual_value"] is not None:
+                            sep_prior[k] = float(r["actual_value"])
+            payload["sep"] = {
+                "current": sep_current or None,
+                "prior": sep_prior or None,
+                "prior_date_iso": sep_prior_date,
+            } if sep_current else None
             payload["fed_funds"] = {
                 "current_upper": float(up_row["actual_value"]) if up_row else None,
                 "current_lower": float(lo_row["actual_value"]) if lo_row else None,
@@ -1308,6 +1366,44 @@ def _fomc_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
     sources_used = ["FED:STATEMENT", "FRED:DFEDTARU", "FRED:DFEDTARL"]
 
+    # SEP (FAZ B) — dot plot + projection medians varsa enrichment.
+    # sep_current/prior keys: SEP_FUNDS_END_0 (current year), SEP_FUNDS_END_1
+    # (year+1), SEP_FUNDS_END_2 (year+2), SEP_FUNDS_LONGER_RUN.
+    sep = payload.get("sep") or None
+    sep_block = None
+    if sep and sep.get("current"):
+        cur = sep["current"]
+        prior = sep.get("prior") or {}
+        def _delta(k):
+            cv = cur.get(k)
+            pv = prior.get(k)
+            if cv is None or pv is None:
+                return None
+            return round(cv - pv, 2)
+        sep_block = {
+            "current": {
+                "end_year_0_pct": cur.get("SEP_FUNDS_END_0"),
+                "end_year_1_pct": cur.get("SEP_FUNDS_END_1"),
+                "end_year_2_pct": cur.get("SEP_FUNDS_END_2"),
+                "longer_run_pct": cur.get("SEP_FUNDS_LONGER_RUN"),
+            },
+            "prior": {
+                "end_year_0_pct": prior.get("SEP_FUNDS_END_0"),
+                "end_year_1_pct": prior.get("SEP_FUNDS_END_1"),
+                "end_year_2_pct": prior.get("SEP_FUNDS_END_2"),
+                "longer_run_pct": prior.get("SEP_FUNDS_LONGER_RUN"),
+            } if prior else None,
+            "delta_pp": {
+                "end_year_0": _delta("SEP_FUNDS_END_0"),
+                "end_year_1": _delta("SEP_FUNDS_END_1"),
+                "end_year_2": _delta("SEP_FUNDS_END_2"),
+                "longer_run": _delta("SEP_FUNDS_LONGER_RUN"),
+            } if prior else None,
+            "prior_sep_date": _format_tr_date_iso(sep.get("prior_date_iso")) if sep.get("prior_date_iso") else None,
+            "source_code": "FED:SEP",
+        }
+        sources_used.append("FED:SEP")
+
     llm_input = {
         "release_date": _format_tr_date(payload.get("released_at")),
         "country": payload.get("country") or "US",
@@ -1324,6 +1420,7 @@ def _fomc_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
             "decision_label": decision_label,
             "prior_decision_date": _format_tr_date_iso(fed_funds.get("prior_decision_date")),
         },
+        "sep": sep_block,
         "available_sources": [
             {"code": c, "name": _SOURCES[c].name}
             for c in sources_used if c in _SOURCES
@@ -1355,47 +1452,112 @@ def _fomc_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
             allowed_inputs.append(prior_dt.day)
         except Exception:
             pass
+    # SEP medians + deltas (FAZ B). Delta'lar pozitif/negatif olabilir →
+    # NFP sign-flip exempt pattern'iyle abs() de eklenir.
+    if sep_block:
+        for v in (sep_block["current"] or {}).values():
+            if v is not None:
+                allowed_inputs.append(v)
+        if sep_block.get("prior"):
+            for v in (sep_block["prior"] or {}).values():
+                if v is not None:
+                    allowed_inputs.append(v)
+        if sep_block.get("delta_pp"):
+            for v in (sep_block["delta_pp"] or {}).values():
+                if v is not None:
+                    allowed_inputs.append(v)
+                    if v < 0:
+                        allowed_inputs.append(abs(v))
     allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
     allowed_codes = {s["code"] for s in llm_input["available_sources"]}
     return llm_input, allowed, allowed_codes
 
 
 def _fomc_prompt(llm_input: dict, tier: Tier) -> str:
+    has_sep = llm_input.get("sep") is not None
     if tier == "premium":
         word_min, word_max = 130, 400
-        sections = (
-            "(1) Karar manşeti — Fed funds target range mevcut seviye + "
-            "önceki karara göre değişim (hold/cut/hike + baz puan). "
-            "INPUT'taki rakamları aynen kullan.\n"
-            "(2) Bağlam — bu kararın ne anlama geldiği. Hold ise 'Fed bekle-gör "
-            "modunda', cut ise 'gevşeme döngüsü', hike ise 'sıkılaştırma'. "
-            "Mental model olarak anlat, yeni rakam yazma.\n"
-            "(3) Piyasaya etki — politika faizi düştüğünde/yükseldiğinde tipik "
-            "olarak ne olur (USD, tahvil getirisi, hisse, BTC kavramsal yön). "
-            "INPUT verisine bağlı kal.\n"
-            "(4) Aklında tut + 'Senin için 1-cümle' (genel yön; tavsiye değil)."
-        )
+        if has_sep:
+            word_min, word_max = 170, 480
+            sections = (
+                "(1) Karar manşeti — Fed funds target range mevcut seviye + "
+                "önceki karara göre değişim (hold/cut/hike + baz puan). "
+                "INPUT'taki rakamları aynen kullan.\n"
+                "(2) **Dot Plot şifti** — INPUT.sep.current ve sep.delta_pp'ye "
+                "bak. Median yıl-sonu projection değişimi (örn. '2026 sonu "
+                "%3.4 → %3.6, +0.2 puan hawkish kayma'). Sadece INPUT'taki "
+                "delta'ları kullan, yeni rakam üretme. Citation: [FED:SEP].\n"
+                "(3) Bağlam — Hold ise 'Fed bekle-gör modunda', cut ise "
+                "'gevşeme döngüsü', hike ise 'sıkılaştırma'. SEP yönü "
+                "(hawkish/dovish kayma) ile karar yönü tutarlı mı?\n"
+                "(4) Piyasaya etki — politika faizi + dot plot kombinasyonu "
+                "(USD, tahvil getirisi, hisse, BTC kavramsal yön).\n"
+                "(5) Aklında tut + 'Senin için 1-cümle' (genel yön; tavsiye değil)."
+            )
+        else:
+            sections = (
+                "(1) Karar manşeti — Fed funds target range mevcut seviye + "
+                "önceki karara göre değişim (hold/cut/hike + baz puan). "
+                "INPUT'taki rakamları aynen kullan.\n"
+                "(2) Bağlam — bu kararın ne anlama geldiği. Hold ise 'Fed bekle-gör "
+                "modunda', cut ise 'gevşeme döngüsü', hike ise 'sıkılaştırma'. "
+                "Mental model olarak anlat, yeni rakam yazma.\n"
+                "(3) Piyasaya etki — politika faizi düştüğünde/yükseldiğinde tipik "
+                "olarak ne olur (USD, tahvil getirisi, hisse, BTC kavramsal yön). "
+                "INPUT verisine bağlı kal.\n"
+                "(4) Aklında tut + 'Senin için 1-cümle' (genel yön; tavsiye değil)."
+            )
     else:  # advance
         word_min, word_max = 270, 600
-        sections = (
-            "(1) Karar manşeti + önceki karar karşılaştırması (target range "
-            "mevcut, önceki, midpoint, bp delta) — INPUT rakamlarını aynen.\n"
-            "(2) Karar tarihi vs önceki karar tarihi arası — Fed bu süreçte "
-            "ne dedi/yaptı (kavramsal, INPUT'ta yoksa rakam yazma).\n"
-            "(3) Piyasa pricing'inden sapma — INPUT'ta market consensus yok, "
-            "o yüzden 'beklenti' kelimesi YAZMA. Sadece 'piyasa şu yönde "
-            "fiyatlamıştı, gerçekleşen şu' gibi kavramsal kıyas YAPMA — "
-            "veri yoksa atla.\n"
-            "(4) Kanal analizi — kararın geçeceği makanizmalar: kredi maliyeti, "
-            "USD likiditesi, tahvil eğrisi, risk varlıklar. Kavramsal anlat.\n"
-            "(5) İleriye dönük — Fed'in 'data-dependent' duruşunu vurgula, "
-            "bir sonraki toplantıya kadar izlenmesi gerekenler (CPI, NFP, "
-            "PCE veri akışı). Spekülatif rakam YASAK.\n"
-            "(6) Risk dengesi — yumuşak iniş vs durgunluk vs yeniden ısınma "
-            "gibi senaryolar (kavramsal, olasılık dili).\n"
-            "(7) Aklında tut + 'Senin için 1-cümle' (DXY/BTC/altın yönü, "
-            "tavsiye değil)."
-        )
+        if has_sep:
+            word_min, word_max = 350, 720
+            sections = (
+                "(1) Karar manşeti + önceki karar karşılaştırması (target range "
+                "mevcut, önceki, midpoint, bp delta) — INPUT rakamlarını aynen.\n"
+                "(2) **Dot Plot şifti** — INPUT.sep'e bak. Median projection "
+                "değerleri: cari yıl, gelecek yıl, +2 yıl, longer-run; "
+                "ÖNCEKİ SEP ile delta_pp. 'Hawkish kayma' (delta pozitif) "
+                "= Fed daha yüksek faiz öngörüyor; 'dovish' (delta negatif) "
+                "= daha düşük. SADECE INPUT delta'larını kullan. Citation: "
+                "[FED:SEP]. Önceki SEP tarihi prior_sep_date'ten.\n"
+                "(3) Karar yönü vs SEP yönü tutarlılığı — hold karar + "
+                "hawkish dot plot şifti = 'şahin pause', cut + hawkish şift = "
+                "çelişki, vb. Mental model olarak anlat.\n"
+                "(4) Karar tarihi vs önceki karar tarihi arası — Fed bu "
+                "süreçte ne dedi/yaptı (kavramsal, INPUT'ta yoksa rakam "
+                "yazma).\n"
+                "(5) Kanal analizi — kararın + dot plot'un geçeceği "
+                "makanizmalar: kredi maliyeti, USD likiditesi, tahvil "
+                "eğrisi, risk varlıklar. Kavramsal anlat.\n"
+                "(6) İleriye dönük — Fed'in 'data-dependent' duruşu + dot "
+                "plot patikası; bir sonraki toplantıya kadar izlenmesi "
+                "gerekenler (CPI, NFP, PCE veri akışı). Spekülatif rakam "
+                "YASAK.\n"
+                "(7) Risk dengesi — yumuşak iniş vs durgunluk vs yeniden "
+                "ısınma gibi senaryolar (kavramsal, olasılık dili).\n"
+                "(8) Aklında tut + 'Senin için 1-cümle' (DXY/BTC/altın yönü, "
+                "tavsiye değil)."
+            )
+        else:
+            sections = (
+                "(1) Karar manşeti + önceki karar karşılaştırması (target range "
+                "mevcut, önceki, midpoint, bp delta) — INPUT rakamlarını aynen.\n"
+                "(2) Karar tarihi vs önceki karar tarihi arası — Fed bu süreçte "
+                "ne dedi/yaptı (kavramsal, INPUT'ta yoksa rakam yazma).\n"
+                "(3) Piyasa pricing'inden sapma — INPUT'ta market consensus yok, "
+                "o yüzden 'beklenti' kelimesi YAZMA. Sadece 'piyasa şu yönde "
+                "fiyatlamıştı, gerçekleşen şu' gibi kavramsal kıyas YAPMA — "
+                "veri yoksa atla.\n"
+                "(4) Kanal analizi — kararın geçeceği makanizmalar: kredi maliyeti, "
+                "USD likiditesi, tahvil eğrisi, risk varlıklar. Kavramsal anlat.\n"
+                "(5) İleriye dönük — Fed'in 'data-dependent' duruşunu vurgula, "
+                "bir sonraki toplantıya kadar izlenmesi gerekenler (CPI, NFP, "
+                "PCE veri akışı). Spekülatif rakam YASAK.\n"
+                "(6) Risk dengesi — yumuşak iniş vs durgunluk vs yeniden ısınma "
+                "gibi senaryolar (kavramsal, olasılık dili).\n"
+                "(7) Aklında tut + 'Senin için 1-cümle' (DXY/BTC/altın yönü, "
+                "tavsiye değil)."
+            )
 
     available_codes = [s["code"] for s in llm_input["available_sources"]]
 

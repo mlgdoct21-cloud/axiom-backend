@@ -7,7 +7,7 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Body, Header, HTTPException, Query
 from sqlalchemy import text
 
 from core.database import engine
@@ -337,6 +337,84 @@ async def trigger_story_broadcast(
     """
     _check_auth(x_internal_secret)
     return await broadcast_story(event_id, tier=tier, force=force)
+
+
+@router.post("/sep")
+async def upsert_sep(
+    payload: dict = Body(...),
+    x_internal_secret: Optional[str] = Header(None),
+):
+    """Manual SEP (Summary of Economic Projections) entry — FAZ B.
+
+    Fed her 3 ayda bir FOMC toplantısının 4'ünde SEP yayımlar. Dot plot
+    medianlarını payload data olarak macro_releases'a yazıyoruz; storyteller
+    FOMC_STATEMENT için aynı released_at'te SEP rows varsa "Dot Plot şifti"
+    bölümünü prompt'a ekler.
+
+    Body örneği:
+    ```json
+    {
+      "released_at": "2026-03-19T18:00:00Z",
+      "end_year_0": 3.4,
+      "end_year_1": 2.9,
+      "end_year_2": 2.6,
+      "longer_run": 2.5
+    }
+    ```
+
+    Yazılan event_id'ler: `sep:FUNDS_END_0:<YYYY-MM-DD>`, vb. Idempotent
+    (ON CONFLICT DO UPDATE actual_value).
+    """
+    _check_auth(x_internal_secret)
+    released_at = payload.get("released_at")
+    if not released_at:
+        raise HTTPException(status_code=400, detail="released_at required")
+    try:
+        ts = datetime.fromisoformat(released_at.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="released_at parse failed (use ISO 8601)")
+    date_key = ts.date().isoformat()
+
+    mapping = {
+        "end_year_0":   "SEP_FUNDS_END_0",
+        "end_year_1":   "SEP_FUNDS_END_1",
+        "end_year_2":   "SEP_FUNDS_END_2",
+        "longer_run":   "SEP_FUNDS_LONGER_RUN",
+    }
+    upserts = []
+    for body_key, event_type in mapping.items():
+        v = payload.get(body_key)
+        if v is None:
+            continue
+        try:
+            actual = float(v)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail=f"{body_key} not numeric")
+        eid = f"sep:{event_type[4:]}:{date_key}"  # sep:FUNDS_END_0:2026-03-19
+        upserts.append({
+            "event_id": eid, "event_type": event_type,
+            "released_at": ts, "actual": actual,
+        })
+
+    if not upserts:
+        raise HTTPException(status_code=400, detail="no median fields provided")
+
+    sql = text("""
+        INSERT INTO macro_releases
+        (event_id, event_type, country, released_at, actual_value, source, source_url)
+        VALUES (:event_id, :event_type, 'US', :released_at, :actual,
+                'fed_sep_manual',
+                'https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm')
+        ON CONFLICT (event_id) DO UPDATE
+        SET actual_value = EXCLUDED.actual_value,
+            released_at = EXCLUDED.released_at
+    """)
+    written = 0
+    async with engine.begin() as conn:
+        for u in upserts:
+            await conn.execute(sql, u)
+            written += 1
+    return {"upserted": written, "event_ids": [u["event_id"] for u in upserts]}
 
 
 @router.post("/story/{event_id:path}")
