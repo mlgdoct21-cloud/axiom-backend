@@ -86,6 +86,18 @@ _SOURCES: dict[str, SourceCitation] = {
         "FRED:UNRATE", "FRED Unemployment Rate",
         "https://fred.stlouisfed.org/series/UNRATE",
     ),
+    "FRED:PCEPI": SourceCitation(
+        "FRED:PCEPI", "FRED Headline PCE Price Index",
+        "https://fred.stlouisfed.org/series/PCEPI",
+    ),
+    "FRED:PCEPILFE": SourceCitation(
+        "FRED:PCEPILFE", "FRED Core PCE Price Index",
+        "https://fred.stlouisfed.org/series/PCEPILFE",
+    ),
+    "FRED:PPIACO": SourceCitation(
+        "FRED:PPIACO", "FRED Producer Price Index (All Commodities)",
+        "https://fred.stlouisfed.org/series/PPIACO",
+    ),
     "BLS": SourceCitation(
         "BLS", "BLS Employment / CPI release",
         "https://www.bls.gov/news.release/",
@@ -648,6 +660,277 @@ def _cpi_prompt(llm_input: dict, tier: Tier) -> str:
     )
 
 
+# ---------- PCE prompt builder ----------
+
+def _pce_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
+    """PCE = Fed'in tercih ettiği enflasyon. Yapısı CPI ile aynı (index level,
+    paired CORE_PCE, MoM hesaplanır). Farkı: chain-weighted (substitution etkisi)
+    + işveren-sağlanan sağlık dahil. Bu yüzden ayrı prompt sürümü var.
+    Hesaplama tarafında CPI ağırlıklarına benzer şey yok — PCE ağırlıkları
+    farklı, fake number göndermemek için weight payload'a koymuyoruz.
+    """
+    actual = float(payload["actual_value"]) if payload.get("actual_value") is not None else None
+    prior = float(payload["prior_value"]) if payload.get("prior_value") is not None else None
+    mom = _pct(actual, prior)
+    expected_mom = (
+        float(payload["expected_mom_pct"])
+        if payload.get("expected_mom_pct") is not None else None
+    )
+    expected_yoy = (
+        float(payload["expected_yoy_pct"])
+        if payload.get("expected_yoy_pct") is not None else None
+    )
+    surprise_mom_pp = (
+        round(mom - expected_mom, 2)
+        if mom is not None and expected_mom is not None else None
+    )
+
+    paired = payload.get("paired") or {}
+    core_actual = float(paired.get("actual_value")) if paired.get("actual_value") is not None else None
+    core_prior = float(paired.get("prior_value")) if paired.get("prior_value") is not None else None
+    core_mom = _pct(core_actual, core_prior)
+    core_expected_mom = (
+        float(paired.get("expected_mom_pct"))
+        if paired.get("expected_mom_pct") is not None else None
+    )
+
+    history = payload.get("history") or []
+    avg_3m_mom = _mom_3m_avg(history, n=3)
+    avg_6m_mom = _mom_3m_avg(history, n=6)
+
+    sources_used = ["FRED:PCEPI", "BLS"]
+    if paired:
+        sources_used.append("FRED:PCEPILFE")
+
+    llm_input = {
+        "release_date": _format_tr_date(payload.get("released_at")),
+        "country": payload.get("country"),
+        "headline_pce": {
+            "actual_index": actual,
+            "prior_index": prior,
+            "mom_pct": mom,
+            "expected_mom_pct": expected_mom,
+            "expected_yoy_pct": expected_yoy,
+            "surprise_mom_pp": surprise_mom_pp,
+            "source_code": "FRED:PCEPI",
+        },
+        "core_pce": {
+            "actual_index": core_actual,
+            "prior_index": core_prior,
+            "mom_pct": core_mom,
+            "expected_mom_pct": core_expected_mom,
+            "source_code": "FRED:PCEPILFE",
+        } if paired else None,
+        "trend": {
+            "mom_avg_3m_pct": avg_3m_mom,
+            "mom_avg_6m_pct": avg_6m_mom,
+        },
+        "available_sources": [
+            {"code": c, "name": _SOURCES[c].name}
+            for c in sources_used if c in _SOURCES
+        ],
+    }
+
+    allowed_inputs = [
+        actual, prior, mom, expected_mom, expected_yoy, surprise_mom_pp,
+        core_actual, core_prior, core_mom, core_expected_mom,
+        avg_3m_mom, avg_6m_mom,
+    ]
+    allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
+    allowed_codes = {s["code"] for s in llm_input["available_sources"]}
+    return llm_input, allowed, allowed_codes
+
+
+def _pce_prompt(llm_input: dict, tier: Tier) -> str:
+    if tier == "premium":
+        word_min, word_max = 150, 500
+        sections = (
+            "(1) Manşet PCE vs beklenti — sürpriz büyüklüğü kelime ile anlat.\n"
+            "(2) Çekirdek PCE — Fed bunu CPI'dan neden daha çok takip eder "
+            "(chain-weighted yani sepet değişikliğine adapte, işveren sağlık "
+            "harcamaları dahil). Yalnızca KAVRAM olarak anlat, yeni rakam "
+            "üretme.\n"
+            "(3) 3-aylık MoM trend — tek ay yanıltıcı, momentum okuma.\n"
+            "(4) Fed kararına etki — PCE 'Fed'in resmi hedefi' (%2 yıllık) "
+            "olduğundan tepki CPI'dan daha net olur.\n"
+            "(5) Aklında tut + 'Senin için 1-cümle' (BTC veya portföy)."
+        )
+    else:  # advance
+        word_min, word_max = 340, 680
+        sections = (
+            "(1) Manşet vs beklenti + tarihsel bağlam ('son X ayın en yüksek/"
+            "düşük MoM'u' INPUT history'ye bakarak).\n"
+            "(2) Çekirdek PCE detayı + 'süper çekirdek hizmet' kavramı "
+            "(barınma ex hariç hizmet enflasyonu — INPUT'ta yok ama kavram "
+            "kullanılabilir, somut rakam yazma).\n"
+            "(3) PCE vs CPI farkı — chain-weighting + sağlık kapsamı + "
+            "sektörel ağırlık farkı (CPI barınma-ağır, PCE hizmet-ağır). "
+            "Bu kısım kavramsal, sayı yazma.\n"
+            "(4) 3-ay ve 6-ay rolling MoM — Fed'in 'durable disinflation' "
+            "okuma çerçevesi (tek ay değil seri).\n"
+            "(5) Fed kararına etki + CME FedWatch implikasyonu (yön anlat, "
+            "INPUT'ta CME oranı yok diye sayı YAZMA).\n"
+            "(6) Risk dengesi — enerji vs hizmet enflasyonu Fed için çelişki "
+            "yaratıyorsa adlandır.\n"
+            "(7) Aklında tut + 'Senin için 1-cümle' (DXY/BTC/altın yönü)."
+        )
+
+    available_codes = [s["code"] for s in llm_input["available_sources"]]
+
+    return (
+        "Sen makro analist hikaye anlatıcısısın. Aşağıdaki JSON PCE release "
+        "verisini oku ve **sadece geçerli bir JSON** döndür.\n\n"
+        f"INPUT:\n{json.dumps(llm_input, ensure_ascii=False, indent=2, default=str)}\n\n"
+        "ÇIKTI ŞEMASI:\n"
+        "{\n"
+        '  "story_md": "(string — aşağıdaki bölümleri içermeli)"\n'
+        "}\n\n"
+        f"BÖLÜMLER (sırayla):\n{sections}\n\n"
+        f"KELİME SAYISI: {word_min}-{word_max} aralığında.\n\n"
+        "MUTLAK KURALLAR (ihlal = retry):\n"
+        "1. Her sayı INPUT JSON'da geçen bir değer olmalı. Aritmetik yapma — "
+        "mom_pct, surprise_mom_pp, avg_3m_mom_pct INPUT'ta hazır.\n"
+        "2. HER sayının 60 karakter içinde [KAYNAK_KODU] olmalı. "
+        f"Geçerli kodlar: {available_codes}. Örnek: '%0.18 [FRED:PCEPI]' "
+        "veya 'çekirdek %0.32 [FRED:PCEPILFE]'.\n"
+        "3. Politik yorum YASAK (parti/seçim/Demokrat/Cumhuriyetçi).\n"
+        "4. Mutlaklık YASAK ('kesin', 'garanti', 'asla').\n"
+        "5. Yatırım tavsiyesi YASAK ('şimdi al/sat').\n"
+        "6. Tarih damgası ŞART: ay adı veya yıl veya UTC geçmeli.\n"
+        "7. Hikaye anlatır gibi yaz — 'Fed'in tercihi neden PCE' karakteri, "
+        "'durable disinflation' mental modeli kullan.\n"
+        "8. 'beklenti' SADECE expected_*_pct dolu ise yazılır. None ise yazma.\n"
+        "9. SIFIR DELTA: mom_pct veya surprise_mom_pp tam 0 ise 'değişmedi' "
+        "diye anlat, '0' rakamını yazma.\n"
+        "10. TARİH: INPUT `release_date` formatını ('1 Mart 2026') aynen "
+        "kullan; ISO formatı YAZMA.\n"
+        "11. Çıktı sadece JSON; satır sonları için \\n.\n"
+    )
+
+
+# ---------- PPI prompt builder ----------
+
+def _ppi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
+    """PPI = üretici fiyat endeksi. CPI'dan 1-3 ay önce hareket eder (pipeline
+    basıncı). Bizim DB'de paired CORE_PPI yok (FRED PPIFIS henüz adapter'da
+    yok), o yüzden sadece manşet + 3m/6m trend.
+    """
+    actual = float(payload["actual_value"]) if payload.get("actual_value") is not None else None
+    prior = float(payload["prior_value"]) if payload.get("prior_value") is not None else None
+    mom = _pct(actual, prior)
+    expected_mom = (
+        float(payload["expected_mom_pct"])
+        if payload.get("expected_mom_pct") is not None else None
+    )
+    expected_yoy = (
+        float(payload["expected_yoy_pct"])
+        if payload.get("expected_yoy_pct") is not None else None
+    )
+    surprise_mom_pp = (
+        round(mom - expected_mom, 2)
+        if mom is not None and expected_mom is not None else None
+    )
+
+    history = payload.get("history") or []
+    avg_3m_mom = _mom_3m_avg(history, n=3)
+    avg_6m_mom = _mom_3m_avg(history, n=6)
+
+    sources_used = ["FRED:PPIACO", "BLS"]
+
+    llm_input = {
+        "release_date": _format_tr_date(payload.get("released_at")),
+        "country": payload.get("country"),
+        "headline_ppi": {
+            "actual_index": actual,
+            "prior_index": prior,
+            "mom_pct": mom,
+            "expected_mom_pct": expected_mom,
+            "expected_yoy_pct": expected_yoy,
+            "surprise_mom_pp": surprise_mom_pp,
+            "source_code": "FRED:PPIACO",
+        },
+        "trend": {
+            "mom_avg_3m_pct": avg_3m_mom,
+            "mom_avg_6m_pct": avg_6m_mom,
+        },
+        "available_sources": [
+            {"code": c, "name": _SOURCES[c].name}
+            for c in sources_used if c in _SOURCES
+        ],
+    }
+
+    allowed_inputs = [
+        actual, prior, mom, expected_mom, expected_yoy, surprise_mom_pp,
+        avg_3m_mom, avg_6m_mom,
+    ]
+    allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
+    allowed_codes = {s["code"] for s in llm_input["available_sources"]}
+    return llm_input, allowed, allowed_codes
+
+
+def _ppi_prompt(llm_input: dict, tier: Tier) -> str:
+    if tier == "premium":
+        word_min, word_max = 150, 500
+        sections = (
+            "(1) Manşet PPI vs beklenti — sürpriz büyüklüğü kelime ile anlat.\n"
+            "(2) PPI ne anlama gelir kavramı — üretici maliyeti, CPI'ya 1-3 ay "
+            "önden hareket eden 'pipeline basıncı'. Kavram olarak anlat, fake "
+            "lead lag rakamı yazma.\n"
+            "(3) 3-aylık MoM trend — yön net mi yoksa volatil mi.\n"
+            "(4) Tüketiciye geçiş — PPI yukarı çıkıyorsa şirket marjı sıkışır "
+            "veya fiyatı tüketiciye yansır. Hangi senaryo daha olası, INPUT "
+            "verisine bakarak kelime ile anlat.\n"
+            "(5) Aklında tut + 'Senin için 1-cümle'."
+        )
+    else:  # advance
+        word_min, word_max = 340, 680
+        sections = (
+            "(1) Manşet vs beklenti + tarihsel bağlam (history'ye bakarak "
+            "'son X ayın en yüksek/düşük MoM'u').\n"
+            "(2) PPI lead-CPI ilişkisi detayı — 'pipeline basıncı' kavramı + "
+            "marj sıkışması tezi (somut lead-lag rakamı YAZMA, INPUT'ta yok).\n"
+            "(3) 3-ay ve 6-ay rolling — momentum trendi (yön + ivme).\n"
+            "(4) Supply-side vs demand-side enflasyon ayrımı — PPI hızlı yukarı "
+            "çıkıyorsa supply, CPI önde ise demand. Kavramsal anlat.\n"
+            "(5) Fed kararına etki — Fed PPI'a direkt bakmaz ama 'core PCE'ye "
+            "geçiş kanalı' okuyabilir.\n"
+            "(6) Risk dengesi — emtia + enerji PPI'ı tetikliyorsa hangi sektör "
+            "marjı en çok sıkışır (kavramsal, sayı yok).\n"
+            "(7) Aklında tut + 'Senin için 1-cümle' (DXY/BTC/altın yönü)."
+        )
+
+    available_codes = [s["code"] for s in llm_input["available_sources"]]
+
+    return (
+        "Sen makro analist hikaye anlatıcısısın. Aşağıdaki JSON PPI release "
+        "verisini oku ve **sadece geçerli bir JSON** döndür.\n\n"
+        f"INPUT:\n{json.dumps(llm_input, ensure_ascii=False, indent=2, default=str)}\n\n"
+        "ÇIKTI ŞEMASI:\n"
+        "{\n"
+        '  "story_md": "(string — aşağıdaki bölümleri içermeli)"\n'
+        "}\n\n"
+        f"BÖLÜMLER (sırayla):\n{sections}\n\n"
+        f"KELİME SAYISI: {word_min}-{word_max} aralığında.\n\n"
+        "MUTLAK KURALLAR (ihlal = retry):\n"
+        "1. Her sayı INPUT JSON'da geçen bir değer olmalı. Aritmetik yapma — "
+        "mom_pct, surprise_mom_pp, avg_3m_mom_pct INPUT'ta hazır.\n"
+        "2. HER sayının 60 karakter içinde [KAYNAK_KODU] olmalı. "
+        f"Geçerli kodlar: {available_codes}. Örnek: '%1.78 [FRED:PPIACO]'.\n"
+        "3. Politik yorum YASAK.\n"
+        "4. Mutlaklık YASAK ('kesin', 'garanti', 'asla').\n"
+        "5. Yatırım tavsiyesi YASAK.\n"
+        "6. Tarih damgası ŞART (ay adı veya yıl veya UTC).\n"
+        "7. 'pipeline basıncı', 'marj sıkışması', 'supply vs demand' mental "
+        "modellerini kullan. CPI'ya tahmin/lead-lag rakamı YAZMA (INPUT'ta yok).\n"
+        "8. 'beklenti' SADECE expected_*_pct dolu ise yazılır.\n"
+        "9. SIFIR DELTA: mom_pct veya surprise_mom_pp 0 ise 'değişmedi' diye "
+        "anlat, '0' rakamını yazma.\n"
+        "10. TARİH: INPUT `release_date` formatını ('1 Mart 2026') aynen "
+        "kullan; ISO formatı YAZMA.\n"
+        "11. Çıktı sadece JSON; satır sonları için \\n.\n"
+    )
+
+
 # ---------- Gemini ----------
 
 async def _call_gemini(prompt: str, *, max_tokens: int = 8192) -> Optional[dict]:
@@ -727,11 +1010,13 @@ class StoryResult:
     sources_cited: list[str] = field(default_factory=list)
 
 
-_SUPPORTED_EVENT_TYPES = frozenset({"CPI", "NFP"})
+_SUPPORTED_EVENT_TYPES = frozenset({"CPI", "NFP", "PCE", "PPI"})
 
 _DECODER_DISPATCH = {
     "CPI": (_cpi_payload, _cpi_prompt),
     "NFP": (_nfp_payload, _nfp_prompt),
+    "PCE": (_pce_payload, _pce_prompt),
+    "PPI": (_ppi_payload, _ppi_prompt),
 }
 
 
@@ -767,7 +1052,7 @@ async def generate_story(
     if et not in _SUPPORTED_EVENT_TYPES:
         result.rejection_reason = (
             f"event_type {et} not yet supported by storyteller "
-            f"(currently CPI, NFP)"
+            f"(currently CPI, NFP, PCE, PPI)"
         )
         return result
 
