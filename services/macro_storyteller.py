@@ -218,6 +218,13 @@ _DAY_DATE_RE = re.compile(
     r"Temmuz|Ağustos|Eylül|Ekim|Kasım|Aralık)\b",
 )
 
+# INPUT JSON anahtar adı leak'i — `[release_date]`, `[prior_decision_date]`,
+# `[expected_mom_pct]` vb. Citation chip'leri CAPS:CAPS olduğu için
+# (`[FRED:CPIAUCSL]`) bu regex sadece snake_case lowercase id'leri yakalar.
+# Min 2 segment ya da underscore içermesi şartı ile "[a]" / "[ETF]" gibi
+# normal bracket içeriklerinde false-positive olmaz.
+_PLACEHOLDER_LEAK_RE = re.compile(r"\[([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\]")
+
 _BANNED_PHRASES = (
     # Politik
     "Cumhuriyetçi", "Demokrat", "AKP", "CHP", "MHP",
@@ -239,6 +246,7 @@ class ValidatorReport:
     out_of_word_bounds: bool = False
     sources_cited: list[str] = field(default_factory=list)
     unknown_sources: list[str] = field(default_factory=list)
+    placeholder_leaks: list[str] = field(default_factory=list)
 
 
 def _validate_story(
@@ -343,6 +351,12 @@ def _validate_story(
     rep.sources_cited = sorted(cited)
     rep.unknown_sources = sorted(s for s in cited if s not in allowed_source_codes)
 
+    # L6 — INPUT field-name placeholder leak guard. Model JSON anahtarlarını
+    # (release_date, prior_decision_date vb.) köşeli parantezle paragrafa
+    # kopyalıyor. Citation chip'leri CAPS:CAPS formatında ([FRED:CPIAUCSL])
+    # olduğu için, snake_case lowercase id'ler placeholder leak'tir.
+    rep.placeholder_leaks = sorted(set(_PLACEHOLDER_LEAK_RE.findall(story_md)))
+
     rep.ok = (
         not rep.unknown_numbers
         and not rep.numbers_without_citation
@@ -350,6 +364,7 @@ def _validate_story(
         and not rep.banned_phrases_found
         and not rep.out_of_word_bounds
         and not rep.unknown_sources
+        and not rep.placeholder_leaks
     )
     return rep
 
@@ -904,7 +919,9 @@ def _nfp_prompt(llm_input: dict, tier: Tier) -> str:
         "'işsizlik %4.3 [FRED:UNRATE] seviyesinde sabit kaldı.' (devam yok).\n"
         "11. TARİH: paragrafta sadece INPUT'taki `release_date` field'ında "
         "yazıldığı gibi kullan ('1 Nisan 2026'). ISO formatı veya köşeli "
-        "parantezli timestamp YAZMA.\n"
+        "parantezli timestamp YAZMA. INPUT alan ADLARINI ('[release_date]', "
+        "'[expected_change_k]' vb.) düz metin olarak ASLA paragrafa kopyalama "
+        "— bunlar JSON anahtarlarıdır, sen sadece değerleri kullan.\n"
         "12. Çıktı sadece JSON; satır sonları için \\n.\n"
     )
 
@@ -972,7 +989,9 @@ def _cpi_prompt(llm_input: dict, tier: Tier) -> str:
         "diye anlat, rakamı verme.\n"
         "11. TARİH: paragrafta INPUT'taki `release_date` field'ında yazılan "
         "formatı kullan ('1 Mart 2026'). ISO formatı veya köşeli parantezli "
-        "timestamp YAZMA.\n"
+        "timestamp YAZMA. INPUT alan ADLARINI ('[release_date]', "
+        "'[expected_yoy_pct]' vb.) düz metin olarak ASLA paragrafa kopyalama "
+        "— bunlar JSON anahtarlarıdır, sen sadece değerleri kullan.\n"
         "12. Çıktı sadece JSON — story_md tek string, satır sonları için \\n.\n"
     )
 
@@ -1122,7 +1141,8 @@ def _pce_prompt(llm_input: dict, tier: Tier) -> str:
         "9. SIFIR DELTA: mom_pct veya surprise_mom_pp tam 0 ise 'değişmedi' "
         "diye anlat, '0' rakamını yazma.\n"
         "10. TARİH: INPUT `release_date` formatını ('1 Mart 2026') aynen "
-        "kullan; ISO formatı YAZMA.\n"
+        "kullan; ISO formatı YAZMA. INPUT alan ADLARINI ('[release_date]', "
+        "'[expected_mom_pct]' vb.) düz metin olarak ASLA paragrafa kopyalama.\n"
         "11. Çıktı sadece JSON; satır sonları için \\n.\n"
     )
 
@@ -1276,7 +1296,8 @@ def _ppi_prompt(llm_input: dict, tier: Tier) -> str:
         "9. SIFIR DELTA: mom_pct veya surprise_mom_pp 0 ise 'değişmedi' diye "
         "anlat, '0' rakamını yazma.\n"
         "10. TARİH: INPUT `release_date` formatını ('1 Mart 2026') aynen "
-        "kullan; ISO formatı YAZMA.\n"
+        "kullan; ISO formatı YAZMA. INPUT alan ADLARINI ('[release_date]', "
+        "'[expected_mom_pct]' vb.) düz metin olarak ASLA paragrafa kopyalama.\n"
         "11. Çıktı sadece JSON; satır sonları için \\n.\n"
     )
 
@@ -1670,7 +1691,19 @@ def _fomc_prompt(llm_input: dict, tier: Tier) -> str:
         "alt sınır (lower) ikilisini kullan (her birinden sonra ilgili "
         "FRED:DFEDTARU/L chip'i). Midpoint kullanılırsa chip eşleştirmesi "
         "zorlaşır.\n"
-        "12. Çıktı sadece JSON; satır sonları için \\n.\n"
+        "12. FIELD-NAME PLACEHOLDER YASAK: INPUT JSON'daki anahtar adlarını "
+        "('release_date', 'prior_decision_date', 'bp_change', 'current_upper_pct' "
+        "vb.) köşeli parantezle ya da düz metin olarak ASLA paragrafa kopyalama. "
+        "Bunlar INPUT alan ADLARI — sen sadece DEĞERLERİNİ ('18 Mart 2026', "
+        "'%3.75') kullan. '[release_date]' veya '[prior_decision_date]' "
+        "yazarsan retry tetiklenir.\n"
+        "13. BAZ PUAN HESABI: 'X baz puan' yazarken X = INPUT.fed_funds.bp_change "
+        "(negatifse abs değeri). Tarih günü (örn. prior_decision_date '10 "
+        "Aralık 2025'teki 10 ya da '26 Ocak'taki 26) ile KARIŞTIRMA. "
+        "bp_change=-25 ise '25 baz puan indirim' — '26' veya '10' YAZMA. "
+        "Eğer kafan karışırsa: '25 baz puan' ifadesinde geçen sayı SADECE "
+        "abs(bp_change) olabilir.\n"
+        "14. Çıktı sadece JSON; satır sonları için \\n.\n"
     )
 
 
@@ -1769,6 +1802,7 @@ async def generate_story(
             f"missing_cite={rep.numbers_without_citation[:5]} "
             f"banned={rep.banned_phrases_found} "
             f"temporal={rep.missing_temporal_marker} "
+            f"placeholders={rep.placeholder_leaks[:5]} "
             f"wc={rep.word_count} bounds={word_bounds}"
         )
         retry_prompt = prompt + (
@@ -1779,6 +1813,8 @@ async def generate_story(
             f"- missing_temporal_marker: {rep.missing_temporal_marker}\n"
             f"- word_count: {rep.word_count} (target {word_bounds[0]}-{word_bounds[1]})\n"
             f"- unknown_sources: {rep.unknown_sources}\n"
+            f"- placeholder_leaks (INPUT field adı paragrafta literal yazılmış): "
+            f"{rep.placeholder_leaks} — bunları çıkar, sadece DEĞERLERİ kullan.\n"
             "Sadece bu sorunları düzelt ve JSON döndür."
         )
         llm_out = await _call_gemini(retry_prompt)
@@ -1796,7 +1832,8 @@ async def generate_story(
                 f"validator still failed after retry: "
                 f"nums={rep.unknown_numbers[:3]} "
                 f"missing_cite={rep.numbers_without_citation[:3]} "
-                f"banned={rep.banned_phrases_found}"
+                f"banned={rep.banned_phrases_found} "
+                f"placeholders={rep.placeholder_leaks[:3]}"
             )
             return result
 
