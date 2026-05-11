@@ -432,9 +432,90 @@ async def record_fed_rss_events(events: list[ReleaseEvent]) -> int:
                     inserted += 1
                     logger.info(f"new release: {ev.event_id} type={ev.event_type}")
                     _trigger_narrative(ev.event_id)
+                    # FAZ B — FOMC_PROJECTIONS event'i geldiğinde Fed SEP
+                    # PDF'ini otomatik parse et + medianları macro_releases'a
+                    # SEP_* synthetic event_id'leriyle yaz. Fire-and-forget.
+                    if ev.event_type == "FOMC_PROJECTIONS":
+                        _trigger_sep_autoparse(ev.event_id, ev.released_at)
     except Exception as e:
         logger.error(f"record_fed_rss_events failed: {e}")
     return inserted
+
+
+# Strong-ref set so fire-and-forget SEP parse tasks aren't GC'd.
+_SEP_AUTOPARSE_INFLIGHT: set = set()
+
+
+def _trigger_sep_autoparse(event_id: str, released_at: datetime) -> None:
+    """Fire-and-forget Fed SEP PDF parse. Lazy import keeps fed_sep ↔
+    release_detect import order safe."""
+    try:
+        task = asyncio.create_task(_autoparse_sep(event_id, released_at))
+        _SEP_AUTOPARSE_INFLIGHT.add(task)
+        task.add_done_callback(_SEP_AUTOPARSE_INFLIGHT.discard)
+    except Exception as e:
+        logger.error(f"SEP autoparse trigger failed for {event_id}: {e}")
+
+
+async def _autoparse_sep(event_id: str, released_at: datetime) -> None:
+    """SEP PDF'i indir, parse et, medianları macro_releases'a yaz.
+
+    Sessiz fail eder — admin manuel entry endpoint'i her zaman fallback.
+    """
+    try:
+        from services.macro_sources.fed_sep import fetch_sep_medians
+    except Exception as e:
+        logger.warning(f"SEP autoparse skip (import): {e}")
+        return
+    try:
+        medians = await fetch_sep_medians(released_at)
+    except Exception as e:
+        logger.warning(f"SEP autoparse fetch failed for {event_id}: {e}")
+        return
+    if not medians.success or not medians.has_any():
+        logger.warning(
+            f"SEP autoparse no data for {event_id}: "
+            f"error={medians.error}"
+        )
+        return
+    date_key = released_at.date().isoformat()
+    rows = [
+        ("FUNDS_END_0", medians.end_year_0),
+        ("FUNDS_END_1", medians.end_year_1),
+        ("FUNDS_END_2", medians.end_year_2),
+        ("FUNDS_LONGER_RUN", medians.longer_run),
+    ]
+    sql = text("""
+        INSERT INTO macro_releases
+        (event_id, event_type, country, released_at, actual_value, source, source_url)
+        VALUES (:event_id, :event_type, 'US', :released_at, :actual,
+                'fed_sep_auto',
+                'https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm')
+        ON CONFLICT (event_id) DO UPDATE
+        SET actual_value = EXCLUDED.actual_value,
+            released_at = EXCLUDED.released_at
+    """)
+    inserted = 0
+    try:
+        async with engine.begin() as conn:
+            for suffix, val in rows:
+                if val is None:
+                    continue
+                eid = f"sep:{suffix}:{date_key}"
+                await conn.execute(sql, {
+                    "event_id": eid,
+                    "event_type": f"SEP_{suffix}",
+                    "released_at": released_at,
+                    "actual": val,
+                })
+                inserted += 1
+        logger.info(
+            f"SEP autoparse wrote {inserted} medians for {event_id} "
+            f"(end_0={medians.end_year_0}, end_1={medians.end_year_1}, "
+            f"end_2={medians.end_year_2}, LR={medians.longer_run})"
+        )
+    except Exception as e:
+        logger.error(f"SEP autoparse persist failed for {event_id}: {e}")
 
 
 def _trigger_narrative(event_id: str) -> None:
