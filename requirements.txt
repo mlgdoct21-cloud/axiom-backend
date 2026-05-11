@@ -55,6 +55,11 @@ matplotlib==3.8.4
 # subscription.created / .updated / .deleted.
 stripe==9.0.0
 
+# Rate limiting — protects /billing/checkout + /auth/* against brute-force
+# and accidental spam. Per-IP via slowapi; no Redis dependency by default
+# (in-memory limiter — acceptable while we're single-replica on Railway).
+slowapi==0.1.9
+
 # CoinGlass ETF flow scraper — JS-rendered tables require a real browser.
 # Replaces the unreliable .github/workflows/coinglass-etf-cron.yml; runs
 # in services/coinglass_scheduler.py every 6h. Chromium installed via

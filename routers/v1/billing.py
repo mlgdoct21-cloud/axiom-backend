@@ -10,16 +10,20 @@ The webhook intentionally always returns 200 once the signature passes —
 Stripe's retry policy is aggressive on non-2xx responses, so we swallow
 handler errors and let our logger flag them.
 """
-import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from core.logger import get_logger
-from core.security import get_current_user as get_authenticated_user
+from core.rate_limit import limiter
+from core.security import (
+    assert_internal_secret,
+    get_current_user as get_authenticated_user,
+)
 from services.stripe_billing import (
     create_checkout_session,
     create_portal_session,
+    fetch_checkout_status,
     handle_webhook_event,
     is_configured,
     verify_webhook_signature,
@@ -30,25 +34,25 @@ logger = get_logger("billing_router")
 router = APIRouter(prefix="/billing", tags=["billing"])
 
 
-def _check_internal_auth(secret: Optional[str]) -> None:
-    expected = os.getenv("BOT_INTERNAL_SECRET", "")
-    if not expected or secret != expected:
-        raise HTTPException(status_code=403, detail="forbidden")
-
-
 _VALID_TIERS = ("premium", "advance")
 
 
 @router.post("/checkout")
+@limiter.limit("20/minute")
 async def checkout(
+    request: Request,
     telegram_id: str,
     tier: str,
     x_internal_secret: Optional[str] = Header(None),
 ):
     """Mint a Stripe Checkout Session URL for `telegram_id` upgrading to `tier`.
     Returns 503 when Stripe env vars aren't set so the bot can fall back to
-    the admin-contact path without retrying."""
-    _check_internal_auth(x_internal_secret)
+    the admin-contact path without retrying.
+
+    Rate-limited to 20/min per IP — Telegram bot itself can hit this multiple
+    times during a /upgrade flow, but a flood from a single source is suspicious.
+    """
+    assert_internal_secret(x_internal_secret)
     tier_norm = (tier or "").lower()
     if tier_norm not in _VALID_TIERS:
         raise HTTPException(status_code=400, detail=f"tier must be one of {_VALID_TIERS}")
@@ -77,6 +81,37 @@ async def customer_portal(current_user = Depends(get_authenticated_user)):
     if res.error or not res.url:
         raise HTTPException(status_code=502, detail=f"portal_failed: {res.error or 'no_url'}")
     return {"url": res.url}
+
+
+@router.get("/checkout-status")
+@limiter.limit("60/minute")
+async def checkout_status(request: Request, session_id: str):
+    """Reconcile a Stripe Checkout Session with the local user row.
+
+    Called by the dashboard right after redirect to `?upgrade=success` —
+    polls every ~2s until `ready=true`, masking the webhook delivery delay
+    (typically 1-3s, occasionally 10s+). Without this, a fast user lands on
+    the success page before the webhook flips their tier and briefly sees
+    themselves still as Free, which generates support tickets.
+
+    Public (no auth) — the session_id is a per-checkout opaque token; an
+    attacker without it cannot enumerate or pivot. Rate-limited to 60/min
+    (one poll every second per IP) which covers polling cadence + headroom.
+    """
+    if not is_configured():
+        raise HTTPException(status_code=503, detail="stripe_not_configured")
+    res = await fetch_checkout_status(session_id)
+    if not res.found:
+        # invalid session_id or Stripe API error — return 404 not 500 so the
+        # dashboard can stop polling cleanly.
+        raise HTTPException(status_code=404, detail=res.error or "not_found")
+    return {
+        "ready": res.ready,
+        "stripe_payment_status": res.stripe_payment_status,
+        "stripe_session_status": res.stripe_session_status,
+        "local_tier": res.local_tier,
+        "local_subscription_status": res.local_subscription_status,
+    }
 
 
 @router.post("/webhook")

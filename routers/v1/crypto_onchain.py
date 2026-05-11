@@ -9,7 +9,6 @@ Admin (BOT_INTERNAL_SECRET):
   POST /api/v1/admin/crypto/morning-briefing — fire briefing now
   POST /api/v1/admin/crypto/refresh        — bust cache + refresh
 """
-import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -18,6 +17,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from core.database import engine
+from core.security import assert_internal_secret
 from services.cryptoquant_service import get_onchain_snapshot, _is_configured, refresh_all_metrics
 from services.cryptoquant_alerts import sweep_and_dispatch, morning_briefing
 from services.cryptoquant_market import (
@@ -126,27 +126,21 @@ async def alert_history(days: int = Query(default=7, ge=1, le=30)):
     )
 
 
-def _check_auth(x_internal_secret: Optional[str]) -> None:
-    expected = os.getenv("BOT_INTERNAL_SECRET", "").strip()
-    if not expected or x_internal_secret != expected:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-
 @router.post("/admin/crypto/alert-sweep")
 async def admin_alert_sweep(x_internal_secret: Optional[str] = Header(None)):
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     return await sweep_and_dispatch()
 
 
 @router.post("/admin/crypto/morning-briefing")
 async def admin_morning_briefing(x_internal_secret: Optional[str] = Header(None)):
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     return await morning_briefing()
 
 
 @router.post("/admin/crypto/refresh")
 async def admin_refresh(x_internal_secret: Optional[str] = Header(None)):
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     await refresh_all_metrics()
     await refresh_market_metrics()
     return {"status": "refreshed"}
@@ -201,7 +195,7 @@ async def market_altseason():
 
 @router.post("/admin/market/refresh")
 async def admin_market_refresh(x_internal_secret: Optional[str] = Header(None)):
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     await refresh_market_metrics()
     return {"status": "market_refreshed"}
 
@@ -234,5 +228,5 @@ async def admin_story_refresh(
     symbol: str = Query(default="BTC", max_length=10),
     x_internal_secret: Optional[str] = Header(None),
 ):
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     return await refresh_story(symbol.upper().strip())

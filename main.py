@@ -6,6 +6,9 @@ import asyncio
 import logging
 import os
 
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.middleware import SlowAPIMiddleware
+
 from core.database import engine
 import models  # Import models so SQLAlchemy knows about them
 from routers.v1 import router as v1_router
@@ -17,6 +20,7 @@ from services.macro_sources.reliability_probe import reliability_probe_superviso
 from services.cryptoquant_scheduler import cryptoquant_supervisor
 from core.logger import get_logger
 from core.schema_guard import ensure_schema
+from core.rate_limit import limiter, RateLimitExceeded
 
 logger = get_logger("main")
 
@@ -166,6 +170,13 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept"],
 )
+
+# Rate limiting — per-IP via slowapi. Limiter is shared with router modules
+# through core.rate_limit. SlowAPIMiddleware injects request.state for the
+# @limiter.limit decorators to read. Exceeded → HTTP 429 via _rate_limit_exceeded_handler.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # Include API routers
 app.include_router(v1_router)

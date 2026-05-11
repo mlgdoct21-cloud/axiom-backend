@@ -1,10 +1,10 @@
 """
 Admin ETF cache router — manuel CoinGlass değerlerini cache'e yazma endpoint'i.
 
-Kullanım: BOT_INTERNAL_SECRET header ile authenticate, gerçek CoinGlass
+Kullanım: BOT_INTERNAL_SECRET header ile authenticate (timing-attack-safe
+compare via core.security.assert_internal_secret), gerçek CoinGlass
 değerlerini cache'e yaz. Bitbo Apr 30 yayınlanmadan önce manual override için.
 """
-import os
 from typing import Optional
 from datetime import datetime, timezone
 
@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from services.etf_flow_cache_service import save_etf_flow
 from core.logger import get_logger
+from core.security import assert_internal_secret
 
 logger = get_logger("etf_admin")
 
@@ -29,12 +30,6 @@ class EtfFlowUpsert(BaseModel):
     total_holdings_coins: Optional[float] = None
 
 
-def _check_internal(secret: Optional[str]) -> None:
-    expected = os.getenv("BOT_INTERNAL_SECRET", "").strip()
-    if not expected or secret != expected:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-
 @router.post("/coinglass-scrape")
 async def trigger_coinglass_scrape(
     x_internal_secret: Optional[str] = Header(None),
@@ -44,7 +39,7 @@ async def trigger_coinglass_scrape(
     Useful after a deploy or to force a refresh outside the 6h supervisor
     interval. Returns the per-symbol success map. Synchronous — request
     waits for both scrapes (typically ~15s)."""
-    _check_internal(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     from services.coinglass_scheduler import scrape_both_symbols
     results = await scrape_both_symbols()
     return {"ok": True, "results": results}
@@ -58,7 +53,7 @@ async def upsert_etf_cache(
     """
     Manuel cache write. BOT_INTERNAL_SECRET ile auth.
     """
-    _check_internal(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
 
     if payload.symbol not in ("BTC", "ETH"):
         raise HTTPException(status_code=400, detail="symbol must be BTC or ETH")

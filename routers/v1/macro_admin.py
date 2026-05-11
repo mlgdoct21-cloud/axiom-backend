@@ -1,9 +1,9 @@
 """Admin Macro router — reliability stats + manual probe trigger.
 
 Hafta 1 verification kriteri (>=99% uptime, p95<3s) bu endpoint'ten
-kontrol edilir. BOT_INTERNAL_SECRET ile auth.
+kontrol edilir. BOT_INTERNAL_SECRET ile auth (timing-attack-safe compare
+via core.security.assert_internal_secret).
 """
-import os
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -12,6 +12,7 @@ from sqlalchemy import text
 
 from core.database import engine
 from core.logger import get_logger
+from core.security import assert_internal_secret
 from services.macro_calendar import (
     invalidate_calendar_cache,
     load_calendar,
@@ -38,26 +39,20 @@ logger = get_logger("macro_admin")
 router = APIRouter(prefix="/admin/macro", tags=["admin"])
 
 
-def _check_auth(x_internal_secret: Optional[str]) -> None:
-    expected = os.getenv("BOT_INTERNAL_SECRET", "").strip()
-    if not expected or x_internal_secret != expected:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-
 @router.get("/health")
 async def health_report(
     source: str = Query("fed_rss"),
     hours: int = Query(168, ge=1, le=720),
     x_internal_secret: Optional[str] = Header(None),
 ):
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     return await rolling_health_report(source=source, hours=hours)
 
 
 @router.post("/probe")
 async def trigger_probe(x_internal_secret: Optional[str] = Header(None)):
     """Force-probe now (debug). Bypasses the 5-min interval."""
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     return await probe_once()
 
 
@@ -67,7 +62,7 @@ async def calendar_view(
     x_internal_secret: Optional[str] = Header(None),
 ):
     """Combined view: upcoming YAML events + recent macro_releases rows."""
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     now = datetime.now(timezone.utc)
     upcoming = [
         {
@@ -113,7 +108,7 @@ async def calendar_refresh(x_internal_secret: Optional[str] = Header(None)):
     """Drop the merged-calendar cache + FRED's 24h release/dates cache, then
     rebuild from scratch. Useful after a BLS reschedule or when adding a new
     event_type to macro_calendar.yaml without bouncing the process."""
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     invalidate_calendar_cache()
     events = await load_calendar(force_refresh=True)
     return {
@@ -130,7 +125,7 @@ async def regenerate_narrative(
 ):
     """Manual narrative (re)generation. With ?force=true, clears the existing
     narrative first so the idempotent UPDATE inside generate_narrative writes."""
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     if force:
         async with engine.begin() as conn:
             await conn.execute(
@@ -165,7 +160,7 @@ async def trigger_broadcast(
     re-sending after a Telegram outage. Idempotent guard lives upstream in
     generate_narrative (broadcast only auto-fires on a NEW narrative_md write)
     — calling this manually intentionally bypasses that gate."""
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     return await broadcast_release(event_id)
 
 
@@ -178,7 +173,7 @@ async def set_user_tier(
     """Flip a user's subscription tier — used for ops + dev testing.
     Validates tier is one of the allowed values; idempotent UPDATE.
     """
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     if tier not in ("free", "premium", "advance"):
         raise HTTPException(status_code=400, detail="tier must be free|premium|advance")
     sql = text(
@@ -207,7 +202,7 @@ async def trigger_market_reaction(
     deployed, (b) debugging FMP wiring. Returns immediately — the actual
     capture runs as a background task and will write rows when complete.
     """
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     from services.macro_market_reaction import trigger_reaction
     trigger_reaction(event_id)
     return {"event_id": event_id, "queued": True, "note": "T+0 immediate, T+5min after 300s"}
@@ -228,7 +223,7 @@ async def set_expected(
     (Trading Economics paid, ForexFactory ToS-restricted) — admin entry
     is the lean path until we add a paid feed.
     """
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     if expected_mom_pct is None and expected_yoy_pct is None:
         raise HTTPException(status_code=400, detail="Provide expected_mom_pct or expected_yoy_pct")
     sets = []
@@ -268,7 +263,7 @@ async def trigger_revision_broadcast(
     stamp'lenir; force=True ile eşik kontrolü atlanmaz (eşik tasarım
     kararı — gerçekten anlamlı revizyonu push'luyoruz).
     """
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     return await broadcast_revision(event_id, force=force)
 
 
@@ -287,7 +282,7 @@ async def simulate_revision(
     overwritten; this only seeds the audit table so the broadcast path can
     exercise.
     """
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     from decimal import Decimal
     new_val = Decimal(str(new_actual_value))
     sql_read = text(
@@ -341,7 +336,7 @@ async def trigger_story_broadcast(
     Idempotency guard lives in broadcast_story (skips if
     `broadcasted_<tier>_at` already stamped); pass `force=true` to bypass.
     """
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     return await broadcast_story(event_id, tier=tier, force=force)
 
 
@@ -371,7 +366,7 @@ async def upsert_sep(
     Yazılan event_id'ler: `sep:FUNDS_END_0:<YYYY-MM-DD>`, vb. Idempotent
     (ON CONFLICT DO UPDATE actual_value).
     """
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     released_at = payload.get("released_at")
     if not released_at:
         raise HTTPException(status_code=400, detail="released_at required")
@@ -437,7 +432,7 @@ async def force_generate_story(
     Premium/Advance için ayrı çıktı `macro_stories` tablosuna gider, public
     `/macro/story/{event_id}` endpoint'i tier'a göre serve eder.
     """
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     result = await generate_story(event_id, tier=tier, force=force)
     validator = result.validator
     return {
@@ -477,7 +472,7 @@ async def track_record_set_verdict(
     Auto-extract OFF iken (feature flag false) 3-5 Mart 2026 hikayesini
     elle review ederken kullanılır.
     """
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     ok = await insert_manual_verdict(
         story_event_id=event_id, tier=tier, event_type=event_type,
         predicted_verdict=verdict, horizon_days=horizon_days, notes=notes,
@@ -497,7 +492,7 @@ async def track_record_validate(
 ):
     """Manuel hit/miss validasyon. Önce /verdict endpoint ile verdict
     insert edilmiş olmalı."""
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     ok = await validate_outcome_manually(
         story_event_id=event_id, tier=tier, hit_score=hit_score,
         validated_by=validated_by, notes=notes, compared_event_id=compared_event_id,
@@ -512,7 +507,7 @@ async def track_record_list(
     limit: int = Query(50, ge=1, le=200),
     x_internal_secret: Optional[str] = Header(None),
 ):
-    _check_auth(x_internal_secret)
+    assert_internal_secret(x_internal_secret)
     rows = await list_outcomes(event_type=event_type, tier=tier, limit=limit)
     rate = await get_hit_rate(event_type=event_type, tier=tier, min_validated=1)
     return {"outcomes": rows, "aggregate": rate}

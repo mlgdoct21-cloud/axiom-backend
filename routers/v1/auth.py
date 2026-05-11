@@ -2,13 +2,14 @@
 
 import os
 import hmac
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, HTTPException, Header, Request, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import timedelta
 from typing import Optional
 
 from core.database import get_db
+from core.rate_limit import limiter
 from core.security import get_current_user as get_authenticated_user
 from schemas.user_schema import UserCreate, UserLogin, UserResponse
 from schemas.error_schema import ErrorResponse
@@ -124,7 +125,9 @@ async def register(
         500: {"model": ErrorResponse, "description": "Server error"}
     }
 )
+@limiter.limit("10/minute")
 async def login(
+    request: Request,
     login_data: UserLogin,
     x_bot_secret: Optional[str] = Header(default=None, alias="X-Bot-Secret"),
     db: AsyncSession = Depends(get_db)
@@ -200,8 +203,10 @@ async def login(
         500: {"model": ErrorResponse, "description": "Server error"}
     }
 )
+@limiter.limit("30/minute")
 async def refresh_token(
-    request: dict,
+    request: Request,
+    body: dict,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -209,9 +214,13 @@ async def refresh_token(
 
     Request body:
     - **refresh_token**: Valid refresh token
+
+    Rate-limited to 30/min per IP — refresh fires routinely on tab focus,
+    so the limit must accommodate a few users behind a NAT; a flood beyond
+    that suggests a misbehaving client or brute-force probing.
     """
     try:
-        refresh_token = request.get("refresh_token")
+        refresh_token = body.get("refresh_token")
         if not refresh_token:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -289,7 +298,9 @@ class TelegramTokenLogin(BaseModel):
         404: {"description": "User not found"},
     },
 )
+@limiter.limit("10/minute")
 async def telegram_token_login(
+    request: Request,
     body: TelegramTokenLogin,
     db: AsyncSession = Depends(get_db),
 ):
@@ -301,6 +312,9 @@ async def telegram_token_login(
     3. Dashboard POSTs token here → we consume + return JWT pair
 
     No X-Bot-Secret needed — token itself is the proof of possession.
+    Rate-limited to 10/min per IP — guards against token-guessing attempts
+    on the 64-char surface area (in practice tokens are single-use and
+    expire fast, so brute force is already infeasible; this is belt-and-suspenders).
     """
     if not body.token or len(body.token) > 64:
         raise HTTPException(status_code=400, detail="Invalid token format")
