@@ -544,21 +544,45 @@ async def handle_webhook_event(event: dict) -> dict:
                 )
 
         elif et == "customer.subscription.deleted":
+            deleted_sub_id = obj.get("id")
             telegram_id = (obj.get("metadata") or {}).get("telegram_id")
             if not telegram_id:
                 telegram_id = await _telegram_id_for_customer(
                     obj.get("customer"), _session=session
                 )
             if telegram_id:
-                await _apply_subscription_state(
-                    telegram_id,
-                    customer_id=obj.get("customer"),
-                    subscription_id=obj.get("id"),
-                    status="canceled",
-                    tier="free",  # explicit downgrade
-                    current_period_end=_period_end_from(obj),
-                    _session=session,
+                # A user can legitimately have multiple Stripe subscriptions
+                # on the same customer — e.g. when /upgrade is hit again from
+                # an already-paid account, a second sub is created instead of
+                # a plan-swap. Only downgrade when the canceled sub matches
+                # the row's current stripe_subscription_id; otherwise this
+                # delete is just retiring an orphan and the user is still
+                # paying via a different sub. Without this guard, cleaning
+                # up a stale sub wipes the active user's tier to free.
+                current_row = await session.execute(
+                    text(
+                        "SELECT stripe_subscription_id FROM users "
+                        "WHERE telegram_id = :tid"
+                    ),
+                    {"tid": str(telegram_id)},
                 )
+                current_sub_id = (current_row.first() or [None])[0]
+                if current_sub_id and current_sub_id != deleted_sub_id:
+                    logger.info(
+                        f"stripe webhook: sub.deleted {deleted_sub_id} is an "
+                        f"orphan (active sub is {current_sub_id}) — keeping "
+                        f"tier for tid={telegram_id}"
+                    )
+                else:
+                    await _apply_subscription_state(
+                        telegram_id,
+                        customer_id=obj.get("customer"),
+                        subscription_id=deleted_sub_id,
+                        status="canceled",
+                        tier="free",  # explicit downgrade
+                        current_period_end=_period_end_from(obj),
+                        _session=session,
+                    )
 
         elif et == "invoice.payment_failed":
             # Card declined / renewal failed. We mark status='past_due' but
