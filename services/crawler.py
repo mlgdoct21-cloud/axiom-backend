@@ -94,7 +94,7 @@ URGENT_KEYWORDS = [
     "sec charges", "lawsuit", "dava",
 ]
 
-AXIOM_DASHBOARD_URL = os.getenv("AXIOM_DASHBOARD_URL", "https://axiom-dashboard.vercel.app")
+AXIOM_DASHBOARD_URL = os.getenv("AXIOM_DASHBOARD_URL", "https://axiom-dashboard-sigma.vercel.app")
 
 # ── CTA (Marketing) mesajları ─────────────────────────────────────────────────
 CTA_TAG_PROMPTS = [

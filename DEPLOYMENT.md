@@ -118,7 +118,7 @@ curl https://axiom-backend-prod-xxxx.railway.app/health
 4. **View Live**
    - Your frontend will be at:
      ```
-     https://axiom-dashboard.vercel.app
+     https://axiom-dashboard-sigma.vercel.app
      ```
 
 ---
@@ -128,7 +128,7 @@ curl https://axiom-backend-prod-xxxx.railway.app/health
 ```
 ┌─────────────────────────────────────┐
 │    VERCEL (Frontend)                │
-│  axiom-dashboard.vercel.app         │
+│  axiom-dashboard-sigma.vercel.app   │
 │  - Next.js 16                       │
 │  - React 19                         │
 │  - API calls to Backend             │

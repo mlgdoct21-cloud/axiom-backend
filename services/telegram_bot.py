@@ -534,7 +534,7 @@ async def process_report_command(chat_id, user_id, symbol: str):
     )
 
     try:
-        dashboard_url = os.getenv("DASHBOARD_URL", "https://axiom-dashboard.vercel.app").rstrip("/")
+        dashboard_url = os.getenv("DASHBOARD_URL", "https://axiom-dashboard-sigma.vercel.app").rstrip("/")
         # quote() ile URL encoding — symbol artık _is_valid_symbol'dan geçtiği için
         # zaten güvenli ama defense-in-depth için ekstra koruma
         api_url = (

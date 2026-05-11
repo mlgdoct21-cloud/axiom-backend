@@ -137,7 +137,7 @@ app = FastAPI(
 
 # CORS Middleware — env var'dan dinamik origin listesi
 # ALLOWED_ORIGINS env var virgülle ayrılmış URL listesi olmalı.
-# Örn: "https://axiom-dashboard.vercel.app,https://www.axiomos.app"
+# Örn: "https://axiom-dashboard-sigma.vercel.app,http://localhost:3000"
 #
 # Production-safe default: includes the live Vercel prod domain
 # (`axiom-dashboard-sigma.vercel.app`) so the dashboard can call the API
