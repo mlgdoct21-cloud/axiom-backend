@@ -47,6 +47,17 @@ _FRED_EVENT_TYPE = {
     "fred_retail_sales": "RETAIL_SALES",
     "fred_ppi": "PPI",
     "fred_core_ppi": "CORE_PPI",
+    # NFP sektör alt-serileri (Faz 3 sektörel kırılım). Bu event_type'lar
+    # storyteller payload'ında join edilir; kendi başlarına narrative/story
+    # üretilmez (narrative trigger aşağıda override edilir).
+    "fred_nfp_health":  "NFP_HEALTH",
+    "fred_nfp_govt":    "NFP_GOVT",
+    "fred_nfp_prof":    "NFP_PROF",
+    "fred_nfp_leisure": "NFP_LEISURE",
+    "fred_nfp_mfg":     "NFP_MFG",
+    "fred_nfp_const":   "NFP_CONST",
+    "fred_nfp_tpu":     "NFP_TPU",
+    "fred_nfp_info":    "NFP_INFO",
     "fred_housing_starts": "HOUSING_STARTS",
     "fred_gdp": "GDP",
 }
@@ -211,7 +222,11 @@ async def _upsert_release_with_revision(
         logger.info(
             f"REVISION detected: {event_id} {old_row['actual_value']} → {actual}"
         )
-        _trigger_revision_broadcast(event_id)
+        # NFP sektör alt-serileri payload data; revision broadcast (Advance push)
+        # tetiklemez — kullanıcı her sektör revizyonu için ayrı mesaj almasın.
+        is_sector = event_type.startswith("NFP_") and event_type != "NFP"
+        if not is_sector:
+            _trigger_revision_broadcast(event_id)
     return outcome
 
 
@@ -246,6 +261,11 @@ async def record_fred_observation(
     if actual is None:
         return False
 
+    # NFP sektör alt-serileri storyteller payload'ında join edilen DATA, kendi
+    # başlarına Free hap / Premium hikaye üretmiyor — narrative trigger skip.
+    is_sector = event_type.startswith("NFP_") and event_type != "NFP"
+    effective_trigger = trigger_narrative and not is_sector
+
     outcome = await _upsert_release_with_revision(
         event_id=event_id,
         event_type=event_type,
@@ -255,7 +275,7 @@ async def record_fred_observation(
         actual=actual,
         source="fred",
         source_url=f"https://fred.stlouisfed.org/series/{series_id}",
-        trigger_narrative=trigger_narrative,
+        trigger_narrative=effective_trigger,
     )
     return outcome == "inserted"
 

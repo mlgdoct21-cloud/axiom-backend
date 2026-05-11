@@ -86,6 +86,39 @@ _SOURCES: dict[str, SourceCitation] = {
         "FRED:UNRATE", "FRED Unemployment Rate",
         "https://fred.stlouisfed.org/series/UNRATE",
     ),
+    # NFP supersector alt-serileri (Faz 3 sektörel kırılım)
+    "FRED:USEHS": SourceCitation(
+        "FRED:USEHS", "FRED Private Education & Health Services",
+        "https://fred.stlouisfed.org/series/USEHS",
+    ),
+    "FRED:USGOVT": SourceCitation(
+        "FRED:USGOVT", "FRED Government Employment",
+        "https://fred.stlouisfed.org/series/USGOVT",
+    ),
+    "FRED:USPBS": SourceCitation(
+        "FRED:USPBS", "FRED Professional & Business Services",
+        "https://fred.stlouisfed.org/series/USPBS",
+    ),
+    "FRED:USLAH": SourceCitation(
+        "FRED:USLAH", "FRED Leisure & Hospitality",
+        "https://fred.stlouisfed.org/series/USLAH",
+    ),
+    "FRED:MANEMP": SourceCitation(
+        "FRED:MANEMP", "FRED Manufacturing Employment",
+        "https://fred.stlouisfed.org/series/MANEMP",
+    ),
+    "FRED:USCONS": SourceCitation(
+        "FRED:USCONS", "FRED Construction Employment",
+        "https://fred.stlouisfed.org/series/USCONS",
+    ),
+    "FRED:USTPU": SourceCitation(
+        "FRED:USTPU", "FRED Trade, Transportation & Utilities",
+        "https://fred.stlouisfed.org/series/USTPU",
+    ),
+    "FRED:USINFO": SourceCitation(
+        "FRED:USINFO", "FRED Information Sector",
+        "https://fred.stlouisfed.org/series/USINFO",
+    ),
     "FRED:PCEPI": SourceCitation(
         "FRED:PCEPI", "FRED Headline PCE Price Index",
         "https://fred.stlouisfed.org/series/PCEPI",
@@ -322,6 +355,25 @@ async def _load_event_payload(event_id: str) -> Optional[dict]:
             })).mappings().first()
             if prow:
                 payload["paired"] = {k: prow[k] for k in prow.keys()}
+        # NFP sektör alt-serileri (Faz 3 BLS B-1 eşdeğeri) — aynı released_at'te
+        # 8 supersector change_k hesaplanır, prompt'a inject edilir.
+        payload["sectors"] = []
+        if et == "NFP" and row["released_at"]:
+            ssql = text("""
+                SELECT event_type, actual_value, prior_value
+                FROM macro_releases
+                WHERE event_type IN (
+                    'NFP_HEALTH', 'NFP_GOVT', 'NFP_PROF', 'NFP_LEISURE',
+                    'NFP_MFG', 'NFP_CONST', 'NFP_TPU', 'NFP_INFO'
+                )
+                AND source = :src AND released_at = :ts
+            """)
+            srows = (await conn.execute(ssql, {
+                "src": row["source"], "ts": row["released_at"],
+            })).mappings().all()
+            payload["sectors"] = [
+                {k: r[k] for k in r.keys()} for r in srows
+            ]
         # 12-ay history (trend hesabı için)
         payload["history"] = []
         if row["released_at"] and row["event_type"]:
@@ -502,6 +554,42 @@ def _nfp_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
     if paired:
         sources_used.append("FRED:UNRATE")
 
+    # Sektörel kırılım (Faz 3 BLS B-1 eşdeğeri) — 8 supersector change_k
+    _SECTOR_META = {
+        "NFP_HEALTH":  ("Sağlık ve Eğitim", "FRED:USEHS"),
+        "NFP_GOVT":    ("Hükümet",          "FRED:USGOVT"),
+        "NFP_PROF":    ("Profesyonel ve İş Hizmetleri", "FRED:USPBS"),
+        "NFP_LEISURE": ("Eğlence ve Konaklama", "FRED:USLAH"),
+        "NFP_MFG":     ("İmalat",           "FRED:MANEMP"),
+        "NFP_CONST":   ("İnşaat",           "FRED:USCONS"),
+        "NFP_TPU":     ("Ticaret-Ulaşım-Hizmet", "FRED:USTPU"),
+        "NFP_INFO":    ("Bilgi/Tek",        "FRED:USINFO"),
+    }
+    sector_rows = payload.get("sectors") or []
+    sectors_input = []
+    sector_change_ks = []
+    for row in sector_rows:
+        et = row.get("event_type")
+        meta = _SECTOR_META.get(et)
+        if not meta:
+            continue
+        s_actual = float(row["actual_value"]) if row.get("actual_value") is not None else None
+        s_prior = float(row["prior_value"]) if row.get("prior_value") is not None else None
+        s_change_k = round(s_actual - s_prior, 1) if (s_actual is not None and s_prior is not None) else None
+        if s_change_k is None:
+            continue
+        sectors_input.append({
+            "label_tr": meta[0],
+            "change_k": s_change_k,
+            "source_code": meta[1],
+        })
+        sector_change_ks.append(s_change_k)
+        if meta[1] not in sources_used:
+            sources_used.append(meta[1])
+    # En etkileyici sektörleri öne al — abs(change_k) DESC. LLM en önemli
+    # 4-6 sektörü doğal olarak kullanır.
+    sectors_input.sort(key=lambda s: abs(s["change_k"]), reverse=True)
+
     llm_input = {
         "release_date": _format_tr_date(payload.get("released_at")),
         "country": payload.get("country"),
@@ -525,6 +613,7 @@ def _nfp_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
             "avg_3m_change_k": avg_3m_change_k,
             "avg_6m_change_k": avg_6m_change_k,
         },
+        "sectors": sectors_input if sectors_input else None,
         "available_sources": [
             {"code": c, "name": _SOURCES[c].name}
             for c in sources_used if c in _SOURCES
@@ -539,6 +628,7 @@ def _nfp_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
         change_k, expected_change_k, surprise_k,
         unrate_actual, unrate_prior, unrate_delta_pp,
         avg_3m_change_k, avg_6m_change_k,
+        *sector_change_ks,
     ]
     allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
     allowed_codes = {s["code"] for s in llm_input["available_sources"]}
@@ -546,6 +636,7 @@ def _nfp_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
 
 def _nfp_prompt(llm_input: dict, tier: Tier) -> str:
+    has_sectors = bool(llm_input.get("sectors"))
     if tier == "premium":
         word_min, word_max = 150, 500
         sections = (
@@ -554,27 +645,50 @@ def _nfp_prompt(llm_input: dict, tier: Tier) -> str:
             "(2) İşsizlik oranı (unemployment_rate) — yön ve Fed için anlamı.\n"
             "(3) 3-aylık trend — tek ay yanıltıcı, momentum okuma.\n"
             "(4) Fed kararına etki — istihdam soğursa indirim baskısı.\n"
-            "(5) Aklında tut + 'Senin için 1-cümle' (BTC veya portföy).\n"
-            "NOT: Sektörel kırılım Faz 2'ye saklı — BLS Tablo B-1 detayını "
-            "henüz çekmiyoruz. 'Sektörel kırılım için BLS'ye bak' türü atıf "
-            "yapma — INPUT'ta yok diye yazma."
+            "(5) Aklında tut + 'Senin için 1-cümle' (BTC veya portföy)."
         )
     else:  # advance
         word_min, word_max = 340, 680
-        sections = (
-            "(1) Manşet (change_k) vs beklenti + tarihsel bağlam ('son X ayın "
-            "en kötüsü' / 'en iyisi' INPUT history'sine bakarak).\n"
-            "(2) İşsizlik oranı detayı + Powell yumuşatma eşiği.\n"
-            "(3) 3-ay ve 6-ay rolling — momentum trendi.\n"
-            "(4) Fed kararına etki + 'çift kötü/iyi veri' tezi (revizyon "
-            "kavramına atıf yapabilirsin ama somut revizyon rakamı yazma — "
-            "INPUT'ta yok).\n"
-            "(5) Risk dengesi — enerji vs istihdam yönü Fed için çelişki "
-            "yaratıyorsa adlandır.\n"
-            "(6) Piyasaya etki (DXY/BTC/altın yönü — INPUT'tan sayı yazma, "
-            "yön anlat).\n"
-            "(7) Aklında tut + 'Senin için 1-cümle'."
-        )
+        if has_sectors:
+            sections = (
+                "(1) Manşet (change_k) vs beklenti + tarihsel bağlam ('son X "
+                "ayın en kötüsü' / 'en iyisi' INPUT history'sine bakarak).\n"
+                "(2) İşsizlik oranı detayı + Powell yumuşatma eşiği.\n"
+                "(3) 3-ay ve 6-ay rolling — momentum trendi.\n"
+                "(4) **Sektörel kırılım** — INPUT `sectors` listesinden EN AZ "
+                "3 sektörü adlandır + change_k rakamlarını [KAYNAK] etiketiyle "
+                "yaz. En etkileyici (pozitif veya negatif) sektörler listede "
+                "ÖNCE geliyor. Bu manşet rakamın altındaki gerçek hikaye: "
+                "hangi sektör çekti, hangi sektör fren oldu, kompozisyon "
+                "kalitesi nasıl. Örnek anlatım: 'Sağlık ve Eğitim 50 bin "
+                "[FRED:USEHS] istihdamla en güçlü itici güç olurken, İmalat "
+                "12 bin [FRED:MANEMP] daralma ile bir kez daha fren rolünü "
+                "üstlendi.' Kompozisyon kalitesi (defensif vs cyclical) "
+                "hakkında 1-2 cümle değerlendirme ekle.\n"
+                "(5) Fed kararına etki + 'çift kötü/iyi veri' tezi (revizyon "
+                "kavramına atıf yapabilirsin ama somut revizyon rakamı yazma "
+                "— INPUT'ta yok).\n"
+                "(6) Risk dengesi — enerji vs istihdam yönü Fed için çelişki "
+                "yaratıyorsa adlandır.\n"
+                "(7) Piyasaya etki (DXY/BTC/altın yönü — INPUT'tan sayı "
+                "yazma, yön anlat).\n"
+                "(8) Aklında tut + 'Senin için 1-cümle'."
+            )
+        else:
+            sections = (
+                "(1) Manşet (change_k) vs beklenti + tarihsel bağlam ('son X ayın "
+                "en kötüsü' / 'en iyisi' INPUT history'sine bakarak).\n"
+                "(2) İşsizlik oranı detayı + Powell yumuşatma eşiği.\n"
+                "(3) 3-ay ve 6-ay rolling — momentum trendi.\n"
+                "(4) Fed kararına etki + 'çift kötü/iyi veri' tezi (revizyon "
+                "kavramına atıf yapabilirsin ama somut revizyon rakamı yazma — "
+                "INPUT'ta yok).\n"
+                "(5) Risk dengesi — enerji vs istihdam yönü Fed için çelişki "
+                "yaratıyorsa adlandır.\n"
+                "(6) Piyasaya etki (DXY/BTC/altın yönü — INPUT'tan sayı yazma, "
+                "yön anlat).\n"
+                "(7) Aklında tut + 'Senin için 1-cümle'."
+            )
 
     available_codes = [s["code"] for s in llm_input["available_sources"]]
 
@@ -593,8 +707,10 @@ def _nfp_prompt(llm_input: dict, tier: Tier) -> str:
         "yapma — change_k, surprise_k, avg_3m_change_k, unrate_delta_pp "
         "zaten hazır.\n"
         "2. HER sayının 60 karakter içinde [KAYNAK_KODU] olmalı. "
-        f"Geçerli kodlar: {available_codes}. Örnek: '92 bin [FRED:PAYEMS]' "
-        "veya 'işsizlik %4.4 [FRED:UNRATE]'.\n"
+        f"Geçerli kodlar: {available_codes}. Örnekler: '92 bin [FRED:PAYEMS]', "
+        "'işsizlik %4.4 [FRED:UNRATE]', 'Sağlık ve Eğitim 50 bin [FRED:USEHS]', "
+        "'İmalat 12 bin [FRED:MANEMP] daralma'. Her sektör için INPUT'ta "
+        "belirtilen `source_code` zorunlu — başka kaynak yazma.\n"
         "3. Politik yorum YASAK (Cumhuriyetçi/Demokrat/parti/seçim adlandırma).\n"
         "4. Mutlaklık YASAK ('kesin', 'garanti', 'asla').\n"
         "5. Yatırım tavsiyesi YASAK ('şimdi al/sat').\n"

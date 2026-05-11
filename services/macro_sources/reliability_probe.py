@@ -53,6 +53,15 @@ SOURCE_INTERVAL: dict[str, timedelta] = {
     "fred_core_cpi": timedelta(minutes=60),
     "fred_nfp": timedelta(minutes=60),
     "fred_unrate": timedelta(minutes=60),
+    # NFP sektör alt-serileri — aylık, NFP ile birlikte yayınlanır
+    "fred_nfp_health":  timedelta(minutes=60),
+    "fred_nfp_govt":    timedelta(minutes=60),
+    "fred_nfp_prof":    timedelta(minutes=60),
+    "fred_nfp_leisure": timedelta(minutes=60),
+    "fred_nfp_mfg":     timedelta(minutes=60),
+    "fred_nfp_const":   timedelta(minutes=60),
+    "fred_nfp_tpu":     timedelta(minutes=60),
+    "fred_nfp_info":    timedelta(minutes=60),
     "fred_pce": timedelta(minutes=60),
     "fred_core_pce": timedelta(minutes=60),
     # Day 28 part 3 — haftalık jobless claims daha sık (perşembe 13:30 UTC
@@ -83,6 +92,9 @@ _FRED_SOURCES = (
     "fred_cpi", "fred_core_cpi", "fred_nfp", "fred_unrate", "fred_pce", "fred_core_pce",
     "fred_jobless_initial", "fred_jobless_continuing", "fred_retail_sales",
     "fred_ppi", "fred_core_ppi", "fred_housing_starts", "fred_gdp",
+    # NFP sektör alt-serileri (BLS B-1 eşdeğeri)
+    "fred_nfp_health", "fred_nfp_govt", "fred_nfp_prof", "fred_nfp_leisure",
+    "fred_nfp_mfg", "fred_nfp_const", "fred_nfp_tpu", "fred_nfp_info",
 )
 
 # Number of historical observations to fetch per probe. 13 lets the public
@@ -108,6 +120,14 @@ _STATES: dict[str, _SourceState] = {
     "fred_core_cpi": _SourceState(name="fred_core_cpi"),
     "fred_nfp": _SourceState(name="fred_nfp"),
     "fred_unrate": _SourceState(name="fred_unrate"),
+    "fred_nfp_health":  _SourceState(name="fred_nfp_health"),
+    "fred_nfp_govt":    _SourceState(name="fred_nfp_govt"),
+    "fred_nfp_prof":    _SourceState(name="fred_nfp_prof"),
+    "fred_nfp_leisure": _SourceState(name="fred_nfp_leisure"),
+    "fred_nfp_mfg":     _SourceState(name="fred_nfp_mfg"),
+    "fred_nfp_const":   _SourceState(name="fred_nfp_const"),
+    "fred_nfp_tpu":     _SourceState(name="fred_nfp_tpu"),
+    "fred_nfp_info":    _SourceState(name="fred_nfp_info"),
     "fred_pce": _SourceState(name="fred_pce"),
     "fred_core_pce": _SourceState(name="fred_core_pce"),
     # Day 28 part 3

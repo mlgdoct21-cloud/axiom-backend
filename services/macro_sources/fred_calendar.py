@@ -50,7 +50,11 @@ except Exception:  # pragma: no cover — Python <3.9 wouldn't reach prod
 # Outlays). Bu fix ile PCE adaptive polling doğru release date'e bakacak.
 _RELEASES = {
     10:  ("CPI",  "08:30", ("fred_cpi", "fred_core_cpi")),
-    50:  ("NFP",  "08:30", ("fred_nfp", "fred_unrate")),
+    50:  ("NFP",  "08:30", (
+        "fred_nfp", "fred_unrate",
+        "fred_nfp_health", "fred_nfp_govt", "fred_nfp_prof", "fred_nfp_leisure",
+        "fred_nfp_mfg", "fred_nfp_const", "fred_nfp_tpu", "fred_nfp_info",
+    )),
     54:  ("PCE",  "08:30", ("fred_pce", "fred_core_pce")),  # was incorrectly 21
     # Day 28 part 3 — haftalık jobless + aylık retail/PPI/housing + çeyreklik GDP
     180: ("JOBLESS_CLAIMS", "08:30", ("fred_jobless_initial", "fred_jobless_continuing")),

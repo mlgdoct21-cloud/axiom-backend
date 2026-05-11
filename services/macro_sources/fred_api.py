@@ -31,6 +31,15 @@ SERIES = {
     "fred_core_cpi": "CPILFESL",              # CPI-U Less Food & Energy (Core), SA, monthly index
     "fred_nfp": "PAYEMS",                     # Total Nonfarm Payrolls SA, thousands
     "fred_unrate": "UNRATE",                  # Civilian Unemployment Rate SA, % (4.2 = 4.2%)
+    # NFP supersector breakdown (BLS Tablo B-1 eşdeğeri, FRED üzerinden) — Faz 3 sektörel kırılım
+    "fred_nfp_health":  "USEHS",              # Private Education & Health Services, thousands SA
+    "fred_nfp_govt":    "USGOVT",             # Government, thousands SA
+    "fred_nfp_prof":    "USPBS",              # Professional & Business Services, thousands SA
+    "fred_nfp_leisure": "USLAH",              # Leisure & Hospitality, thousands SA
+    "fred_nfp_mfg":     "MANEMP",             # Manufacturing, thousands SA
+    "fred_nfp_const":   "USCONS",             # Construction, thousands SA
+    "fred_nfp_tpu":     "USTPU",              # Trade, Transportation & Utilities, thousands SA
+    "fred_nfp_info":    "USINFO",             # Information, thousands SA
     "fred_pce": "PCEPI",                      # Headline PCE Price Index SA, monthly index
     "fred_core_pce": "PCEPILFE",              # Core PCE Price Index SA, monthly index
     # Day 28 part 3 (2026-05-07) eklendi — kullanıcı "günlük açıklanan veriler" dedi.
