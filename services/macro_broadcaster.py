@@ -36,20 +36,28 @@ _EMOJI = {
     "CPI": "📊",
     "NFP": "👷",
     "PCE": "📈",
+    "PPI": "🏭",
     "FOMC_STATEMENT": "🏛️",
     "FOMC_MINUTES": "📜",
     "FOMC_PROJECTIONS": "🔮",
     "RATE_DECISION": "⚖️",
+    "TR_TUFE": "🇹🇷",
+    "TR_POLICY_RATE": "🏦",
+    "TR_UNEMPLOYMENT": "👥",
 }
 
 _HEADLINE = {
     "CPI": "ABD Tüketici Fiyat Endeksi (CPI)",
     "NFP": "ABD Tarım Dışı İstihdam (NFP)",
     "PCE": "ABD PCE Çekirdek Enflasyon",
+    "PPI": "ABD Üretici Fiyat Endeksi (PPI)",
     "FOMC_STATEMENT": "Fed FOMC Bildirisi",
     "FOMC_MINUTES": "Fed FOMC Tutanakları",
     "FOMC_PROJECTIONS": "Fed Ekonomik Projeksiyonlar (SEP)",
     "RATE_DECISION": "Fed Faiz Kararı",
+    "TR_TUFE": "Türkiye TÜFE",
+    "TR_POLICY_RATE": "TCMB PPK Faiz Kararı",
+    "TR_UNEMPLOYMENT": "Türkiye İşsizlik Oranı",
 }
 
 

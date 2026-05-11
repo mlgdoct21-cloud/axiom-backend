@@ -170,6 +170,31 @@ _SOURCES: dict[str, SourceCitation] = {
         "FMP", "FinancialModelingPrep",
         "https://site.financialmodelingprep.com/",
     ),
+    # Türkiye macro (TCMB EVDS, TÜİK) — FAZ D
+    "TCMB:TUFE": SourceCitation(
+        "TCMB:TUFE", "TCMB EVDS TÜFE Genel Endeks",
+        "https://evds2.tcmb.gov.tr/",
+    ),
+    "TCMB:CORE_B": SourceCitation(
+        "TCMB:CORE_B", "TCMB EVDS Çekirdek Enflasyon B",
+        "https://evds2.tcmb.gov.tr/",
+    ),
+    "TCMB:UFE": SourceCitation(
+        "TCMB:UFE", "TCMB EVDS Yİ-ÜFE",
+        "https://evds2.tcmb.gov.tr/",
+    ),
+    "TCMB:POLICY_RATE": SourceCitation(
+        "TCMB:POLICY_RATE", "TCMB Politika Faizi (1 Haftalık Repo)",
+        "https://www.tcmb.gov.tr/wps/wcm/connect/TR/TCMB+TR/Main+Menu/Temel+Faaliyetler/Para+Politikasi",
+    ),
+    "TCMB:UNEMPLOYMENT": SourceCitation(
+        "TCMB:UNEMPLOYMENT", "TÜİK İşsizlik Oranı (mevsimsel arınmış)",
+        "https://data.tuik.gov.tr/Kategori/GetKategori?p=istihdam-issizlik-ve-ucret-108",
+    ),
+    "TUIK": SourceCitation(
+        "TUIK", "TÜİK Türkiye İstatistik Kurumu",
+        "https://www.tuik.gov.tr/",
+    ),
 }
 
 
@@ -385,7 +410,10 @@ async def _load_event_payload(event_id: str) -> Optional[dict]:
         payload = {k: row[k] for k in row.keys()}
         # Paired core (CPI ↔ CORE_CPI aynı released_at)
         et = (row["event_type"] or "").upper()
-        pair_map = {"CPI": "CORE_CPI", "PCE": "CORE_PCE", "PPI": "CORE_PPI", "NFP": "UNRATE"}
+        pair_map = {
+            "CPI": "CORE_CPI", "PCE": "CORE_PCE", "PPI": "CORE_PPI", "NFP": "UNRATE",
+            "TR_TUFE": "TR_CORE_TUFE",
+        }
         pair = pair_map.get(et)
         payload["paired"] = None
         if pair and row["released_at"]:
@@ -1381,7 +1409,10 @@ class StoryResult:
     sources_cited: list[str] = field(default_factory=list)
 
 
-_SUPPORTED_EVENT_TYPES = frozenset({"CPI", "NFP", "PCE", "PPI", "FOMC_STATEMENT"})
+_SUPPORTED_EVENT_TYPES = frozenset({
+    "CPI", "NFP", "PCE", "PPI", "FOMC_STATEMENT",
+    "TR_TUFE", "TR_POLICY_RATE", "TR_UNEMPLOYMENT",
+})
 
 # ---------- FOMC prompt builder ----------
 
@@ -1707,6 +1738,345 @@ def _fomc_prompt(llm_input: dict, tier: Tier) -> str:
     )
 
 
+# ---------- TR macro decoders (FAZ D) ----------
+# Türkiye macro storyteller. TÜFE/PPK/İşsizlik üç ayrı decoder.
+# Consensus data YOK (TR için piyasa anketi standardı zayıf) — sürpriz
+# yorumu YASAK, sadece mevcut + önceki değer + trend.
+
+def _tufe_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
+    """TR TÜFE (CPI). Paired CORE_TUFE (Çekirdek B) aynı released_at."""
+    actual = float(payload["actual_value"]) if payload.get("actual_value") is not None else None
+    prior = float(payload["prior_value"]) if payload.get("prior_value") is not None else None
+    mom = _pct(actual, prior)
+
+    paired = payload.get("paired") or {}
+    core_actual = float(paired.get("actual_value")) if paired.get("actual_value") is not None else None
+    core_prior = float(paired.get("prior_value")) if paired.get("prior_value") is not None else None
+    core_mom = _pct(core_actual, core_prior)
+
+    history = payload.get("history") or []
+    avg_3m_mom = _mom_3m_avg(history, n=3)
+    avg_6m_mom = _mom_3m_avg(history, n=6)
+
+    sources_used = ["TCMB:TUFE"]
+    if paired:
+        sources_used.append("TCMB:CORE_B")
+
+    llm_input = {
+        "release_date": _format_tr_date(payload.get("released_at")),
+        "country": "TR",
+        "headline_tufe": {
+            "actual_index": actual,
+            "prior_index": prior,
+            "mom_pct": mom,
+            "source_code": "TCMB:TUFE",
+        },
+        "core_tufe_b": {
+            "actual_index": core_actual,
+            "prior_index": core_prior,
+            "mom_pct": core_mom,
+            "source_code": "TCMB:CORE_B",
+        } if paired else None,
+        "trend": {
+            "mom_avg_3m_pct": avg_3m_mom,
+            "mom_avg_6m_pct": avg_6m_mom,
+        },
+        "available_sources": [
+            {"code": c, "name": _SOURCES[c].name}
+            for c in sources_used if c in _SOURCES
+        ],
+    }
+
+    allowed_inputs = [actual, prior, mom, core_actual, core_prior, core_mom,
+                      avg_3m_mom, avg_6m_mom]
+    allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
+    allowed_codes = {s["code"] for s in llm_input["available_sources"]}
+    return llm_input, allowed, allowed_codes
+
+
+def _tufe_prompt(llm_input: dict, tier: Tier) -> str:
+    if tier == "premium":
+        word_min, word_max = 130, 400
+        sections = (
+            "(1) Manşet — TÜFE Genel Endeks aylık değişimi (MoM%). INPUT "
+            "rakamını aynen kullan, yorumla.\n"
+            "(2) Çekirdek B — manşet ile çekirdek arasındaki fark; çekirdek "
+            "yapışkan kalıyor mu? (paired core varsa).\n"
+            "(3) Türkiye bağlamı — TL kurunun, enerji ithalatının, gıda "
+            "fiyatlarının manşete etkisi kavramsal anlatılır. Yeni rakam "
+            "ÜRETME.\n"
+            "(4) Aklında tut + 'Senin için 1-cümle' (TL/altın/portföy yön, "
+            "tavsiye değil)."
+        )
+    else:  # advance
+        word_min, word_max = 280, 600
+        sections = (
+            "(1) Manşet + tarihsel bağlam — son 3 ay/6 ay ortalaması ile "
+            "trend (INPUT.trend rakamlarını aynen).\n"
+            "(2) Çekirdek B detayı — TCMB çekirdeğe bakar; manşet vs çekirdek "
+            "yapışkanlık okuması.\n"
+            "(3) TL pass-through — döviz kurundaki hareketin TÜFE'ye geçişi "
+            "(kavramsal, yeni rakam üretme).\n"
+            "(4) TCMB tepkisi — politika faizi patikasına etkisi (yapışkan "
+            "enflasyon → sıkı duruş süresi uzar).\n"
+            "(5) Sektörel pencere — gıda ve enerji ağırlıklarının manşete "
+            "katkısı (kavramsal anlatım).\n"
+            "(6) İleriye dönük — bir sonraki TÜFE'ye kadar izlenecekler "
+            "(döviz, enerji, gıda, ücret artışları).\n"
+            "(7) Aklında tut + 'Senin için 1-cümle'."
+        )
+
+    available_codes = [s["code"] for s in llm_input["available_sources"]]
+    return (
+        "Sen Türkiye makro analist hikaye anlatıcısısın. Aşağıdaki JSON TÜFE "
+        "verisini oku ve **sadece geçerli bir JSON** döndür.\n\n"
+        f"INPUT:\n{json.dumps(llm_input, ensure_ascii=False, indent=2, default=str)}\n\n"
+        "ÇIKTI ŞEMASI:\n"
+        "{\n"
+        '  "story_md": "(string)"\n'
+        "}\n\n"
+        f"BÖLÜMLER (sırayla):\n{sections}\n\n"
+        f"KELİME SAYISI: {word_min}-{word_max} aralığında.\n\n"
+        "MUTLAK KURALLAR (ihlal = retry):\n"
+        "1. Her sayı INPUT JSON'da geçen bir değer olmalı. Aritmetik yok.\n"
+        "2. HER sayının 60 karakter içinde [KAYNAK_KODU] olmalı. "
+        f"Geçerli kodlar: {available_codes}. Örnek: 'aylık %2.3 [TCMB:TUFE]', "
+        "'çekirdek %2.1 [TCMB:CORE_B]'.\n"
+        "3. Politik yorum YASAK (AKP/CHP/MHP/seçim/parti); TCMB ve Erdoğan "
+        "kurumsal/kişi adı olarak geçebilir ama parti/seçim kelimesi yok.\n"
+        "4. Mutlaklık YASAK ('kesin', 'garanti', 'asla').\n"
+        "5. Yatırım tavsiyesi YASAK.\n"
+        "6. Tarih damgası ŞART (ay adı veya yıl).\n"
+        "7. 'beklenti'/'consensus' YAZMA — INPUT'ta yok.\n"
+        "8. TR ondalık: '%2,3' yerine '%2.3' yaz (validator nokta/virgül "
+        "ikisini de tanır, tutarlılık için nokta tercih edilir).\n"
+        "9. INPUT alan ADLARINI ('[release_date]', '[mom_pct]' vb.) düz "
+        "metin olarak ASLA paragrafa kopyalama — sadece değerleri kullan.\n"
+        "10. Çıktı sadece JSON; satır sonları için \\n.\n"
+    )
+
+
+def _ppk_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
+    """TR Politika Faizi (PPK = Para Politikası Kurulu kararı)."""
+    actual = float(payload["actual_value"]) if payload.get("actual_value") is not None else None
+    prior = float(payload["prior_value"]) if payload.get("prior_value") is not None else None
+    bp_change = None
+    if actual is not None and prior is not None:
+        bp_change = int(round((actual - prior) * 100))
+
+    if bp_change is None:
+        decision_label = "veri eksik"
+    elif bp_change == 0:
+        decision_label = "değişmedi (hold)"
+    elif bp_change > 0:
+        decision_label = f"{bp_change} baz puan artış (hike)"
+    else:
+        decision_label = f"{abs(bp_change)} baz puan indirim (cut)"
+
+    history = payload.get("history") or []
+    prior_decisions = []
+    for h in history[:6]:
+        a = h.get("actual"); p = h.get("prior")
+        if a is not None and p is not None:
+            prior_decisions.append({
+                "date": h.get("date"),
+                "rate_pct": a,
+                "bp_change": int(round((a - p) * 100)),
+            })
+
+    sources_used = ["TCMB:POLICY_RATE"]
+
+    llm_input = {
+        "release_date": _format_tr_date(payload.get("released_at")),
+        "country": "TR",
+        "policy_rate": {
+            "current_pct": actual,
+            "prior_pct": prior,
+            "bp_change": bp_change,
+            "decision_label": decision_label,
+            "source_code": "TCMB:POLICY_RATE",
+        },
+        "recent_decisions": prior_decisions,
+        "available_sources": [
+            {"code": c, "name": _SOURCES[c].name}
+            for c in sources_used if c in _SOURCES
+        ],
+    }
+
+    allowed_inputs = [actual, prior, bp_change]
+    if bp_change is not None and bp_change < 0:
+        allowed_inputs.append(abs(bp_change))
+    for d in prior_decisions:
+        allowed_inputs.append(d["rate_pct"])
+        if d["bp_change"] is not None:
+            allowed_inputs.append(d["bp_change"])
+            if d["bp_change"] < 0:
+                allowed_inputs.append(abs(d["bp_change"]))
+
+    allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
+    allowed_codes = {s["code"] for s in llm_input["available_sources"]}
+    return llm_input, allowed, allowed_codes
+
+
+def _ppk_prompt(llm_input: dict, tier: Tier) -> str:
+    if tier == "premium":
+        word_min, word_max = 130, 400
+        sections = (
+            "(1) Karar manşeti — TCMB politika faizi mevcut seviye + önceki "
+            "karara göre değişim (hold/cut/hike + baz puan). INPUT rakamları.\n"
+            "(2) Bağlam — TCMB neden bu kararı verdi? Enflasyon, TL kuru, "
+            "rezerv gibi mental modeller. Yeni rakam üretme.\n"
+            "(3) Piyasaya etki — politika faizinin TL, mevduat faizi, kredi "
+            "kanalına etkisi kavramsal.\n"
+            "(4) Aklında tut + 'Senin için 1-cümle' (TL/altın yön, tavsiye değil)."
+        )
+    else:  # advance
+        word_min, word_max = 280, 600
+        sections = (
+            "(1) Karar manşeti + önceki karar karşılaştırması (mevcut faiz, "
+            "önceki faiz, bp delta).\n"
+            "(2) Son 6 PPK toplantısı patikası — recent_decisions'taki "
+            "rakamları kullanarak yön (sıkılaştırma/gevşeme döngüsü).\n"
+            "(3) TCMB'nin gerekçesi — enflasyon görünümü, kur istikrarı, "
+            "rezerv yönetimi (kavramsal, yeni rakam yok).\n"
+            "(4) Kanal analizi — politika faizi → mevduat faizi → kredi "
+            "maliyeti → TL talebi → enflasyon (kavramsal zincir).\n"
+            "(5) İleriye dönük — bir sonraki PPK'ya kadar izlenecekler "
+            "(TÜFE, döviz kuru, rezerv). Spekülatif rakam YASAK.\n"
+            "(6) Risk dengesi — şahin/güvercin pivot senaryoları "
+            "(kavramsal, olasılık dili).\n"
+            "(7) Aklında tut + 'Senin için 1-cümle'."
+        )
+
+    available_codes = [s["code"] for s in llm_input["available_sources"]]
+    return (
+        "Sen Türkiye makro analist hikaye anlatıcısısın. Aşağıdaki JSON TCMB "
+        "PPK karar verisini oku ve **sadece geçerli bir JSON** döndür.\n\n"
+        f"INPUT:\n{json.dumps(llm_input, ensure_ascii=False, indent=2, default=str)}\n\n"
+        "ÇIKTI ŞEMASI:\n"
+        "{\n"
+        '  "story_md": "(string)"\n'
+        "}\n\n"
+        f"BÖLÜMLER (sırayla):\n{sections}\n\n"
+        f"KELİME SAYISI: {word_min}-{word_max} aralığında.\n\n"
+        "MUTLAK KURALLAR (ihlal = retry):\n"
+        "1. Her sayı INPUT JSON'da geçen bir değer olmalı. bp_change INPUT'ta "
+        "hazır — aritmetik yapma.\n"
+        "2. HER sayının 60 karakter içinde [TCMB:POLICY_RATE] olmalı. "
+        f"Geçerli kodlar: {available_codes}.\n"
+        "3. Politik yorum YASAK (AKP/CHP/MHP/seçim/parti).\n"
+        "4. Mutlaklık YASAK ('kesin', 'garanti', 'asla').\n"
+        "5. Yatırım tavsiyesi YASAK.\n"
+        "6. Tarih damgası ŞART (ay adı veya yıl).\n"
+        "7. 'beklenti'/'consensus' YAZMA — INPUT'ta yok.\n"
+        "8. SIFIR DELTA (hold): bp_change=0 ise 'değişmedi/sabit tutuldu' "
+        "de, '0 baz puan' yazma.\n"
+        "9. BAZ PUAN HESABI: 'X baz puan' yazarken X = INPUT.policy_rate."
+        "bp_change (negatifse abs). Tarih günü ile KARIŞTIRMA.\n"
+        "10. INPUT alan ADLARINI ('[release_date]', '[bp_change]' vb.) düz "
+        "metin olarak ASLA paragrafa kopyalama.\n"
+        "11. Çıktı sadece JSON; satır sonları için \\n.\n"
+    )
+
+
+def _unemp_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
+    """TR İşsizlik Oranı (TÜİK, mevsimsel arınmış)."""
+    actual = float(payload["actual_value"]) if payload.get("actual_value") is not None else None
+    prior = float(payload["prior_value"]) if payload.get("prior_value") is not None else None
+    delta_pp_raw = round(actual - prior, 2) if (actual is not None and prior is not None) else None
+    delta_pp = delta_pp_raw if (delta_pp_raw not in (None, 0, 0.0)) else None
+    change_label = "sabit" if delta_pp_raw == 0 else None
+
+    history = payload.get("history") or []
+    avg_3m_rate = _avg_n(history, 3, key="actual")
+    avg_6m_rate = _avg_n(history, 6, key="actual")
+
+    sources_used = ["TCMB:UNEMPLOYMENT"]
+
+    llm_input = {
+        "release_date": _format_tr_date(payload.get("released_at")),
+        "country": "TR",
+        "unemployment": {
+            "actual_pct": actual,
+            "prior_pct": prior,
+            "delta_pp": delta_pp,
+            "change_label": change_label,
+            "source_code": "TCMB:UNEMPLOYMENT",
+        },
+        "trend": {
+            "rate_avg_3m_pct": avg_3m_rate,
+            "rate_avg_6m_pct": avg_6m_rate,
+        },
+        "available_sources": [
+            {"code": c, "name": _SOURCES[c].name}
+            for c in sources_used if c in _SOURCES
+        ],
+    }
+
+    allowed_inputs = [actual, prior, delta_pp, avg_3m_rate, avg_6m_rate]
+    if delta_pp is not None and delta_pp < 0:
+        allowed_inputs.append(abs(delta_pp))
+    allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
+    allowed_codes = {s["code"] for s in llm_input["available_sources"]}
+    return llm_input, allowed, allowed_codes
+
+
+def _unemp_prompt(llm_input: dict, tier: Tier) -> str:
+    if tier == "premium":
+        word_min, word_max = 120, 350
+        sections = (
+            "(1) Manşet — TR işsizlik oranı mevcut seviye + önceki aya göre "
+            "değişim (delta_pp). INPUT rakamı aynen.\n"
+            "(2) Bağlam — TR işgücü piyasası mental modeli (mevsimsel arınmış "
+            "rakam, genç ve kadın istihdamı genelde daha yüksek). Yeni rakam "
+            "üretme.\n"
+            "(3) TCMB tepkisi — işgücü baskısı politika faizi patikasına "
+            "kavramsal etki.\n"
+            "(4) Aklında tut + 'Senin için 1-cümle'."
+        )
+    else:  # advance
+        word_min, word_max = 250, 550
+        sections = (
+            "(1) Manşet + 3 ay/6 ay ortalama ile trend (INPUT.trend).\n"
+            "(2) Mevsimsellik notu — mevsimsel arınmış seri olduğunun altını "
+            "çiz; sezonsal trendler bu rakamda yok.\n"
+            "(3) Yapısal bağlam — TR işgücü piyasasında genç işsizliği, "
+            "kayıt dışı istihdam gibi yapısal kalemler kavramsal.\n"
+            "(4) TCMB-büyüme dengesi — işsizlik yukarı + enflasyon düşmeyince "
+            "stagflasyon riski kavramsal.\n"
+            "(5) İleriye dönük — bir sonraki TÜİK İşsizlik'e kadar izlenecekler "
+            "(PMI, sanayi üretimi, TÜFE).\n"
+            "(6) Aklında tut + 'Senin için 1-cümle'."
+        )
+
+    available_codes = [s["code"] for s in llm_input["available_sources"]]
+    return (
+        "Sen Türkiye makro analist hikaye anlatıcısısın. Aşağıdaki JSON TÜİK "
+        "İşsizlik verisini oku ve **sadece geçerli bir JSON** döndür.\n\n"
+        f"INPUT:\n{json.dumps(llm_input, ensure_ascii=False, indent=2, default=str)}\n\n"
+        "ÇIKTI ŞEMASI:\n"
+        "{\n"
+        '  "story_md": "(string)"\n'
+        "}\n\n"
+        f"BÖLÜMLER (sırayla):\n{sections}\n\n"
+        f"KELİME SAYISI: {word_min}-{word_max} aralığında.\n\n"
+        "MUTLAK KURALLAR (ihlal = retry):\n"
+        "1. Her sayı INPUT JSON'da geçen bir değer olmalı. Aritmetik yok.\n"
+        "2. HER sayının 60 karakter içinde [TCMB:UNEMPLOYMENT] olmalı. "
+        f"Geçerli kodlar: {available_codes}.\n"
+        "3. Politik yorum YASAK (AKP/CHP/MHP/seçim/parti).\n"
+        "4. Mutlaklık YASAK ('kesin', 'garanti', 'asla').\n"
+        "5. Yatırım tavsiyesi YASAK.\n"
+        "6. Tarih damgası ŞART (ay adı veya yıl).\n"
+        "7. 'beklenti'/'consensus' YAZMA — INPUT'ta yok.\n"
+        "8. SIFIR DELTA: delta_pp null veya change_label='sabit' ise 'sabit "
+        "kaldı/değişmedi' de, '0 puan' YAZMA.\n"
+        "9. INPUT alan ADLARINI ('[release_date]', '[delta_pp]' vb.) düz "
+        "metin olarak ASLA paragrafa kopyalama.\n"
+        "10. Çıktı sadece JSON; satır sonları için \\n.\n"
+    )
+
+
 def _format_tr_date_iso(iso_str: Optional[str]) -> Optional[str]:
     """ISO timestamp string → '1 Mart 2026' formatı."""
     if not iso_str:
@@ -1724,6 +2094,10 @@ _DECODER_DISPATCH = {
     "PCE": (_pce_payload, _pce_prompt),
     "PPI": (_ppi_payload, _ppi_prompt),
     "FOMC_STATEMENT": (_fomc_payload, _fomc_prompt),
+    # TR macro (FAZ D) — TÜFE/PPK/İşsizlik
+    "TR_TUFE": (_tufe_payload, _tufe_prompt),
+    "TR_POLICY_RATE": (_ppk_payload, _ppk_prompt),
+    "TR_UNEMPLOYMENT": (_unemp_payload, _unemp_prompt),
 }
 
 # Per-decoder word count bounds. PPI paired core eklendi (2026-05-11 basket
@@ -1738,6 +2112,10 @@ _DECODER_WORD_BOUNDS = {
     # market consensus + dot plot input verisi olmadığından bölümler kısa) →
     # premium min 130, advance min 270'e indirildi.
     "FOMC_STATEMENT": {"premium": (130, 400), "advance": (270, 600)},
+    # TR macro — consensus YOK, bölümler daha kısa.
+    "TR_TUFE":         {"premium": (130, 400), "advance": (280, 600)},
+    "TR_POLICY_RATE":  {"premium": (130, 400), "advance": (280, 600)},
+    "TR_UNEMPLOYMENT": {"premium": (120, 350), "advance": (250, 550)},
 }
 
 
@@ -1773,7 +2151,7 @@ async def generate_story(
     if et not in _SUPPORTED_EVENT_TYPES:
         result.rejection_reason = (
             f"event_type {et} not yet supported by storyteller "
-            f"(currently CPI, NFP, PCE, PPI)"
+            f"(currently {sorted(_SUPPORTED_EVENT_TYPES)})"
         )
         return result
 
