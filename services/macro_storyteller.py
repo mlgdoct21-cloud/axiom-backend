@@ -512,6 +512,18 @@ async def _load_event_payload(event_id: str) -> Optional[dict]:
                     if prior_up_row and prior_up_row.get("released_at") else None
                 ),
             }
+            # FAZ C — önceki FOMC statement source_url'i çek (statement
+            # language diff için, HTTP fetch DB conn block dışında yapılır).
+            prev_stmt_sql = text("""
+                SELECT source_url, released_at FROM macro_releases
+                WHERE event_type = 'FOMC_STATEMENT'
+                  AND released_at < :ts AND source_url IS NOT NULL
+                ORDER BY released_at DESC LIMIT 1
+            """)
+            prev_stmt = (await conn.execute(prev_stmt_sql, {"ts": ts})).mappings().first()
+            payload["_prev_statement_url"] = (
+                prev_stmt["source_url"] if prev_stmt else None
+            )
         # 12-ay history (trend hesabı için)
         payload["history"] = []
         if row["released_at"] and row["event_type"]:
@@ -534,6 +546,26 @@ async def _load_event_payload(event_id: str) -> Optional[dict]:
                 }
                 for r in hrows
             ]
+    # FAZ C — FOMC statement language diff. DB conn kapandıktan sonra HTTP
+    # fetch (cari + önceki statement HTML) + difflib cümle bazlı diff.
+    payload["statement_diff"] = None
+    et2 = (payload.get("event_type") or "").upper()
+    if et2 == "FOMC_STATEMENT":
+        curr_url = payload.get("source_url")
+        prev_url = payload.pop("_prev_statement_url", None)
+        if curr_url and prev_url:
+            try:
+                from services.macro_sources.fed_statement import fetch_diff
+                diff = await fetch_diff(curr_url, prev_url)
+                if diff.success and (diff.added or diff.removed):
+                    payload["statement_diff"] = {
+                        "added": diff.added,
+                        "removed": diff.removed,
+                        "curr_word_count": diff.curr_word_count,
+                        "prior_word_count": diff.prior_word_count,
+                    }
+            except Exception as e:
+                logger.warning(f"statement_diff fetch failed: {e}")
     return payload
 
 
@@ -1405,6 +1437,16 @@ def _fomc_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
         }
         sources_used.append("FED:SEP")
 
+    # FAZ C — statement language diff (added/removed cümleler İngilizce orjinal).
+    diff = payload.get("statement_diff") or None
+    diff_block = None
+    if diff and (diff.get("added") or diff.get("removed")):
+        diff_block = {
+            "added_sentences_en": (diff.get("added") or [])[:4],
+            "removed_sentences_en": (diff.get("removed") or [])[:4],
+            "source_code": "FED:STATEMENT",
+        }
+
     llm_input = {
         "release_date": _format_tr_date(payload.get("released_at")),
         "country": payload.get("country") or "US",
@@ -1422,6 +1464,7 @@ def _fomc_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
             "prior_decision_date": _format_tr_date_iso(fed_funds.get("prior_decision_date")),
         },
         "sep": sep_block,
+        "statement_diff": diff_block,
         "available_sources": [
             {"code": c, "name": _SOURCES[c].name}
             for c in sources_used if c in _SOURCES
@@ -1476,6 +1519,26 @@ def _fomc_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
 def _fomc_prompt(llm_input: dict, tier: Tier) -> str:
     has_sep = llm_input.get("sep") is not None
+    has_diff = llm_input.get("statement_diff") is not None
+    # Söylem şifti bölümü Premium için kısa, Advance için detaylı.
+    diff_section_premium = (
+        "(2.5) **Söylem şifti** — INPUT.statement_diff.added_sentences_en "
+        "ve removed_sentences_en'e bak. Eklenmiş/çıkarılmış İngilizce "
+        "cümleleri TÜRKÇE PARAFRAZE et (orjinal İngilizce yapıştırma). "
+        "1-2 ÖNEMLİ değişikliği vurgula — örn. 'patient' kelimesinin "
+        "çıkarılması veya 'data-dependent' ifadesinin eklenmesi. Citation "
+        "[FED:STATEMENT].\n"
+    )
+    diff_section_advance = (
+        "(3.5) **Söylem şifti analizi** — INPUT.statement_diff'e bak. "
+        "added_sentences_en ve removed_sentences_en'deki ifadeleri TR'ye "
+        "paraphrase et (İngilizce orjinal yapıştırma). 2-3 KRİTİK "
+        "değişikliği adlandır — Fed-watcher'lar bu küçük kelime "
+        "değişikliklerinden hawkish/dovish kayma okur (örn. 'patient' → "
+        "'data-dependent', 'modest' → 'solid', 'remains elevated' → "
+        "'has eased'). Her paraphrase'in sonunda [FED:STATEMENT] chip'i "
+        "ZORUNLU.\n"
+    )
     if tier == "premium":
         word_min, word_max = 130, 400
         if has_sep:
@@ -1559,6 +1622,15 @@ def _fomc_prompt(llm_input: dict, tier: Tier) -> str:
                 "(7) Aklında tut + 'Senin için 1-cümle' (DXY/BTC/altın yönü, "
                 "tavsiye değil)."
             )
+
+    # has_diff varsa söylem şifti bölümünü append et + word bounds'u bump
+    if has_diff:
+        if tier == "premium":
+            sections = sections + "\n" + diff_section_premium
+            word_min, word_max = word_min + 40, word_max + 100
+        else:
+            sections = sections + "\n" + diff_section_advance
+            word_min, word_max = word_min + 60, word_max + 120
 
     available_codes = [s["code"] for s in llm_input["available_sources"]]
 
