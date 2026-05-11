@@ -2332,6 +2332,21 @@ async def generate_story(
         except Exception as e:
             logger.warning(f"failed to schedule story broadcast {event_id}/{tier}: {e}")
 
+        # FAZ D — track record auto-verdict extract. Sadece feature flag ON
+        # iken (kullanıcı önce 3-5 hikayeyi manuel valide etmeli, hit_rate
+        # >%50 görüldüğünde MACRO_TRACK_RECORD_ENABLED=true ile aç).
+        try:
+            from services.macro_track_record import (
+                record_predicted_verdict, is_enabled as _tr_enabled,
+            )
+            if _tr_enabled():
+                await record_predicted_verdict(
+                    story_event_id=event_id, tier=tier,
+                    event_type=et, story_md=story_md,
+                )
+        except Exception as e:
+            logger.warning(f"failed to record track-record verdict {event_id}/{tier}: {e}")
+
     return result
 
 

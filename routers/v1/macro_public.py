@@ -594,3 +594,37 @@ async def get_story(
         "story": story_payload,
         "upgrade_cta": upgrade_cta,
     }
+
+
+@router.get("/track-record")
+async def macro_track_record(
+    response: Response,
+    event_type: Optional[str] = Query(None),
+    tier: Optional[str] = Query(None, pattern="^(premium|advance)$"),
+):
+    """Public İsabet Skorboard — manuel olarak validate edilmiş story
+    outcomes'tan aggregate hit rate.
+
+    `min_validated=3` altında {"status": "insufficient_data"} döner — yani
+    en az 3 hikaye review edilene kadar skorboard kullanılmaz.
+    """
+    response.headers["Cache-Control"] = "public, max-age=300"  # 5 min
+    from services.macro_track_record import get_hit_rate, list_outcomes
+    rate = await get_hit_rate(event_type=event_type, tier=tier, min_validated=3)
+    recent = await list_outcomes(event_type=event_type, tier=tier, limit=10)
+    # Public response — yalnızca validated outcome'ları göster, notes/excerpt'i kırp
+    public_recent = []
+    for r in recent:
+        if r.get("validated_at"):
+            public_recent.append({
+                "story_event_id": r["story_event_id"],
+                "tier": r["tier"],
+                "event_type": r["event_type"],
+                "predicted_verdict": r["predicted_verdict"],
+                "predicted_at": r["predicted_at"],
+                "hit_score": r["hit_score"],
+            })
+    return {
+        "aggregate": rate,
+        "recent_outcomes": public_recent,
+    }

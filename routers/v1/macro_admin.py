@@ -26,6 +26,12 @@ from services.macro_sources.reliability_probe import (
     probe_once,
     rolling_health_report,
 )
+from services.macro_track_record import (
+    insert_manual_verdict,
+    validate_outcome_manually,
+    list_outcomes,
+    get_hit_rate,
+)
 
 logger = get_logger("macro_admin")
 
@@ -452,3 +458,61 @@ async def force_generate_story(
             "unknown_sources": validator.unknown_sources if validator else None,
         } if validator else None,
     }
+
+
+# ---------- Track Record / İsabet Skorboard (FAZ D) ----------
+
+@router.post("/track-record/verdict/{event_id:path}")
+async def track_record_set_verdict(
+    event_id: str,
+    tier: str = Query("premium", pattern="^(premium|advance)$"),
+    event_type: str = Query(...),
+    verdict: str = Query(..., description="bullish_btc|bearish_btc|hawkish_fed|dovish_fed|risk_on|risk_off|inflation_up|inflation_down|bullish_usd|bearish_usd|neutral"),
+    horizon_days: int = Query(30, ge=1, le=180),
+    notes: Optional[str] = Query(None),
+    x_internal_secret: Optional[str] = Header(None),
+):
+    """Bir story için manuel verdict pre-populate et (validation öncesi).
+
+    Auto-extract OFF iken (feature flag false) 3-5 Mart 2026 hikayesini
+    elle review ederken kullanılır.
+    """
+    _check_auth(x_internal_secret)
+    ok = await insert_manual_verdict(
+        story_event_id=event_id, tier=tier, event_type=event_type,
+        predicted_verdict=verdict, horizon_days=horizon_days, notes=notes,
+    )
+    return {"inserted": ok, "event_id": event_id, "tier": tier, "verdict": verdict}
+
+
+@router.post("/track-record/validate/{event_id:path}")
+async def track_record_validate(
+    event_id: str,
+    tier: str = Query("premium", pattern="^(premium|advance)$"),
+    hit_score: float = Query(..., ge=-1.0, le=1.0, description="-1 miss / 0 neutral / +1 hit (fractional ok)"),
+    validated_by: str = Query("admin"),
+    notes: Optional[str] = Query(None),
+    compared_event_id: Optional[str] = Query(None),
+    x_internal_secret: Optional[str] = Header(None),
+):
+    """Manuel hit/miss validasyon. Önce /verdict endpoint ile verdict
+    insert edilmiş olmalı."""
+    _check_auth(x_internal_secret)
+    ok = await validate_outcome_manually(
+        story_event_id=event_id, tier=tier, hit_score=hit_score,
+        validated_by=validated_by, notes=notes, compared_event_id=compared_event_id,
+    )
+    return {"updated": ok, "event_id": event_id, "tier": tier, "hit_score": hit_score}
+
+
+@router.get("/track-record/list")
+async def track_record_list(
+    event_type: Optional[str] = Query(None),
+    tier: Optional[str] = Query(None, pattern="^(premium|advance)$"),
+    limit: int = Query(50, ge=1, le=200),
+    x_internal_secret: Optional[str] = Header(None),
+):
+    _check_auth(x_internal_secret)
+    rows = await list_outcomes(event_type=event_type, tier=tier, limit=limit)
+    rate = await get_hit_rate(event_type=event_type, tier=tier, min_validated=1)
+    return {"outcomes": rows, "aggregate": rate}
