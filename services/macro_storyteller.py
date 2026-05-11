@@ -1623,14 +1623,13 @@ def _fomc_prompt(llm_input: dict, tier: Tier) -> str:
                 "tavsiye değil)."
             )
 
-    # has_diff varsa söylem şifti bölümünü append et + word bounds'u bump
-    if has_diff:
-        if tier == "premium":
-            sections = sections + "\n" + diff_section_premium
-            word_min, word_max = word_min + 40, word_max + 100
-        else:
-            sections = sections + "\n" + diff_section_advance
-            word_min, word_max = word_min + 60, word_max + 120
+    # has_diff Advance-only: Premium tier'da SEP + diff kombinasyonu LLM'i
+    # sıkıştırıp citation chip'leri atmasına yol açıyor (14 missing_cite
+    # gözlemlendi). Premium hızlı/özet okumadır; language nuance Advance'e
+    # bırakılıyor.
+    if has_diff and tier == "advance":
+        sections = sections + "\n" + diff_section_advance
+        word_min, word_max = word_min + 60, word_max + 120
 
     available_codes = [s["code"] for s in llm_input["available_sources"]]
 
