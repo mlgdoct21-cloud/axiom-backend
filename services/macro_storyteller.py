@@ -456,16 +456,19 @@ async def _load_event_payload(event_id: str) -> Optional[dict]:
             sep_keys = ("SEP_FUNDS_END_0", "SEP_FUNDS_END_1",
                         "SEP_FUNDS_END_2", "SEP_FUNDS_LONGER_RUN")
             sep_current = {}
+            # Window'ı Python tarafında hesapla — asyncpg interval bind quirk.
+            from datetime import timedelta as _td
+            ts_lo = ts - _td(days=2)
+            ts_hi = ts + _td(days=2)
             sep_sql = text("""
                 SELECT event_type, actual_value FROM macro_releases
                 WHERE event_type = :et
-                  AND released_at BETWEEN :ts - interval '2 days'
-                                      AND :ts + interval '2 days'
+                  AND released_at BETWEEN :ts_lo AND :ts_hi
                 ORDER BY released_at DESC LIMIT 1
             """)
             for k in sep_keys:
                 r = (await conn.execute(sep_sql, {
-                    "et": k, "ts": ts,
+                    "et": k, "ts_lo": ts_lo, "ts_hi": ts_hi,
                 })).mappings().first()
                 if r and r["actual_value"] is not None:
                     sep_current[k] = float(r["actual_value"])
@@ -473,26 +476,24 @@ async def _load_event_payload(event_id: str) -> Optional[dict]:
             sep_prior_date = None
             if sep_current:
                 # Önceki SEP (en az 60 gün önce — SEP 3-aylık)
+                ts_prior_cutoff = ts - _td(days=60)
                 prior_sep_sql = text("""
                     SELECT released_at FROM macro_releases
                     WHERE event_type = 'SEP_FUNDS_END_0'
-                      AND released_at < :ts - interval '60 days'
+                      AND released_at < :cutoff
                     ORDER BY released_at DESC LIMIT 1
                 """)
-                p = (await conn.execute(prior_sep_sql, {"ts": ts})).mappings().first()
+                p = (await conn.execute(prior_sep_sql, {
+                    "cutoff": ts_prior_cutoff,
+                })).mappings().first()
                 if p and p.get("released_at"):
                     prior_ts = p["released_at"]
                     sep_prior_date = prior_ts.isoformat()
-                    prior_sep_get_sql = text("""
-                        SELECT event_type, actual_value FROM macro_releases
-                        WHERE event_type = :et
-                          AND released_at BETWEEN :ts - interval '2 days'
-                                              AND :ts + interval '2 days'
-                        ORDER BY released_at DESC LIMIT 1
-                    """)
+                    p_lo = prior_ts - _td(days=2)
+                    p_hi = prior_ts + _td(days=2)
                     for k in sep_keys:
-                        r = (await conn.execute(prior_sep_get_sql, {
-                            "et": k, "ts": prior_ts,
+                        r = (await conn.execute(sep_sql, {
+                            "et": k, "ts_lo": p_lo, "ts_hi": p_hi,
                         })).mappings().first()
                         if r and r["actual_value"] is not None:
                             sep_prior[k] = float(r["actual_value"])
