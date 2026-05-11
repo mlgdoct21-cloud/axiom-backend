@@ -150,6 +150,7 @@ def _format_tr_date(dt) -> Optional[str]:
 
 # Sayı sonrası 60 char penceresinde [SRC] etiketi aramak için
 _CITATION_RE = re.compile(r"\[([A-Z]+(?::[A-Z0-9_]+)?)\]")
+_BRACKET_RANGE_RE = re.compile(r"\[[^\]]*\]")  # citation chip aralığı (içindeki rakamlar exempt)
 _NUM_TOKEN_RE = re.compile(r"[-+]?\d+(?:[.,]\d+)?%?")
 _CITATION_WINDOW = 60
 
@@ -216,8 +217,18 @@ def _validate_story(
             return False
         return d == d.to_integral_value() and abs(d) <= Decimal("10")
 
+    # Citation chip aralıkları — `[FRED:WPSFD49116]` gibi kodların İÇİNDEKİ
+    # rakamlar number-validation'dan exempt (chip içerik bağlam değil, etiket).
+    bracket_ranges = [(m.start(), m.end()) for m in _BRACKET_RANGE_RE.finditer(story_md)]
+
+    def _in_citation(pos: int) -> bool:
+        return any(s <= pos < e for s, e in bracket_ranges)
+
+    # L1 için stripped versiyon — sayı arama sırasında bracket içeriği skip
+    story_md_for_nums = _BRACKET_RANGE_RE.sub("", story_md)
+
     unk_all = validate_numbers(
-        story_md, allowed_numbers, tolerance=Decimal("0.05"),
+        story_md_for_nums, allowed_numbers, tolerance=Decimal("0.05"),
     )
     rep.unknown_numbers = [
         u for u in unk_all
@@ -229,6 +240,8 @@ def _validate_story(
     # L2 — her sayının 60-char penceresinde [SRC] var mı (yıllar exempt)
     missing: list[str] = []
     for m in _NUM_TOKEN_RE.finditer(story_md):
+        if _in_citation(m.start()):
+            continue
         body = m.group(0).rstrip("%").replace(",", ".")
         try:
             d = Decimal(body)
