@@ -206,6 +206,14 @@ _DATE_MARKER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# "29 Nisan", "18 Mart 2026" tarzı tarih ifadelerinde gün numarası — citation
+# chip'i istemez (calendar token, data değil). Sayıdan sonra boşluk + TR ay
+# adı geliyorsa, exempt.
+_DAY_DATE_RE = re.compile(
+    r"^\s+(?:Ocak|Şubat|Mart|Nisan|Mayıs|Haziran|"
+    r"Temmuz|Ağustos|Eylül|Ekim|Kasım|Aralık)\b",
+)
+
 _BANNED_PHRASES = (
     # Politik
     "Cumhuriyetçi", "Demokrat", "AKP", "CHP", "MHP",
@@ -300,6 +308,11 @@ def _validate_story(
         is_int = (d == d.to_integral_value())
         if is_int and abs(d) <= Decimal("10") and "%" not in m.group(0):
             continue
+        # Tarih günü ("29 Nisan 2026") — citation chip istemez
+        if is_int and "%" not in m.group(0):
+            tail = story_md[m.end(): m.end() + 12]
+            if _DAY_DATE_RE.match(tail):
+                continue
         # Pencere içinde [...] var mı bak
         window = story_md[m.end(): m.end() + _CITATION_WINDOW]
         if not _CITATION_RE.search(window):
@@ -1361,7 +1374,7 @@ def _fomc_prompt(llm_input: dict, tier: Tier) -> str:
             "(4) Aklında tut + 'Senin için 1-cümle' (genel yön; tavsiye değil)."
         )
     else:  # advance
-        word_min, word_max = 300, 600
+        word_min, word_max = 270, 600
         sections = (
             "(1) Karar manşeti + önceki karar karşılaştırması (target range "
             "mevcut, önceki, midpoint, bp delta) — INPUT rakamlarını aynen.\n"
@@ -1445,9 +1458,10 @@ _DEFAULT_BOUNDS = {"premium": (150, 500), "advance": (340, 680)}
 _DECODER_WORD_BOUNDS = {
     "NFP": {"premium": (150, 500), "advance": (300, 680)},
     # FOMC FAZ A — scalar surprise yok, daha kısa hikaye yeterli. Smoke'da
-    # premium 147w'de takıldı (gemini-2.5-flash 4 bölümü kompakt yazıyor) →
-    # min 130'a indirildi.
-    "FOMC_STATEMENT": {"premium": (130, 400), "advance": (300, 600)},
+    # premium 147w / advance 293w'de takıldı (gemini-2.5-flash kompakt yazıyor:
+    # market consensus + dot plot input verisi olmadığından bölümler kısa) →
+    # premium min 130, advance min 270'e indirildi.
+    "FOMC_STATEMENT": {"premium": (130, 400), "advance": (270, 600)},
 }
 
 
