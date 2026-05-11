@@ -1323,6 +1323,23 @@ def _fomc_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
     ]
     if bp_change is not None and bp_change < 0:
         allowed_inputs.append(abs(bp_change))
+    # FOMC tarihleri ay ortasında/sonunda (örn. 29 Nisan, 18 Mart) — release
+    # date'in günü kaçınılmaz olarak hikayeye yazılır. CPI/NFP gibi ay başı
+    # değil (day≤10 küçük-int skip'i çalışmaz). Day + prior decision day
+    # exempt et.
+    rel_dt = payload.get("released_at")
+    if rel_dt is not None:
+        try:
+            allowed_inputs.append(rel_dt.day)
+        except Exception:
+            pass
+    prior_iso = fed_funds.get("prior_decision_date")
+    if prior_iso:
+        try:
+            prior_dt = datetime.fromisoformat(prior_iso.replace("Z", "+00:00"))
+            allowed_inputs.append(prior_dt.day)
+        except Exception:
+            pass
     allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
     allowed_codes = {s["code"] for s in llm_input["available_sources"]}
     return llm_input, allowed, allowed_codes
@@ -1330,7 +1347,7 @@ def _fomc_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
 def _fomc_prompt(llm_input: dict, tier: Tier) -> str:
     if tier == "premium":
-        word_min, word_max = 150, 400
+        word_min, word_max = 130, 400
         sections = (
             "(1) Karar manşeti — Fed funds target range mevcut seviye + "
             "önceki karara göre değişim (hold/cut/hike + baz puan). "
@@ -1427,8 +1444,10 @@ _DECODER_DISPATCH = {
 _DEFAULT_BOUNDS = {"premium": (150, 500), "advance": (340, 680)}
 _DECODER_WORD_BOUNDS = {
     "NFP": {"premium": (150, 500), "advance": (300, 680)},
-    # FOMC FAZ A — scalar surprise yok, daha kısa hikaye yeterli.
-    "FOMC_STATEMENT": {"premium": (150, 400), "advance": (300, 600)},
+    # FOMC FAZ A — scalar surprise yok, daha kısa hikaye yeterli. Smoke'da
+    # premium 147w'de takıldı (gemini-2.5-flash 4 bölümü kompakt yazıyor) →
+    # min 130'a indirildi.
+    "FOMC_STATEMENT": {"premium": (130, 400), "advance": (300, 600)},
 }
 
 
