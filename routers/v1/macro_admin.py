@@ -18,7 +18,7 @@ from services.macro_calendar import (
     upcoming_events,
 )
 from services.macro_sources.fred_calendar import cache_status as fred_calendar_cache_status
-from services.macro_broadcaster import broadcast_release
+from services.macro_broadcaster import broadcast_release, broadcast_story
 from services.macro_narrative import generate_narrative
 from services.macro_storyteller import generate_story
 from services.macro_sources.reliability_probe import (
@@ -247,6 +247,25 @@ async def set_expected(
         "expected_mom_pct": float(row["expected_mom_pct"]) if row["expected_mom_pct"] is not None else None,
         "expected_yoy_pct": float(row["expected_yoy_pct"]) if row["expected_yoy_pct"] is not None else None,
     }
+
+
+@router.post("/story/broadcast/{event_id:path}")
+async def trigger_story_broadcast(
+    event_id: str,
+    tier: str = Query("premium", pattern="^(premium|advance)$"),
+    force: bool = Query(False, description="Re-broadcast even if already stamped"),
+    x_internal_secret: Optional[str] = Header(None),
+):
+    """Manual Telegram push for an existing storyteller output. Useful for:
+    (a) re-sending after a Telegram outage,
+    (b) backfilling old releases that landed before broadcast wiring,
+    (c) testing tier targeting before a real release.
+
+    Idempotency guard lives in broadcast_story (skips if
+    `broadcasted_<tier>_at` already stamped); pass `force=true` to bypass.
+    """
+    _check_auth(x_internal_secret)
+    return await broadcast_story(event_id, tier=tier, force=force)
 
 
 @router.post("/story/{event_id:path}")

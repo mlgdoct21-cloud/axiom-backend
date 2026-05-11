@@ -583,3 +583,177 @@ async def broadcast_release_safe(event_id: str) -> None:
         await broadcast_release(event_id)
     except Exception as e:
         logger.error(f"broadcast_release crashed for {event_id}: {e}")
+
+
+# ---------- Storyteller (Premium/Advance) broadcast ----------
+
+_STORY_TELEGRAM_LIMIT = 3800  # Telegram cap 4096; bırakıyoruz başlık+CTA+SSL için
+_STORY_BROADCAST_ENABLED_DEFAULT = "true"
+
+
+def _build_story_keyboard(event_id: str, tier: str) -> dict:
+    """Telegram inline keyboard for story broadcasts. 'Dashboard'da tam analiz'
+    deep-link + tarihsel + etkilenen hisseler. Free push'tan farklı: upgrade
+    butonu yok (recipient zaten Premium/Advance)."""
+    rows = [[
+        {"text": "📊 Tarihsel kıyaslama", "callback_data": f"macro_hist:{event_id}"},
+        {"text": "💼 Etkilenen hisseler", "callback_data": f"macro_stocks:{event_id}"},
+    ]]
+    dashboard_base = os.getenv("DASHBOARD_BASE_URL", "").strip().rstrip("/")
+    if dashboard_base:
+        rows.append([{
+            "text": "📈 Dashboard'da tam analiz",
+            "url": f"{dashboard_base}/tr?event={event_id}",
+        }])
+    return {"inline_keyboard": rows}
+
+
+def _format_story_message(event_id: str, event_type: str, tier: str, story_md: str) -> str:
+    """Build the Telegram message body. Story is already author-friendly TR
+    text; we add a header (tier badge + event type) and trim to Telegram's
+    cap, ending on a sentence boundary when possible."""
+    tier_badge = "💎 PREMIUM" if tier == "premium" else "🚀 ADVANCE"
+    headline = _HEADLINE.get(event_type, event_type)
+    emoji = _EMOJI.get(event_type, "📊")
+    header = f"{emoji} <b>{headline}</b>\n{tier_badge}\n\n"
+    body = story_md.strip()
+    avail = _STORY_TELEGRAM_LIMIT - len(header) - 40  # 40 char buffer for footer
+    if len(body) > avail:
+        # cut at last paragraph boundary inside the budget
+        cut = body[:avail]
+        last_para = cut.rfind("\n\n")
+        if last_para > avail * 0.6:
+            cut = cut[:last_para]
+        body = cut.rstrip() + "\n\n…"
+    return header + body
+
+
+async def _load_story_row(event_id: str, tier: str) -> Optional[dict]:
+    """Pull the story row + its event_type. Returns None if no row, no
+    story_md, or unknown event_type."""
+    sql = text("""
+        SELECT s.event_id, s.tier, s.story_md, s.broadcasted_premium_at,
+               s.broadcasted_advance_at, r.event_type
+        FROM macro_stories s
+        LEFT JOIN macro_releases r ON r.event_id = s.event_id
+        WHERE s.event_id = :eid AND s.tier = :tier
+        LIMIT 1
+    """)
+    async with engine.begin() as conn:
+        row = (await conn.execute(sql, {"eid": event_id, "tier": tier})).mappings().first()
+    if not row or not row["story_md"]:
+        return None
+    return {k: row[k] for k in row.keys()}
+
+
+async def _stamp_story_broadcast(event_id: str, tier: str) -> None:
+    col = "broadcasted_premium_at" if tier == "premium" else "broadcasted_advance_at"
+    sql = text(
+        f"UPDATE macro_stories SET {col} = NOW() "
+        "WHERE event_id = :eid AND tier = :tier"
+    )
+    async with engine.begin() as conn:
+        await conn.execute(sql, {"eid": event_id, "tier": tier})
+
+
+async def _fanout_story(message: str, users: list, event_id: str, tier: str) -> tuple[int, int]:
+    """Story-specific fanout — different keyboard layout (no upgrade row)."""
+    keyboard = _build_story_keyboard(event_id, tier)
+    sent = 0
+    failed = 0
+    for user in users:
+        chat_id = user.telegram_id
+        try:
+            await asyncio.to_thread(send_message_with_keyboard, chat_id, message, keyboard)
+            sent += 1
+        except Exception as e:
+            failed += 1
+            if "chat not found" not in str(e).lower():
+                logger.warning(f"story broadcast {event_id}/{tier} -> {chat_id}: {e}")
+    return sent, failed
+
+
+async def broadcast_story(
+    event_id: str, tier: str, *, force: bool = False,
+) -> dict:
+    """Fan out one tiered storyteller output to all users at or above `tier`.
+
+    - tier='premium': recipients = users with tier IN ('premium', 'advance').
+      'advance' users still get the Premium copy if their own Advance story
+      doesn't exist yet (they upgraded the experience by paying; they should
+      hear about every release as fast or faster).
+    - tier='advance': recipients = users with tier='advance' only.
+
+    Idempotency: stamped via `macro_stories.broadcasted_<tier>_at`. A second
+    call returns `{"skipped_already_broadcasted": True}` unless force=True.
+
+    Kill-switch: `MACRO_STORY_BROADCAST_ENABLED=false`.
+    """
+    if tier not in ("premium", "advance"):
+        return {"sent": 0, "failed": 0, "invalid_tier": tier}
+
+    enabled = os.getenv(
+        "MACRO_STORY_BROADCAST_ENABLED", _STORY_BROADCAST_ENABLED_DEFAULT,
+    ).strip().lower()
+    if enabled in ("false", "0", "no"):
+        logger.info(f"story broadcast disabled, skipping {event_id}/{tier}")
+        return {"sent": 0, "failed": 0, "skipped_disabled": True}
+
+    row = await _load_story_row(event_id, tier)
+    if not row:
+        logger.warning(f"story broadcast: row not found for {event_id}/{tier}")
+        return {"sent": 0, "failed": 0, "missing_row": True}
+
+    stamped_col = "broadcasted_premium_at" if tier == "premium" else "broadcasted_advance_at"
+    if not force and row.get(stamped_col):
+        logger.info(f"story broadcast: already sent {event_id}/{tier} at {row[stamped_col]}")
+        return {"sent": 0, "failed": 0, "skipped_already_broadcasted": True}
+
+    event_type = (row.get("event_type") or "").upper()
+    message = _format_story_message(event_id, event_type, tier, row["story_md"])
+
+    try:
+        async with AsyncSessionLocal() as session:
+            all_users = list((await session.execute(select(User))).scalars().all())
+    except Exception as e:
+        logger.error(f"story broadcast: user list query failed: {e}")
+        return {"sent": 0, "failed": 0, "user_query_error": str(e)}
+
+    # Tier gating — see docstring above.
+    if tier == "premium":
+        recipients = [
+            u for u in all_users
+            if (getattr(u, "tier", "free") or "free").lower() in ("premium", "advance")
+        ]
+    else:  # advance
+        recipients = [
+            u for u in all_users
+            if (getattr(u, "tier", "free") or "free").lower() == "advance"
+        ]
+
+    # Stamp BEFORE fanout — same logic as broadcast_release: intent matters
+    # for idempotency, partial failures shouldn't trigger re-broadcast storms.
+    await _stamp_story_broadcast(event_id, tier)
+
+    sent, failed = await _fanout_story(message, recipients, event_id, tier)
+    logger.info(
+        f"📣 story broadcast {event_id}/{tier}: "
+        f"{sent} sent / {failed} failed / {len(recipients)} eligible users"
+    )
+
+    return {
+        "sent": sent,
+        "failed": failed,
+        "total_users": len(all_users),
+        "eligible_users": len(recipients),
+        "tier": tier,
+        "event_type": event_type,
+    }
+
+
+async def broadcast_story_safe(event_id: str, tier: str, *, force: bool = False) -> None:
+    """Fire-and-forget wrapper used by storyteller — never raises."""
+    try:
+        await broadcast_story(event_id, tier, force=force)
+    except Exception as e:
+        logger.error(f"broadcast_story crashed for {event_id}/{tier}: {e}")

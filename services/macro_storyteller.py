@@ -1145,7 +1145,29 @@ async def generate_story(
     result.written = written
     result.story_md = story_md
     result.sources_cited = rep.sources_cited
+
+    # Fire-and-forget Telegram broadcast to Premium/Advance recipients. Stamp
+    # column (`broadcasted_<tier>_at`) ensures regen with force=True only
+    # re-broadcasts if the previous push was wiped (admin path uses force).
+    # Idempotent at the row level so concurrent generate_story calls for the
+    # same (event_id, tier) won't double-push.
+    if written:
+        try:
+            from services.macro_broadcaster import broadcast_story_safe
+            task = asyncio.create_task(
+                broadcast_story_safe(event_id, tier, force=False)
+            )
+            _STORY_BROADCAST_INFLIGHT.add(task)
+            task.add_done_callback(_STORY_BROADCAST_INFLIGHT.discard)
+        except Exception as e:
+            logger.warning(f"failed to schedule story broadcast {event_id}/{tier}: {e}")
+
     return result
+
+
+# Strong-ref set so fire-and-forget broadcast tasks aren't GC'd while waiting
+# on Telegram API. Matches the _DELAYED_INFLIGHT pattern in macro_broadcaster.
+_STORY_BROADCAST_INFLIGHT: set = set()
 
 
 async def generate_story_safe(
