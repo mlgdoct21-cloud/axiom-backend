@@ -73,6 +73,10 @@ SOURCE_INTERVAL: dict[str, timedelta] = {
     "fred_core_ppi": timedelta(minutes=60),
     "fred_housing_starts": timedelta(minutes=60),
     "fred_gdp": timedelta(minutes=60),
+    # FOMC decoder (Faz 3) — günlük seriler ama FOMC kararı dışında değer
+    # değişmez; 60dk yeterli (8 toplantı/yıl, ±60dk gecikme önemsiz).
+    "fred_fed_funds_upper": timedelta(minutes=60),
+    "fred_fed_funds_lower": timedelta(minutes=60),
     "kalshi_fed": timedelta(minutes=60),
     # Day 28 part 3 — Türkiye TCMB EVDS, hepsi aylık → 60dk yeterli
     # Day 28 part 4 — TCMB EVDS interval 60dk → 15dk (kullanıcı anlık yayın
@@ -95,6 +99,8 @@ _FRED_SOURCES = (
     # NFP sektör alt-serileri (BLS B-1 eşdeğeri)
     "fred_nfp_health", "fred_nfp_govt", "fred_nfp_prof", "fred_nfp_leisure",
     "fred_nfp_mfg", "fred_nfp_const", "fred_nfp_tpu", "fred_nfp_info",
+    # FOMC decoder (Faz 3) — fed funds target range
+    "fred_fed_funds_upper", "fred_fed_funds_lower",
 )
 
 # Number of historical observations to fetch per probe. 13 lets the public
@@ -138,6 +144,9 @@ _STATES: dict[str, _SourceState] = {
     "fred_core_ppi": _SourceState(name="fred_core_ppi"),
     "fred_housing_starts": _SourceState(name="fred_housing_starts"),
     "fred_gdp": _SourceState(name="fred_gdp"),
+    # FOMC decoder (Faz 3)
+    "fred_fed_funds_upper": _SourceState(name="fred_fed_funds_upper"),
+    "fred_fed_funds_lower": _SourceState(name="fred_fed_funds_lower"),
     "kalshi_fed": _SourceState(name="kalshi_fed"),
     # Day 28 part 3 — TCMB EVDS sources (3 aktif; kalan 3 kod EVDS3'te değişti)
     "tcmb_tufe":          _SourceState(name="tcmb_tufe"),

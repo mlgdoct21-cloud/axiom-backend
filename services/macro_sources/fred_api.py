@@ -50,6 +50,11 @@ SERIES = {
     "fred_core_ppi": "WPSFD49116",            # PPI Final Demand Less Foods & Energy SA = Core PPI
     "fred_housing_starts": "HOUST",           # Housing Starts: Total New Privately Owned SA, ~17th
     "fred_gdp": "GDPC1",                      # Real GDP, Quarterly Annualized SA, ~25th of quarter+1
+    # FOMC decoder (Faz 3, 2026-05-11): Fed Funds target range upper/lower bounds.
+    # Daily series — values change on FOMC decision days. Used as data points;
+    # FOMC_STATEMENT event (fed_rss) is the actual narrative trigger.
+    "fred_fed_funds_upper": "DFEDTARU",       # Federal Funds Target Range Upper, daily
+    "fred_fed_funds_lower": "DFEDTARL",       # Federal Funds Target Range Lower, daily
 }
 
 _USER_AGENT = "AXIOM-Macro/0.1 (+https://axiom-dashboard-sigma.vercel.app)"

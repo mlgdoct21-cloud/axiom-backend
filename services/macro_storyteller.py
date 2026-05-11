@@ -141,6 +141,19 @@ _SOURCES: dict[str, SourceCitation] = {
         "FRED:PPIACO", "FRED Producer Price Index (All Commodities, legacy)",
         "https://fred.stlouisfed.org/series/PPIACO",
     ),
+    # FOMC decoder (Faz 3) — fed funds target range + statement
+    "FRED:DFEDTARU": SourceCitation(
+        "FRED:DFEDTARU", "FRED Fed Funds Target Range Upper",
+        "https://fred.stlouisfed.org/series/DFEDTARU",
+    ),
+    "FRED:DFEDTARL": SourceCitation(
+        "FRED:DFEDTARL", "FRED Fed Funds Target Range Lower",
+        "https://fred.stlouisfed.org/series/DFEDTARL",
+    ),
+    "FED:STATEMENT": SourceCitation(
+        "FED:STATEMENT", "Federal Reserve FOMC Statement",
+        "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+    ),
     "BLS": SourceCitation(
         "BLS", "BLS Employment / CPI release",
         "https://www.bls.gov/news.release/",
@@ -374,6 +387,57 @@ async def _load_event_payload(event_id: str) -> Optional[dict]:
             payload["sectors"] = [
                 {k: r[k] for k in r.keys()} for r in srows
             ]
+        # FOMC_STATEMENT — fed funds target range latest + prior decision.
+        # DFEDTARU/L günlük seri; çoğu gün değer aynı. "Prior decision" =
+        # actual_value değiştiği son tarih (FOMC decision day).
+        payload["fed_funds"] = None
+        if et == "FOMC_STATEMENT" and row["released_at"]:
+            ts = row["released_at"]
+            ff_sql = text("""
+                SELECT actual_value, released_at FROM macro_releases
+                WHERE event_type = :et AND released_at <= :ts
+                ORDER BY released_at DESC LIMIT 1
+            """)
+            up_row = (await conn.execute(ff_sql, {
+                "et": "FED_FUNDS_UPPER", "ts": ts,
+            })).mappings().first()
+            lo_row = (await conn.execute(ff_sql, {
+                "et": "FED_FUNDS_LOWER", "ts": ts,
+            })).mappings().first()
+            prior_up_row = None
+            prior_lo_row = None
+            if up_row:
+                prior_sql = text("""
+                    SELECT actual_value, released_at FROM macro_releases
+                    WHERE event_type = :et AND actual_value != :cur
+                      AND released_at < :ts
+                    ORDER BY released_at DESC LIMIT 1
+                """)
+                prior_up_row = (await conn.execute(prior_sql, {
+                    "et": "FED_FUNDS_UPPER",
+                    "cur": up_row["actual_value"], "ts": ts,
+                })).mappings().first()
+            if lo_row:
+                prior_sql = text("""
+                    SELECT actual_value, released_at FROM macro_releases
+                    WHERE event_type = :et AND actual_value != :cur
+                      AND released_at < :ts
+                    ORDER BY released_at DESC LIMIT 1
+                """)
+                prior_lo_row = (await conn.execute(prior_sql, {
+                    "et": "FED_FUNDS_LOWER",
+                    "cur": lo_row["actual_value"], "ts": ts,
+                })).mappings().first()
+            payload["fed_funds"] = {
+                "current_upper": float(up_row["actual_value"]) if up_row else None,
+                "current_lower": float(lo_row["actual_value"]) if lo_row else None,
+                "prior_upper": float(prior_up_row["actual_value"]) if prior_up_row else None,
+                "prior_lower": float(prior_lo_row["actual_value"]) if prior_lo_row else None,
+                "prior_decision_date": (
+                    prior_up_row["released_at"].isoformat()
+                    if prior_up_row and prior_up_row.get("released_at") else None
+                ),
+            }
         # 12-ay history (trend hesabı için)
         payload["history"] = []
         if row["released_at"] and row["event_type"]:
@@ -1190,13 +1254,170 @@ class StoryResult:
     sources_cited: list[str] = field(default_factory=list)
 
 
-_SUPPORTED_EVENT_TYPES = frozenset({"CPI", "NFP", "PCE", "PPI"})
+_SUPPORTED_EVENT_TYPES = frozenset({"CPI", "NFP", "PCE", "PPI", "FOMC_STATEMENT"})
+
+# ---------- FOMC prompt builder ----------
+
+def _fomc_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
+    """FOMC karar yorumu. Diğer decoder'lardan yapısal farklı: scalar
+    surprise yok, karar binary (hold/cut/hike) + bp magnitude. Veri kaynağı
+    fed_rss event'i (FOMC_STATEMENT) + FRED DFEDTARU/L target range.
+
+    FAZ A (2026-05-11): statement text scrape yok, sadece rate decision +
+    önceki kararla karşılaştırma. Dot plot manuel (admin endpoint ile sonra
+    enjekte edilebilir). FAZ B'de SEP PDF parse eklenir.
+    """
+    fed_funds = payload.get("fed_funds") or {}
+    cur_up = fed_funds.get("current_upper")
+    cur_lo = fed_funds.get("current_lower")
+    prior_up = fed_funds.get("prior_upper")
+    prior_lo = fed_funds.get("prior_lower")
+
+    # Midpoint of target range (market convention for "the rate")
+    mid_cur = round((cur_up + cur_lo) / 2, 2) if cur_up is not None and cur_lo is not None else None
+    mid_prior = round((prior_up + prior_lo) / 2, 2) if prior_up is not None and prior_lo is not None else None
+
+    # Basis points change: positive = hike, negative = cut, 0 = hold.
+    bp_change = None
+    if mid_cur is not None and mid_prior is not None:
+        bp_change = int(round((mid_cur - mid_prior) * 100))
+
+    if bp_change is None:
+        decision_label = "bilinmiyor"
+    elif bp_change == 0:
+        decision_label = "değişiklik yok (hold)"
+    elif bp_change > 0:
+        decision_label = f"{bp_change} baz puan artış (hike)"
+    else:
+        decision_label = f"{abs(bp_change)} baz puan indirim (cut)"
+
+    sources_used = ["FED:STATEMENT", "FRED:DFEDTARU", "FRED:DFEDTARL"]
+
+    llm_input = {
+        "release_date": _format_tr_date(payload.get("released_at")),
+        "country": payload.get("country") or "US",
+        "title": payload.get("narrative_md") or "FOMC Statement",
+        "source_url": payload.get("source_url"),
+        "fed_funds": {
+            "current_upper_pct": cur_up,
+            "current_lower_pct": cur_lo,
+            "current_midpoint_pct": mid_cur,
+            "prior_upper_pct": prior_up,
+            "prior_lower_pct": prior_lo,
+            "prior_midpoint_pct": mid_prior,
+            "bp_change": bp_change,
+            "decision_label": decision_label,
+            "prior_decision_date": _format_tr_date_iso(fed_funds.get("prior_decision_date")),
+        },
+        "available_sources": [
+            {"code": c, "name": _SOURCES[c].name}
+            for c in sources_used if c in _SOURCES
+        ],
+    }
+
+    # Allowed numbers: current/prior range values + midpoints + bp magnitude.
+    # bp_change negatif olabilir → LLM "25 baz puan indirim" yazar (pozitif),
+    # NFP sign-flip exempt pattern'iyle abs() eklenir.
+    allowed_inputs = [
+        cur_up, cur_lo, prior_up, prior_lo, mid_cur, mid_prior, bp_change,
+    ]
+    if bp_change is not None and bp_change < 0:
+        allowed_inputs.append(abs(bp_change))
+    allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
+    allowed_codes = {s["code"] for s in llm_input["available_sources"]}
+    return llm_input, allowed, allowed_codes
+
+
+def _fomc_prompt(llm_input: dict, tier: Tier) -> str:
+    if tier == "premium":
+        word_min, word_max = 150, 400
+        sections = (
+            "(1) Karar manşeti — Fed funds target range mevcut seviye + "
+            "önceki karara göre değişim (hold/cut/hike + baz puan). "
+            "INPUT'taki rakamları aynen kullan.\n"
+            "(2) Bağlam — bu kararın ne anlama geldiği. Hold ise 'Fed bekle-gör "
+            "modunda', cut ise 'gevşeme döngüsü', hike ise 'sıkılaştırma'. "
+            "Mental model olarak anlat, yeni rakam yazma.\n"
+            "(3) Piyasaya etki — politika faizi düştüğünde/yükseldiğinde tipik "
+            "olarak ne olur (USD, tahvil getirisi, hisse, BTC kavramsal yön). "
+            "INPUT verisine bağlı kal.\n"
+            "(4) Aklında tut + 'Senin için 1-cümle' (genel yön; tavsiye değil)."
+        )
+    else:  # advance
+        word_min, word_max = 300, 600
+        sections = (
+            "(1) Karar manşeti + önceki karar karşılaştırması (target range "
+            "mevcut, önceki, midpoint, bp delta) — INPUT rakamlarını aynen.\n"
+            "(2) Karar tarihi vs önceki karar tarihi arası — Fed bu süreçte "
+            "ne dedi/yaptı (kavramsal, INPUT'ta yoksa rakam yazma).\n"
+            "(3) Piyasa pricing'inden sapma — INPUT'ta market consensus yok, "
+            "o yüzden 'beklenti' kelimesi YAZMA. Sadece 'piyasa şu yönde "
+            "fiyatlamıştı, gerçekleşen şu' gibi kavramsal kıyas YAPMA — "
+            "veri yoksa atla.\n"
+            "(4) Kanal analizi — kararın geçeceği makanizmalar: kredi maliyeti, "
+            "USD likiditesi, tahvil eğrisi, risk varlıklar. Kavramsal anlat.\n"
+            "(5) İleriye dönük — Fed'in 'data-dependent' duruşunu vurgula, "
+            "bir sonraki toplantıya kadar izlenmesi gerekenler (CPI, NFP, "
+            "PCE veri akışı). Spekülatif rakam YASAK.\n"
+            "(6) Risk dengesi — yumuşak iniş vs durgunluk vs yeniden ısınma "
+            "gibi senaryolar (kavramsal, olasılık dili).\n"
+            "(7) Aklında tut + 'Senin için 1-cümle' (DXY/BTC/altın yönü, "
+            "tavsiye değil)."
+        )
+
+    available_codes = [s["code"] for s in llm_input["available_sources"]]
+
+    return (
+        "Sen makro analist hikaye anlatıcısısın. Aşağıdaki JSON FOMC karar "
+        "verisini oku ve **sadece geçerli bir JSON** döndür.\n\n"
+        f"INPUT:\n{json.dumps(llm_input, ensure_ascii=False, indent=2, default=str)}\n\n"
+        "ÇIKTI ŞEMASI:\n"
+        "{\n"
+        '  "story_md": "(string — aşağıdaki bölümleri içermeli)"\n'
+        "}\n\n"
+        f"BÖLÜMLER (sırayla):\n{sections}\n\n"
+        f"KELİME SAYISI: {word_min}-{word_max} aralığında.\n\n"
+        "MUTLAK KURALLAR (ihlal = retry):\n"
+        "1. Her sayı INPUT JSON'da geçen bir değer olmalı. Aritmetik yapma — "
+        "bp_change INPUT'ta hazır.\n"
+        "2. HER sayının 60 karakter içinde [KAYNAK_KODU] olmalı. "
+        f"Geçerli kodlar: {available_codes}. Örnekler: '%5.50 üst sınır "
+        "[FRED:DFEDTARU]', '%5.25 alt sınır [FRED:DFEDTARL]', '25 baz puan "
+        "indirim [FED:STATEMENT]'.\n"
+        "3. Politik yorum YASAK (Powell hariç — kurumsal isim olarak "
+        "geçebilir; ama 'Cumhuriyetçi/Demokrat/AKP/CHP/seçim/parti' yasak).\n"
+        "4. Mutlaklık YASAK ('kesin', 'garanti', 'asla').\n"
+        "5. Yatırım tavsiyesi YASAK.\n"
+        "6. Tarih damgası ŞART (ay adı veya yıl veya UTC).\n"
+        "7. 'beklenti' SADECE INPUT'ta piyasa pricing varsa kullan — FAZ A'da "
+        "yok, o yüzden 'beklenti'/'consensus' kelimelerini YAZMA.\n"
+        "8. SIFIR DELTA (hold): bp_change=0 ise 'değişmedi/sabit tutuldu' "
+        "de, '0 baz puan' yazma. Yine de mevcut range'i (upper/lower) yaz.\n"
+        "9. TARİH: INPUT `release_date` formatını ('1 Mart 2026') aynen "
+        "kullan; ISO formatı YAZMA.\n"
+        "10. 'data-dependent', 'gevşeme döngüsü', 'sıkılaştırma', 'yumuşak "
+        "iniş' gibi mental modelleri kullan — somut yeni rakam üretme.\n"
+        "11. Çıktı sadece JSON; satır sonları için \\n.\n"
+    )
+
+
+def _format_tr_date_iso(iso_str: Optional[str]) -> Optional[str]:
+    """ISO timestamp string → '1 Mart 2026' formatı."""
+    if not iso_str:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        return _format_tr_date(dt)
+    except Exception:
+        return None
+
 
 _DECODER_DISPATCH = {
     "CPI": (_cpi_payload, _cpi_prompt),
     "NFP": (_nfp_payload, _nfp_prompt),
     "PCE": (_pce_payload, _pce_prompt),
     "PPI": (_ppi_payload, _ppi_prompt),
+    "FOMC_STATEMENT": (_fomc_payload, _fomc_prompt),
 }
 
 # Per-decoder word count bounds. PPI paired core eklendi (2026-05-11 basket
@@ -1206,6 +1427,8 @@ _DECODER_DISPATCH = {
 _DEFAULT_BOUNDS = {"premium": (150, 500), "advance": (340, 680)}
 _DECODER_WORD_BOUNDS = {
     "NFP": {"premium": (150, 500), "advance": (300, 680)},
+    # FOMC FAZ A — scalar surprise yok, daha kısa hikaye yeterli.
+    "FOMC_STATEMENT": {"premium": (150, 400), "advance": (300, 600)},
 }
 
 

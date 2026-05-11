@@ -60,7 +60,26 @@ _FRED_EVENT_TYPE = {
     "fred_nfp_info":    "NFP_INFO",
     "fred_housing_starts": "HOUSING_STARTS",
     "fred_gdp": "GDP",
+    # FOMC decoder (Faz 3, 2026-05-11) — fed funds target range. Daily series;
+    # storyteller payload'ında join edilen DATA, kendi başına narrative
+    # üretmiyor (FOMC_STATEMENT event fed_rss'ten gelir, esas tetik o).
+    "fred_fed_funds_upper": "FED_FUNDS_UPPER",
+    "fred_fed_funds_lower": "FED_FUNDS_LOWER",
 }
+
+
+def _is_data_point_event(event_type: str) -> bool:
+    """True for sub-series event_types that are payload data only —
+    they don't trigger their own narrative or revision broadcast.
+
+    Includes NFP supersector breakdown (NFP_HEALTH, NFP_GOVT, ...) and
+    FOMC fed funds target range (FED_FUNDS_UPPER, FED_FUNDS_LOWER).
+    """
+    if event_type.startswith("NFP_") and event_type != "NFP":
+        return True
+    if event_type.startswith("FED_FUNDS_"):
+        return True
+    return False
 
 # Day 28 part 3 — Türkiye TCMB EVDS source name → event_type label mapping.
 # 3 seri aktif (kod doğrulandı); diğer 3 (policy_rate/unemployment/current_acct)
@@ -222,10 +241,10 @@ async def _upsert_release_with_revision(
         logger.info(
             f"REVISION detected: {event_id} {old_row['actual_value']} → {actual}"
         )
-        # NFP sektör alt-serileri payload data; revision broadcast (Advance push)
-        # tetiklemez — kullanıcı her sektör revizyonu için ayrı mesaj almasın.
-        is_sector = event_type.startswith("NFP_") and event_type != "NFP"
-        if not is_sector:
+        # NFP sektör alt-serileri ve FED_FUNDS_* payload data; revision
+        # broadcast (Advance push) tetiklemez — kullanıcı her sub-series
+        # revizyonu için ayrı mesaj almasın.
+        if not _is_data_point_event(event_type):
             _trigger_revision_broadcast(event_id)
     return outcome
 
@@ -261,10 +280,9 @@ async def record_fred_observation(
     if actual is None:
         return False
 
-    # NFP sektör alt-serileri storyteller payload'ında join edilen DATA, kendi
-    # başlarına Free hap / Premium hikaye üretmiyor — narrative trigger skip.
-    is_sector = event_type.startswith("NFP_") and event_type != "NFP"
-    effective_trigger = trigger_narrative and not is_sector
+    # NFP sektör alt-serileri ve FED_FUNDS_* storyteller payload'ında join
+    # edilen DATA, kendi başlarına Free hap / Premium hikaye üretmiyor.
+    effective_trigger = trigger_narrative and not _is_data_point_event(event_type)
 
     outcome = await _upsert_release_with_revision(
         event_id=event_id,
