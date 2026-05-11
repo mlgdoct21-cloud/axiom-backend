@@ -599,7 +599,13 @@ def _build_story_keyboard(event_id: str, tier: str) -> dict:
         {"text": "📊 Tarihsel kıyaslama", "callback_data": f"macro_hist:{event_id}"},
         {"text": "💼 Etkilenen hisseler", "callback_data": f"macro_stocks:{event_id}"},
     ]]
-    dashboard_base = os.getenv("DASHBOARD_BASE_URL", "").strip().rstrip("/")
+    # DASHBOARD_URL (Vercel base, e.g. https://axiom-dashboard-sigma.vercel.app)
+    # is the canonical env across the backend; DASHBOARD_BASE_URL kept as a
+    # backwards-compat fallback in case a non-prod env was set with that name.
+    dashboard_base = (
+        os.getenv("DASHBOARD_URL", "").strip()
+        or os.getenv("DASHBOARD_BASE_URL", "").strip()
+    ).rstrip("/")
     if dashboard_base:
         rows.append([{
             "text": "📈 Dashboard'da tam analiz",
