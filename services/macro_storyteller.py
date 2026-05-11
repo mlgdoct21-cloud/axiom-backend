@@ -885,7 +885,9 @@ def _ppi_prompt(llm_input: dict, tier: Tier) -> str:
             "(5) Aklında tut + 'Senin için 1-cümle'."
         )
     else:  # advance
-        word_min, word_max = 340, 680
+        # PPI'da paired core (CORE_PPI) yok → payload doğal olarak yalın,
+        # min 280'e indirildi. _DECODER_WORD_BOUNDS ile validator senkron.
+        word_min, word_max = 280, 680
         sections = (
             "(1) Manşet vs beklenti + tarihsel bağlam (history'ye bakarak "
             "'son X ayın en yüksek/düşük MoM'u').\n"
@@ -1024,6 +1026,14 @@ _DECODER_DISPATCH = {
     "PPI": (_ppi_payload, _ppi_prompt),
 }
 
+# Per-decoder word count bounds. PPI'da paired core yok (FRED PPIFIS adapter
+# yok); payload doğal olarak daha yalın → Advance min 340 imkansız, 280'e
+# çekildi. CORE_PPI eklendiğinde 340'a geri çekilebilir.
+_DEFAULT_BOUNDS = {"premium": (150, 500), "advance": (340, 680)}
+_DECODER_WORD_BOUNDS = {
+    "PPI": {"premium": (150, 500), "advance": (280, 680)},
+}
+
 
 async def generate_story(
     event_id: str, tier: Tier, *, force: bool = False,
@@ -1065,7 +1075,7 @@ async def generate_story(
     llm_input, allowed, allowed_codes = payload_fn(payload)
     prompt = prompt_fn(llm_input, tier)
 
-    word_bounds = (150, 500) if tier == "premium" else (340, 680)
+    word_bounds = _DECODER_WORD_BOUNDS.get(et, _DEFAULT_BOUNDS)[tier]
 
     llm_out = await _call_gemini(prompt)
     if not llm_out or not (llm_out.get("story_md") or "").strip():
