@@ -308,10 +308,12 @@ def _validate_story(
         is_int = (d == d.to_integral_value())
         if is_int and abs(d) <= Decimal("10") and "%" not in m.group(0):
             continue
-        # Tarih günü ("29 Nisan 2026") — citation chip istemez
-        if is_int and "%" not in m.group(0):
-            tail = story_md[m.end(): m.end() + 12]
-            if _DAY_DATE_RE.match(tail):
+        # Tarih günü (1-31, "29 Nisan 2026" veya "26'sındaki") — citation
+        # chip istemez. Gün numarası proximate'inde (±25 char) TR ay adı
+        # veya yıl literali varsa exempt.
+        if is_int and "%" not in m.group(0) and Decimal("1") <= d <= Decimal("31"):
+            ctx = story_md[max(0, m.start() - 25): m.end() + 25]
+            if _DATE_MARKER_RE.search(ctx):
                 continue
         # Pencere içinde [...] var mı bak
         window = story_md[m.end(): m.end() + _CITATION_WINDOW]
