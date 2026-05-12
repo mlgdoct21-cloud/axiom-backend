@@ -1174,7 +1174,7 @@ def _cpi_prompt(llm_input: dict, tier: Tier) -> str:
             "(5) Aklında tut + 'Senin için 1-cümle'."
         )
     else:  # advance
-        word_min, word_max = 380, 750
+        word_min, word_max = 320, 750
         sections = (
             "(1) Manşet vs beklenti + tarihsel bağlam.\n"
             "(2) Çekirdek + süper çekirdek detayı.\n"
