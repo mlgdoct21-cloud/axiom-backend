@@ -690,13 +690,17 @@ async def _fanout_story(message: str, users: list, event_id: str, tier: str) -> 
 async def broadcast_story(
     event_id: str, tier: str, *, force: bool = False,
 ) -> dict:
-    """Fan out one tiered storyteller output to all users at or above `tier`.
+    """Fan out one tiered storyteller output to **only** users of that tier.
 
-    - tier='premium': recipients = users with tier IN ('premium', 'advance').
-      'advance' users still get the Premium copy if their own Advance story
-      doesn't exist yet (they upgraded the experience by paying; they should
-      hear about every release as fast or faster).
-    - tier='advance': recipients = users with tier='advance' only.
+    - tier='premium': recipients = users with tier='premium' (sadece).
+    - tier='advance': recipients = users with tier='advance' (sadece).
+
+    2026-05-12: Önceden Premium broadcast advance kullanıcılara da gidiyordu
+    ('üst tier de alır' mantığı). Sonuçta Advance kullanıcı çoğunlukla aynı
+    release için 2 mesaj alıyordu (Premium + Advance) — kullanıcı tarafında
+    sıkıcı. Yeni: her tier sadece kendi mesajını alır. Advance üretimi
+    başarısız olursa Advance kullanıcı o release için mesaj almaz; fallback
+    Faz 2'de eklenebilir.
 
     Idempotency: stamped via `macro_stories.broadcasted_<tier>_at`. A second
     call returns `{"skipped_already_broadcasted": True}` unless force=True.
@@ -733,17 +737,13 @@ async def broadcast_story(
         logger.error(f"story broadcast: user list query failed: {e}")
         return {"sent": 0, "failed": 0, "user_query_error": str(e)}
 
-    # Tier gating — see docstring above.
-    if tier == "premium":
-        recipients = [
-            u for u in all_users
-            if (getattr(u, "tier", "free") or "free").lower() in ("premium", "advance")
-        ]
-    else:  # advance
-        recipients = [
-            u for u in all_users
-            if (getattr(u, "tier", "free") or "free").lower() == "advance"
-        ]
+    # Tier gating — strict (her tier sadece kendi mesajını alır, çift mesaj
+    # gönderme). Detay docstring'de.
+    target_tier = tier.lower()
+    recipients = [
+        u for u in all_users
+        if (getattr(u, "tier", "free") or "free").lower() == target_tier
+    ]
 
     # Stamp BEFORE fanout — same logic as broadcast_release: intent matters
     # for idempotency, partial failures shouldn't trigger re-broadcast storms.

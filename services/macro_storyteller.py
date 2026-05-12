@@ -1002,6 +1002,8 @@ def _nfp_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
     llm_input = {
         "release_date": _format_tr_date(payload.get("released_at")),
+        "observation_period": _format_tr_month_year(payload.get("released_at")),
+        "published_at": _format_tr_date(payload.get("published_at")),
         "country": payload.get("country"),
         "headline_nfp": {
             # NOT: total_payrolls level (158545) hikayeye girmemeli — sayı çok
@@ -1048,6 +1050,14 @@ def _nfp_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
         if v is not None and v < 0
     ]
     allowed_inputs.extend(abs_changes)
+    # Tarih günleri allowed'a — "12 Mayıs'ta açıklandı" yazarken validator
+    # 12'yi unknown sanmasın. Idempotent (CPI'da Faz E ile zaten eklendi).
+    if payload.get("released_at"):
+        try: allowed_inputs.append(payload["released_at"].day)
+        except Exception: pass
+    if payload.get("published_at"):
+        try: allowed_inputs.append(payload["published_at"].day)
+        except Exception: pass
     allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
     allowed_codes = {s["code"] for s in llm_input["available_sources"]}
     return llm_input, allowed, allowed_codes
@@ -1147,6 +1157,15 @@ def _nfp_prompt(llm_input: dict, tier: Tier) -> str:
         "parantezli timestamp YAZMA. INPUT alan ADLARINI ('[release_date]', "
         "'[expected_change_k]' vb.) düz metin olarak ASLA paragrafa kopyalama "
         "— bunlar JSON anahtarlarıdır, sen sadece değerleri kullan.\n"
+        "TARİH SEMANTIĞI (kritik, 2026-05-12 update): veri AİT olduğu "
+        "döneme INPUT'taki `observation_period` alanında ('Nisan 2026'), "
+        "AÇIKLANMA tarihine `published_at` alanında ('12 Mayıs 2026') "
+        "yazıyor. Doğru: 'Nisan 2026 verileri 12 Mayıs'ta açıklandı'. "
+        "YANLIŞ: '1 Nisan 2026'da açıklandı' — ay başı, BLS o gün hiçbir "
+        "şey duyurmadı. published_at null ise sadece 'Nisan 2026 verileri "
+        "yayımlandı' yaz, günü uydurma. INPUT alan ADLARINI "
+        "('[observation_period]', '[release_date]', '[published_at]' vb.) "
+        "düz metin olarak ASLA paragrafa kopyalama.\n"
         "12. Çıktı sadece JSON; satır sonları için \\n.\n"
     )
 
@@ -1298,6 +1317,8 @@ def _pce_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
     llm_input = {
         "release_date": _format_tr_date(payload.get("released_at")),
+        "observation_period": _format_tr_month_year(payload.get("released_at")),
+        "published_at": _format_tr_date(payload.get("published_at")),
         "country": payload.get("country"),
         "headline_pce": {
             "actual_index": actual,
@@ -1330,6 +1351,14 @@ def _pce_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
         core_actual, core_prior, core_mom, core_expected_mom,
         avg_3m_mom, avg_6m_mom,
     ]
+    # Tarih günleri allowed'a — "12 Mayıs'ta açıklandı" yazarken validator
+    # 12'yi unknown sanmasın. Idempotent (CPI'da Faz E ile zaten eklendi).
+    if payload.get("released_at"):
+        try: allowed_inputs.append(payload["released_at"].day)
+        except Exception: pass
+    if payload.get("published_at"):
+        try: allowed_inputs.append(payload["published_at"].day)
+        except Exception: pass
     allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
     allowed_codes = {s["code"] for s in llm_input["available_sources"]}
     return llm_input, allowed, allowed_codes
@@ -1401,6 +1430,15 @@ def _pce_prompt(llm_input: dict, tier: Tier) -> str:
         "10. TARİH: INPUT `release_date` formatını ('1 Mart 2026') aynen "
         "kullan; ISO formatı YAZMA. INPUT alan ADLARINI ('[release_date]', "
         "'[expected_mom_pct]' vb.) düz metin olarak ASLA paragrafa kopyalama.\n"
+        "TARİH SEMANTIĞI (kritik, 2026-05-12 update): veri AİT olduğu "
+        "döneme INPUT'taki `observation_period` alanında ('Nisan 2026'), "
+        "AÇIKLANMA tarihine `published_at` alanında ('12 Mayıs 2026') "
+        "yazıyor. Doğru: 'Nisan 2026 verileri 12 Mayıs'ta açıklandı'. "
+        "YANLIŞ: '1 Nisan 2026'da açıklandı' — ay başı, BLS o gün hiçbir "
+        "şey duyurmadı. published_at null ise sadece 'Nisan 2026 verileri "
+        "yayımlandı' yaz, günü uydurma. INPUT alan ADLARINI "
+        "('[observation_period]', '[release_date]', '[published_at]' vb.) "
+        "düz metin olarak ASLA paragrafa kopyalama.\n"
         "11. Çıktı sadece JSON; satır sonları için \\n.\n"
     )
 
@@ -1448,6 +1486,8 @@ def _ppi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
     llm_input = {
         "release_date": _format_tr_date(payload.get("released_at")),
+        "observation_period": _format_tr_month_year(payload.get("released_at")),
+        "published_at": _format_tr_date(payload.get("published_at")),
         "country": payload.get("country"),
         "headline_ppi": {
             "actual_index": actual,
@@ -1480,6 +1520,14 @@ def _ppi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
         core_actual, core_prior, core_mom, core_expected_mom,
         avg_3m_mom, avg_6m_mom,
     ]
+    # Tarih günleri allowed'a — "12 Mayıs'ta açıklandı" yazarken validator
+    # 12'yi unknown sanmasın. Idempotent (CPI'da Faz E ile zaten eklendi).
+    if payload.get("released_at"):
+        try: allowed_inputs.append(payload["released_at"].day)
+        except Exception: pass
+    if payload.get("published_at"):
+        try: allowed_inputs.append(payload["published_at"].day)
+        except Exception: pass
     allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
     allowed_codes = {s["code"] for s in llm_input["available_sources"]}
     return llm_input, allowed, allowed_codes
@@ -1556,6 +1604,15 @@ def _ppi_prompt(llm_input: dict, tier: Tier) -> str:
         "10. TARİH: INPUT `release_date` formatını ('1 Mart 2026') aynen "
         "kullan; ISO formatı YAZMA. INPUT alan ADLARINI ('[release_date]', "
         "'[expected_mom_pct]' vb.) düz metin olarak ASLA paragrafa kopyalama.\n"
+        "TARİH SEMANTIĞI (kritik, 2026-05-12 update): veri AİT olduğu "
+        "döneme INPUT'taki `observation_period` alanında ('Nisan 2026'), "
+        "AÇIKLANMA tarihine `published_at` alanında ('12 Mayıs 2026') "
+        "yazıyor. Doğru: 'Nisan 2026 verileri 12 Mayıs'ta açıklandı'. "
+        "YANLIŞ: '1 Nisan 2026'da açıklandı' — ay başı, BLS o gün hiçbir "
+        "şey duyurmadı. published_at null ise sadece 'Nisan 2026 verileri "
+        "yayımlandı' yaz, günü uydurma. INPUT alan ADLARINI "
+        "('[observation_period]', '[release_date]', '[published_at]' vb.) "
+        "düz metin olarak ASLA paragrafa kopyalama.\n"
         "11. Çıktı sadece JSON; satır sonları için \\n.\n"
     )
 
@@ -1760,6 +1817,8 @@ def _fomc_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
     llm_input = {
         "release_date": _format_tr_date(payload.get("released_at")),
+        "observation_period": _format_tr_month_year(payload.get("released_at")),
+        "published_at": _format_tr_date(payload.get("published_at")),
         "country": payload.get("country") or "US",
         "title": payload.get("narrative_md") or "FOMC Statement",
         "source_url": payload.get("source_url"),
@@ -1831,6 +1890,14 @@ def _fomc_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
             v = transcript_block.get(k)
             if v is not None:
                 allowed_inputs.append(v)
+    # Tarih günleri allowed'a — "12 Mayıs'ta açıklandı" yazarken validator
+    # 12'yi unknown sanmasın. Idempotent (CPI'da Faz E ile zaten eklendi).
+    if payload.get("released_at"):
+        try: allowed_inputs.append(payload["released_at"].day)
+        except Exception: pass
+    if payload.get("published_at"):
+        try: allowed_inputs.append(payload["published_at"].day)
+        except Exception: pass
     allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
     allowed_codes = {s["code"] for s in llm_input["available_sources"]}
     return llm_input, allowed, allowed_codes
@@ -2022,6 +2089,15 @@ def _fomc_prompt(llm_input: dict, tier: Tier) -> str:
         "bp_change=-25 ise '25 baz puan indirim' — '26' veya '10' YAZMA. "
         "Eğer kafan karışırsa: '25 baz puan' ifadesinde geçen sayı SADECE "
         "abs(bp_change) olabilir.\n"
+        "TARİH SEMANTIĞI (kritik, 2026-05-12 update): veri AİT olduğu "
+        "döneme INPUT'taki `observation_period` alanında ('Nisan 2026'), "
+        "AÇIKLANMA tarihine `published_at` alanında ('12 Mayıs 2026') "
+        "yazıyor. Doğru: 'Nisan 2026 verileri 12 Mayıs'ta açıklandı'. "
+        "YANLIŞ: '1 Nisan 2026'da açıklandı' — ay başı, BLS o gün hiçbir "
+        "şey duyurmadı. published_at null ise sadece 'Nisan 2026 verileri "
+        "yayımlandı' yaz, günü uydurma. INPUT alan ADLARINI "
+        "('[observation_period]', '[release_date]', '[published_at]' vb.) "
+        "düz metin olarak ASLA paragrafa kopyalama.\n"
         "14. Çıktı sadece JSON; satır sonları için \\n.\n"
     )
 
@@ -2052,6 +2128,8 @@ def _tufe_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
     llm_input = {
         "release_date": _format_tr_date(payload.get("released_at")),
+        "observation_period": _format_tr_month_year(payload.get("released_at")),
+        "published_at": _format_tr_date(payload.get("published_at")),
         "country": "TR",
         "headline_tufe": {
             "actual_index": actual,
@@ -2077,6 +2155,14 @@ def _tufe_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
     allowed_inputs = [actual, prior, mom, core_actual, core_prior, core_mom,
                       avg_3m_mom, avg_6m_mom]
+    # Tarih günleri allowed'a — "12 Mayıs'ta açıklandı" yazarken validator
+    # 12'yi unknown sanmasın. Idempotent (CPI'da Faz E ile zaten eklendi).
+    if payload.get("released_at"):
+        try: allowed_inputs.append(payload["released_at"].day)
+        except Exception: pass
+    if payload.get("published_at"):
+        try: allowed_inputs.append(payload["published_at"].day)
+        except Exception: pass
     allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
     allowed_codes = {s["code"] for s in llm_input["available_sources"]}
     return llm_input, allowed, allowed_codes
@@ -2140,6 +2226,15 @@ def _tufe_prompt(llm_input: dict, tier: Tier) -> str:
         "ikisini de tanır, tutarlılık için nokta tercih edilir).\n"
         "9. INPUT alan ADLARINI ('[release_date]', '[mom_pct]' vb.) düz "
         "metin olarak ASLA paragrafa kopyalama — sadece değerleri kullan.\n"
+        "TARİH SEMANTIĞI (kritik, 2026-05-12 update): veri AİT olduğu "
+        "döneme INPUT'taki `observation_period` alanında ('Nisan 2026'), "
+        "AÇIKLANMA tarihine `published_at` alanında ('12 Mayıs 2026') "
+        "yazıyor. Doğru: 'Nisan 2026 verileri 12 Mayıs'ta açıklandı'. "
+        "YANLIŞ: '1 Nisan 2026'da açıklandı' — ay başı, BLS o gün hiçbir "
+        "şey duyurmadı. published_at null ise sadece 'Nisan 2026 verileri "
+        "yayımlandı' yaz, günü uydurma. INPUT alan ADLARINI "
+        "('[observation_period]', '[release_date]', '[published_at]' vb.) "
+        "düz metin olarak ASLA paragrafa kopyalama.\n"
         "10. Çıktı sadece JSON; satır sonları için \\n.\n"
     )
 
@@ -2176,6 +2271,8 @@ def _ppk_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
     llm_input = {
         "release_date": _format_tr_date(payload.get("released_at")),
+        "observation_period": _format_tr_month_year(payload.get("released_at")),
+        "published_at": _format_tr_date(payload.get("published_at")),
         "country": "TR",
         "policy_rate": {
             "current_pct": actual,
@@ -2201,6 +2298,14 @@ def _ppk_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
             if d["bp_change"] < 0:
                 allowed_inputs.append(abs(d["bp_change"]))
 
+    # Tarih günleri allowed'a — "12 Mayıs'ta açıklandı" yazarken validator
+    # 12'yi unknown sanmasın. Idempotent (CPI'da Faz E ile zaten eklendi).
+    if payload.get("released_at"):
+        try: allowed_inputs.append(payload["released_at"].day)
+        except Exception: pass
+    if payload.get("published_at"):
+        try: allowed_inputs.append(payload["published_at"].day)
+        except Exception: pass
     allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
     allowed_codes = {s["code"] for s in llm_input["available_sources"]}
     return llm_input, allowed, allowed_codes
@@ -2263,6 +2368,15 @@ def _ppk_prompt(llm_input: dict, tier: Tier) -> str:
         "bp_change (negatifse abs). Tarih günü ile KARIŞTIRMA.\n"
         "10. INPUT alan ADLARINI ('[release_date]', '[bp_change]' vb.) düz "
         "metin olarak ASLA paragrafa kopyalama.\n"
+        "TARİH SEMANTIĞI (kritik, 2026-05-12 update): veri AİT olduğu "
+        "döneme INPUT'taki `observation_period` alanında ('Nisan 2026'), "
+        "AÇIKLANMA tarihine `published_at` alanında ('12 Mayıs 2026') "
+        "yazıyor. Doğru: 'Nisan 2026 verileri 12 Mayıs'ta açıklandı'. "
+        "YANLIŞ: '1 Nisan 2026'da açıklandı' — ay başı, BLS o gün hiçbir "
+        "şey duyurmadı. published_at null ise sadece 'Nisan 2026 verileri "
+        "yayımlandı' yaz, günü uydurma. INPUT alan ADLARINI "
+        "('[observation_period]', '[release_date]', '[published_at]' vb.) "
+        "düz metin olarak ASLA paragrafa kopyalama.\n"
         "11. Çıktı sadece JSON; satır sonları için \\n.\n"
     )
 
@@ -2283,6 +2397,8 @@ def _unemp_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
     llm_input = {
         "release_date": _format_tr_date(payload.get("released_at")),
+        "observation_period": _format_tr_month_year(payload.get("released_at")),
+        "published_at": _format_tr_date(payload.get("published_at")),
         "country": "TR",
         "unemployment": {
             "actual_pct": actual,
@@ -2304,6 +2420,14 @@ def _unemp_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
     allowed_inputs = [actual, prior, delta_pp, avg_3m_rate, avg_6m_rate]
     if delta_pp is not None and delta_pp < 0:
         allowed_inputs.append(abs(delta_pp))
+    # Tarih günleri allowed'a — "12 Mayıs'ta açıklandı" yazarken validator
+    # 12'yi unknown sanmasın. Idempotent (CPI'da Faz E ile zaten eklendi).
+    if payload.get("released_at"):
+        try: allowed_inputs.append(payload["released_at"].day)
+        except Exception: pass
+    if payload.get("published_at"):
+        try: allowed_inputs.append(payload["published_at"].day)
+        except Exception: pass
     allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
     allowed_codes = {s["code"] for s in llm_input["available_sources"]}
     return llm_input, allowed, allowed_codes
@@ -2361,6 +2485,15 @@ def _unemp_prompt(llm_input: dict, tier: Tier) -> str:
         "kaldı/değişmedi' de, '0 puan' YAZMA.\n"
         "9. INPUT alan ADLARINI ('[release_date]', '[delta_pp]' vb.) düz "
         "metin olarak ASLA paragrafa kopyalama.\n"
+        "TARİH SEMANTIĞI (kritik, 2026-05-12 update): veri AİT olduğu "
+        "döneme INPUT'taki `observation_period` alanında ('Nisan 2026'), "
+        "AÇIKLANMA tarihine `published_at` alanında ('12 Mayıs 2026') "
+        "yazıyor. Doğru: 'Nisan 2026 verileri 12 Mayıs'ta açıklandı'. "
+        "YANLIŞ: '1 Nisan 2026'da açıklandı' — ay başı, BLS o gün hiçbir "
+        "şey duyurmadı. published_at null ise sadece 'Nisan 2026 verileri "
+        "yayımlandı' yaz, günü uydurma. INPUT alan ADLARINI "
+        "('[observation_period]', '[release_date]', '[published_at]' vb.) "
+        "düz metin olarak ASLA paragrafa kopyalama.\n"
         "10. Çıktı sadece JSON; satır sonları için \\n.\n"
     )
 

@@ -24,6 +24,7 @@ from sqlalchemy import text
 from core.database import engine
 from core.logger import get_logger
 from services.macro_calendar import effective_interval
+from services.macro_pre_announcement import fire_due_pre_announcements_safe
 from services.macro_sources.fed_rss import fetch_fed_rss
 from services.macro_sources.fmp_economic import fetch_fmp_recent_releases
 from services.macro_sources.fred_api import SERIES as FRED_SERIES, fetch_fred_multi
@@ -477,6 +478,15 @@ async def probe_once(*, force: bool = False) -> dict:
         _log_row(row)
         _mark("fmp_economic", now)
         fired.append(row)
+
+    # T-5dk pre-announcement dispatcher — fire-and-forget, probe loop'u
+    # bloklamaz, hata raise etmez. Idempotency macro_pre_announcements
+    # tablosunda; her tick check eder, sadece window'a uyan & henüz
+    # announced-olmamış event'ler için fire.
+    try:
+        await fire_due_pre_announcements_safe()
+    except Exception as e:
+        logger.error(f"pre-announce dispatcher in probe_once: {e}")
 
     return {"fired": [r["source"] for r in fired], "rows": fired}
 
