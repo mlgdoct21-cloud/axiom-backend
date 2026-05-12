@@ -25,12 +25,14 @@ from core.database import engine
 from core.logger import get_logger
 from services.macro_calendar import effective_interval
 from services.macro_sources.fed_rss import fetch_fed_rss
+from services.macro_sources.fmp_economic import fetch_fmp_recent_releases
 from services.macro_sources.fred_api import SERIES as FRED_SERIES, fetch_fred_multi
 from services.macro_sources.kalshi_fed import fetch_kalshi_fed
 from services.macro_sources.fred_api import fetch_fred_series
 from services.macro_sources.release_detect import (
     backfill_fred_series,
     record_fed_rss_events,
+    record_fmp_events,
     record_fred_observation,
     record_kalshi_snapshot,
 )
@@ -78,6 +80,11 @@ SOURCE_INTERVAL: dict[str, timedelta] = {
     "fred_fed_funds_upper": timedelta(minutes=60),
     "fred_fed_funds_lower": timedelta(minutes=60),
     "kalshi_fed": timedelta(minutes=60),
+    # FMP economic-calendar (2026-05-12) — birincil release-detection kaynağı,
+    # FRED gecikmesinin önüne geçer. T±30dk hot window'da effective_interval
+    # daha agresif olur. 5dk default normal-zaman cadence; release anında
+    # macro_calendar hot detection 30sn'ye kadar düşürür.
+    "fmp_economic": timedelta(minutes=5),
     # Day 28 part 3 — Türkiye TCMB EVDS, hepsi aylık → 60dk yeterli
     # Day 28 part 4 — TCMB EVDS interval 60dk → 15dk (kullanıcı anlık yayın
     # istedi; 6 series × 4/saat × 24 = 576 req/gün, EVDS quota'sının çok altında).
@@ -157,6 +164,7 @@ _STATES: dict[str, _SourceState] = {
     "fred_fed_funds_upper": _SourceState(name="fred_fed_funds_upper"),
     "fred_fed_funds_lower": _SourceState(name="fred_fed_funds_lower"),
     "kalshi_fed": _SourceState(name="kalshi_fed"),
+    "fmp_economic": _SourceState(name="fmp_economic"),
     # Day 28 part 3 — TCMB EVDS sources (3 aktif; kalan 3 kod EVDS3'te değişti)
     "tcmb_tufe":          _SourceState(name="tcmb_tufe"),
     "tcmb_core_b":        _SourceState(name="tcmb_core_b"),
@@ -318,6 +326,38 @@ async def _probe_tcmb_all(due_sources: tuple[str, ...] = _TCMB_SOURCES) -> list[
     return rows
 
 
+async def _probe_fmp_economic() -> dict:
+    """One FMP economic-calendar fetch — past 7d + next 1d window.
+
+    Persists every released event (where `actual` is non-null) matching the
+    adapter's _EVENT_TYPE_MAP into macro_releases. New rows trigger narrative;
+    repeats are 'unchanged' no-ops.
+    """
+    t0 = time.monotonic()
+    result = await fetch_fmp_recent_releases()
+    latency_ms = int((time.monotonic() - t0) * 1000)
+
+    inserted = 0
+    if result.success and result.events:
+        try:
+            inserted = await record_fmp_events(result.events)
+            if inserted:
+                logger.info(f"fmp_economic: {inserted} new release(s) recorded")
+        except Exception as e:
+            logger.error(f"fmp_economic release persist failed: {e}")
+
+    return {
+        "source": "fmp_economic",
+        "success": result.success,
+        "latency_ms": latency_ms,
+        "http_status": result.http_status,
+        "not_modified": False,
+        "payload_bytes": result.payload_bytes or None,
+        "events_extracted": len(result.events) if result.success else None,
+        "error_msg": result.error,
+    }
+
+
 async def _probe_kalshi() -> dict:
     """One Kalshi KXFED snapshot — also writes the distribution to macro_market_pricing."""
     t0 = time.monotonic()
@@ -408,6 +448,13 @@ async def probe_once(*, force: bool = False) -> dict:
         await _record(row)
         _log_row(row)
         _mark("kalshi_fed", now)
+        fired.append(row)
+
+    if force or _is_due("fmp_economic", now):
+        row = await _probe_fmp_economic()
+        await _record(row)
+        _log_row(row)
+        _mark("fmp_economic", now)
         fired.append(row)
 
     return {"fired": [r["source"] for r in fired], "rows": fired}

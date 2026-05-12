@@ -26,9 +26,19 @@ from sqlalchemy import text
 from core.database import engine
 from core.logger import get_logger
 from services.macro_sources.fed_rss import ReleaseEvent
+from services.macro_sources.fmp_economic import FMPEvent
 from services.macro_sources.fred_api import SERIES as FRED_SERIES
 from services.macro_sources.kalshi_fed import KalshiSnapshot
 from services.macro_sources.tcmb_evds import SERIES as TCMB_SERIES
+
+# FRED series_id mapping for source_url generation when an FMP-originated row
+# is written under the FRED namespace (so when FRED catches up later, the
+# value matches and the upsert returns 'unchanged' — no double broadcast).
+_EVENT_TYPE_TO_FRED_SERIES = {
+    "CPI": "CPIAUCSL",
+    "CORE_CPI": "CPILFESL",
+    "UNRATE": "UNRATE",
+}
 
 logger = get_logger("macro.release_detect")
 
@@ -340,6 +350,77 @@ async def record_tcmb_observation(
         trigger_narrative=trigger_narrative,
     )
     return outcome == "inserted"
+
+
+async def record_fmp_events(events: list[FMPEvent]) -> int:
+    """FMP economic-calendar release rows → macro_releases (idempotent).
+
+    Strategy: write under the FRED namespace (`fred:<EVENT_TYPE>:<YYYY-MM-DD>`
+    event_id, source='fred') so when the FRED probe catches up hours later
+    with the same value, `_upsert_release_with_revision` returns 'unchanged'
+    — no double broadcast, no spurious revision audit.
+
+    FMP's value semantic must match FRED's for this to work (e.g. FMP
+    "CPI s.a" = FRED CPIAUCSL = SA level). The adapter's _EVENT_TYPE_MAP
+    only enables event types where this holds.
+
+    Returns count of brand-new inserts (broadcasts that fired this batch).
+    """
+    inserted = 0
+    for ev in events:
+        date_str = ev.released_at.date().isoformat()
+        event_id = f"fred:{ev.event_type}:{date_str}"
+        series_id = _EVENT_TYPE_TO_FRED_SERIES.get(ev.event_type, "")
+        source_url = (
+            f"https://fred.stlouisfed.org/series/{series_id}"
+            if series_id
+            else "https://financialmodelingprep.com/economic-calendar"
+        )
+        outcome = await _upsert_release_with_revision(
+            event_id=event_id,
+            event_type=ev.event_type,
+            country=ev.country,
+            released_at=ev.released_at,
+            prior=ev.previous,
+            actual=ev.actual,
+            source="fred",
+            source_url=source_url,
+            trigger_narrative=True,
+        )
+        if outcome == "inserted":
+            inserted += 1
+            # Backfill consensus into macro_release_expected so storyteller
+            # can compute surprise without an admin POST (Faz D regression).
+            if ev.estimate is not None:
+                try:
+                    await _record_consensus_from_fmp(event_id, ev)
+                except Exception as e:
+                    logger.warning(f"consensus persist failed for {event_id}: {e}")
+            logger.info(
+                f"fmp_economic new release: {event_id} actual={ev.actual} "
+                f"est={ev.estimate} prior={ev.previous} src='{ev.raw_event_name}'"
+            )
+    return inserted
+
+
+async def _record_consensus_from_fmp(event_id: str, ev: FMPEvent) -> None:
+    """Write FMP's `estimate` as the consensus expected value.
+
+    For level series (CPI/CORE_CPI/UNRATE) the storyteller surprise math
+    works off MoM% which we compute downstream — but the admin endpoint
+    has historically taken `expected_mom_pct`. Until we add an explicit
+    level-consensus column, FMP's estimate is stored on
+    macro_releases as `expected_value` (already exists alongside
+    expected_mom_pct).
+    """
+    sql = text("""
+        UPDATE macro_releases
+        SET expected_value = :expected_value
+        WHERE event_id = :event_id
+          AND (expected_value IS NULL OR expected_value <> :expected_value)
+    """)
+    async with engine.begin() as conn:
+        await conn.execute(sql, {"event_id": event_id, "expected_value": ev.estimate})
 
 
 async def backfill_fred_series(
