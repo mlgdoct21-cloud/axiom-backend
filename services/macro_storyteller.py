@@ -899,6 +899,19 @@ def _cpi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
     for comp in components:
         if comp["mom_pct"] is not None:
             allowed_inputs.append(comp["mom_pct"])
+    # Tarih günleri allowed'a ekle — "12 Mayıs'ta açıklandı" yazarken validator
+    # 12'yi unknown_number sanmasın. L2 date-day exemption sadece citation kontrolü
+    # için, L1 unknown_numbers için ayrıca whitelist gerekiyor.
+    if payload.get("released_at"):
+        try:
+            allowed_inputs.append(payload["released_at"].day)
+        except Exception:
+            pass
+    if payload.get("published_at"):
+        try:
+            allowed_inputs.append(payload["published_at"].day)
+        except Exception:
+            pass
     allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
     allowed_codes = {s["code"] for s in llm_input["available_sources"]}
     return llm_input, allowed, allowed_codes
