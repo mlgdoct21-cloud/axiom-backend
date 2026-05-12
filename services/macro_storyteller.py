@@ -829,6 +829,13 @@ def _cpi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
         mom_c = _pct(a, p)
         if mom_c is None:
             continue
+        # Sanity filter (2026-05-12): aylık CPI alt-kalem hareketleri tipik
+        # ±5% aralığında; ±15% üstü neredeyse hep series-scale değişimi
+        # (örn. FRED rebase, eski rows yeni series'le karışınca prior_value
+        # eski scale'de kalır). Bu durumda kalemi storyteller'a verme —
+        # yanıltıcı rakam yazmak rakipler kadar generic kalmaktan kötü.
+        if abs(mom_c) > 15.0:
+            continue
         components.append({
             "label": label,
             "mom_pct": mom_c,
