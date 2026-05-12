@@ -35,8 +35,9 @@ from services.macro_sources.tcmb_evds import SERIES as TCMB_SERIES
 # is written under the FRED namespace (so when FRED catches up later, the
 # value matches and the upsert returns 'unchanged' — no double broadcast).
 _EVENT_TYPE_TO_FRED_SERIES = {
-    "CPI": "CPIAUCSL",
-    "CORE_CPI": "CPILFESL",
+    # 2026-05-12 NSA switch — see fred_api.py SERIES dict for rationale.
+    "CPI": "CPIAUCNS",
+    "CORE_CPI": "CUUR0000SA0L1E",
     "UNRATE": "UNRATE",
 }
 

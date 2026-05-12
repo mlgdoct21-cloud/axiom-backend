@@ -235,6 +235,27 @@ async def broadcast_revision(event_id: str, *, force: bool = False) -> dict:
         )
         return {"sent": 0, "failed": 0, "below_threshold": True}
 
+    # Stale-period guard (2026-05-12): backfill operations (e.g. SA→NSA series
+    # switch, retroactive data fix) trigger revision detection on historical
+    # observations. Sending Advance users 14 messages for "revision" of January
+    # data they never saw is noise. Skip broadcast if observation period is
+    # older than 35 days — keeps real intra-cycle revisions (BLS often revises
+    # last 2-3 months' NFP within first 5-10 days of next release) firing.
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    released_at = ctx.get("released_at")
+    if released_at is not None:
+        try:
+            age = _dt.now(_tz.utc) - released_at
+            if age > _td(days=35):
+                await _stamp_revision_broadcast(ctx["id"])
+                logger.info(
+                    f"revision stale-period skip: {event_id} "
+                    f"released={released_at.isoformat()[:10]} age={age.days}d > 35d"
+                )
+                return {"sent": 0, "failed": 0, "stale_period": True}
+        except Exception as e:
+            logger.warning(f"revision stale check failed for {event_id}: {e}")
+
     period_label = _format_period(ctx.get("released_at"))
     message = _format_revision_message(
         event_type, period_label,

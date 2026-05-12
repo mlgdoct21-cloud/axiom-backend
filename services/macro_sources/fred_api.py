@@ -27,8 +27,13 @@ FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 
 # Canonical series. Add more without changing call sites.
 SERIES = {
-    "fred_cpi": "CPIAUCSL",                   # CPI-U All Items SA, monthly index
-    "fred_core_cpi": "CPILFESL",              # CPI-U Less Food & Energy (Core), SA, monthly index
+    # 2026-05-12: CPI / Core CPI switched from SA (CPIAUCSL / CPILFESL) to
+    # NSA (CPIAUCNS / CUUR0000SA0L1E). TR medya (Bloomberg HT, Investing.com)
+    # NSA "manşet" rakamı kullanır; kullanıcı kıyaslarken SA değerlerimiz
+    # farklı çıkıyordu. FMP economic-calendar de "CPI (Apr)" → NSA level
+    # gönderiyor. Sistem genel NSA olarak hizalandı.
+    "fred_cpi": "CPIAUCNS",                   # CPI-U All Items NSA, monthly index
+    "fred_core_cpi": "CUUR0000SA0L1E",        # CPI-U Less Food & Energy (Core), NSA, monthly index
     "fred_nfp": "PAYEMS",                     # Total Nonfarm Payrolls SA, thousands
     "fred_unrate": "UNRATE",                  # Civilian Unemployment Rate SA, % (4.2 = 4.2%)
     # NFP supersector breakdown (BLS Tablo B-1 eşdeğeri, FRED üzerinden) — Faz 3 sektörel kırılım

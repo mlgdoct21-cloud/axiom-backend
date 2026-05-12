@@ -70,13 +70,16 @@ class SourceCitation:
 
 
 _SOURCES: dict[str, SourceCitation] = {
-    "FRED:CPIAUCSL": SourceCitation(
-        "FRED:CPIAUCSL", "FRED Headline CPI",
-        "https://fred.stlouisfed.org/series/CPIAUCSL",
+    # 2026-05-12: NSA switch (Investing.com / TR media parity).
+    # NSA = "headline" figure published by BLS; matches user expectation when
+    # they kıyaslıyor. SA series (CPIAUCSL / CPILFESL) Fed-specific tooling.
+    "FRED:CPIAUCNS": SourceCitation(
+        "FRED:CPIAUCNS", "FRED Headline CPI (NSA)",
+        "https://fred.stlouisfed.org/series/CPIAUCNS",
     ),
-    "FRED:CPILFESL": SourceCitation(
-        "FRED:CPILFESL", "FRED Core CPI",
-        "https://fred.stlouisfed.org/series/CPILFESL",
+    "FRED:CUUR0000SA0L1E": SourceCitation(
+        "FRED:CUUR0000SA0L1E", "FRED Core CPI (NSA)",
+        "https://fred.stlouisfed.org/series/CUUR0000SA0L1E",
     ),
     "FRED:PAYEMS": SourceCitation(
         "FRED:PAYEMS", "FRED Nonfarm Payrolls",
@@ -713,9 +716,9 @@ def _cpi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
     weights = _CPI_WEIGHTS_PCT
 
-    sources_used = ["FRED:CPIAUCSL", "BLS"]
+    sources_used = ["FRED:CPIAUCNS", "BLS"]
     if paired:
-        sources_used.append("FRED:CPILFESL")
+        sources_used.append("FRED:CUUR0000SA0L1E")
 
     llm_input = {
         # Observation period (data IS FOR Apr) vs publication date (data WAS
@@ -731,14 +734,14 @@ def _cpi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
             "expected_mom_pct": expected_mom,
             "expected_yoy_pct": expected_yoy,
             "surprise_mom_pp": surprise_mom_pp,
-            "source_code": "FRED:CPIAUCSL",
+            "source_code": "FRED:CPIAUCNS",
         },
         "core_cpi": {
             "actual_index": core_actual,
             "prior_index": core_prior,
             "mom_pct": core_mom,
             "expected_mom_pct": core_expected_mom,
-            "source_code": "FRED:CPILFESL",
+            "source_code": "FRED:CUUR0000SA0L1E",
         } if paired else None,
         "weights_pct": weights,
         "trend": {
@@ -1040,7 +1043,7 @@ def _cpi_prompt(llm_input: dict, tier: Tier) -> str:
         "aritmetik yapma — hesaplanmışı INPUT'ta hazır (surprise_mom_pp, "
         "mom_avg_3m_pct, weights_pct vb).\n"
         "2. HER sayının 60 karakter içinde [KAYNAK_KODU] etiketi olmalı. "
-        f"Geçerli kodlar: {available_codes}. Örnek: 'aylık %0.3 [FRED:CPIAUCSL]' "
+        f"Geçerli kodlar: {available_codes}. Örnek: 'aylık %0.6 [FRED:CPIAUCNS]' "
         "veya 'barınma %35 [BLS]'. Etiketsiz sayı = retry.\n"
         "3. Politik yorum YASAK (Cumhuriyetçi/Demokrat/AKP/CHP/seçim/parti).\n"
         "4. Mutlaklık YASAK ('kesin', 'garanti', 'asla', '100% kesin').\n"

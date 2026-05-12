@@ -44,14 +44,20 @@ _HTTP_TIMEOUT = httpx.Timeout(15.0, connect=10.0)
 
 # FMP "event" string → our internal event_type. Matched case-insensitively
 # against the start of the event field (after stripping "(Mon)" suffix).
-# Only level series that map 1:1 to FRED semantics are enabled here; MoM/YoY
-# variants are skipped to avoid double-counting.
+#
+# 2026-05-12: switched from "CPI s.a" (SA, FRED CPIAUCSL semantic) to "CPI"
+# (NSA, FRED CPIAUCNS semantic). Reason: TR media (Bloomberg HT, Investing.com)
+# uses NSA "manşet" rakamı (% 0.6 Nisan); user kıyaslarken farklı seri
+# yüzünden kafa karışıyordu. NSA matches headline rakamı 1:1. Fed SA tracking
+# yapıyor ama hikaye anlatımı için NSA primary, SA isteğe bağlı ek.
 #
 # Period token in parens is parsed separately into released_at (observation
 # period start, matching FRED convention — e.g. "(Apr)" → 2026-04-01).
 _EVENT_TYPE_MAP = (
     # (regex, event_type, country)
-    (re.compile(r"^CPI s\.a\s*\(", re.I),              "CPI",       "US"),
+    # NSA level — Investing.com'un "manşet CPI" ile aynı. "CPI s.a" (SA)
+    # regex'i match etmiyor çünkü "s.a" başında değil — "CPI (" ile başlar.
+    (re.compile(r"^CPI\s*\(", re.I),                    "CPI",       "US"),
     (re.compile(r"^Core CPI\s*\(", re.I),               "CORE_CPI",  "US"),
     (re.compile(r"^Unemployment Rate\s*\(", re.I),       "UNRATE",    "US"),
 )
