@@ -667,10 +667,16 @@ async def get_fear_indices() -> Dict[str, Any]:
 # ════════════════════════════════════════════════════════════════════════════
 
 async def get_full_dashboard_summary() -> Dict[str, Any]:
-    """6 paneli paralel çek; bir panel başarısız olsa diğerleri döner."""
+    """6 paneli paralel çek; bir panel başarısız olsa diğerleri döner.
+
+    NOT (2026-05-12): get_overnight_markets() devre dışı — FMP Starter plan
+    Asya/Avrupa endekslerini 402 reddediyor, her poll cycle'da boş döndürüp
+    bandwidth/log gürültüsü yaratıyordu. Veri üst ticker tape'e taşındı
+    (dashboard /api/ticker, Yahoo Finance fallback ile). FMP Ultimate'a
+    çıkılırsa get_overnight_markets() çağrısı geri açılabilir.
+    """
     try:
         results = await asyncio.gather(
-            get_overnight_markets(),
             get_etf_flows(),
             get_economic_calendar(),
             get_premarket_movers(),
@@ -681,7 +687,7 @@ async def get_full_dashboard_summary() -> Dict[str, Any]:
         )
     except Exception as e:
         logger.error(f"Dashboard summary fatal error: {e}")
-        results = [None] * 7
+        results = [None] * 6
 
     def _safe(result: Any, default: Any) -> Any:
         if isinstance(result, Exception) or result is None:
@@ -689,12 +695,12 @@ async def get_full_dashboard_summary() -> Dict[str, Any]:
         return result
 
     return {
-        "overnight_markets": _safe(results[0], {"asia": [], "europe": [], "us_futures": []}),
-        "etf_flows":         _safe(results[1], {"btc": {}, "eth": {}}),
-        "economic_calendar": _safe(results[2], []),
-        "premarket_movers":  _safe(results[3], {"gainers": [], "losers": [], "actives": []}),
-        "earnings_today":    _safe(results[4], []),
-        "sector_performance":_safe(results[5], []),
-        "fear_indices":      _safe(results[6], {"vix": None, "crypto_fng": None}),
+        "overnight_markets": {"asia": [], "europe": [], "us_futures": []},
+        "etf_flows":         _safe(results[0], {"btc": {}, "eth": {}}),
+        "economic_calendar": _safe(results[1], []),
+        "premarket_movers":  _safe(results[2], {"gainers": [], "losers": [], "actives": []}),
+        "earnings_today":    _safe(results[3], []),
+        "sector_performance":_safe(results[4], []),
+        "fear_indices":      _safe(results[5], {"vix": None, "crypto_fng": None}),
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
