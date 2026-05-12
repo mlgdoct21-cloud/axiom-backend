@@ -136,6 +136,7 @@ async def _upsert_release_with_revision(
     source: str,
     source_url: str,
     trigger_narrative: bool,
+    published_at: Optional[datetime] = None,
 ) -> str:
     """Idempotent upsert for a macro_releases row with revision detection.
 
@@ -165,10 +166,12 @@ async def _upsert_release_with_revision(
                     text("""
                         INSERT INTO macro_releases
                         (event_id, event_type, country, released_at,
-                         prior_value, actual_value, source, source_url)
+                         prior_value, actual_value, source, source_url,
+                         published_at)
                         VALUES
                         (:event_id, :event_type, :country, :released_at,
-                         :prior_value, :actual_value, :source, :source_url)
+                         :prior_value, :actual_value, :source, :source_url,
+                         :published_at)
                         ON CONFLICT (event_id) DO NOTHING
                     """),
                     {
@@ -180,10 +183,24 @@ async def _upsert_release_with_revision(
                         "actual_value": actual,
                         "source": source,
                         "source_url": source_url,
+                        "published_at": published_at,
                     },
                 )
                 outcome = "inserted"
             else:
+                # Opportunistic published_at backfill — historic FRED rows
+                # don't have it; FMP later writes fill the gap. Independent
+                # of revision detection below.
+                if published_at is not None:
+                    await conn.execute(
+                        text("""
+                            UPDATE macro_releases
+                            SET published_at = :published_at
+                            WHERE event_id = :event_id
+                              AND published_at IS NULL
+                        """),
+                        {"event_id": event_id, "published_at": published_at},
+                    )
                 old_actual = old_row["actual_value"]
                 # Decimal equality. Treat None==None as same; None vs new
                 # as a "no-op" since the original could have arrived as
@@ -386,6 +403,7 @@ async def record_fmp_events(events: list[FMPEvent]) -> int:
             source="fred",
             source_url=source_url,
             trigger_narrative=True,
+            published_at=ev.published_at,
         )
         if outcome == "inserted":
             inserted += 1

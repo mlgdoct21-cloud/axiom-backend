@@ -225,6 +225,21 @@ def _format_tr_date(dt) -> Optional[str]:
         return None
 
 
+def _format_tr_month_year(dt) -> Optional[str]:
+    """ISO datetime → 'Nisan 2026' — observation period için (gün yok).
+
+    Aylık veriler için "1 Nisan 2026'da açıklandı" yanıltıcı — veri Nisan
+    ayına AİT, 12 Mayıs'ta yayımlandı. Bu format observation period'u doğru
+    yansıtır: "Nisan 2026 verileri ... yayımlandı".
+    """
+    if dt is None:
+        return None
+    try:
+        return f"{_TR_MONTHS[dt.month - 1]} {dt.year}"
+    except Exception:
+        return None
+
+
 # ---------- Validator ----------
 
 # Sayı sonrası 60 char penceresinde [SRC] etiketi aramak için
@@ -404,7 +419,7 @@ async def _load_event_payload(event_id: str) -> Optional[dict]:
     sql = text("""
         SELECT event_id, event_type, country, source, released_at,
                actual_value, prior_value, narrative_md, source_url,
-               expected_mom_pct, expected_yoy_pct
+               expected_mom_pct, expected_yoy_pct, published_at
         FROM macro_releases WHERE event_id = :eid
     """)
     async with engine.begin() as conn:
@@ -703,7 +718,11 @@ def _cpi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
         sources_used.append("FRED:CPILFESL")
 
     llm_input = {
-        "release_date": _format_tr_date(payload.get("released_at")),
+        # Observation period (data IS FOR Apr) vs publication date (data WAS
+        # ANNOUNCED on May 12). Storyteller used to say "1 Nisan'da açıklanan"
+        # — wrong. Now: "Nisan 2026 verileri 12 Mayıs'ta açıklandı" pattern.
+        "observation_period": _format_tr_month_year(payload.get("released_at")),
+        "published_at": _format_tr_date(payload.get("published_at")),
         "country": payload.get("country"),
         "headline_cpi": {
             "actual_index": actual,
@@ -1044,10 +1063,15 @@ def _cpi_prompt(llm_input: dict, tier: Tier) -> str:
         "abartma.\n"
         "10. SIFIR DELTA: mom_pct veya surprise_mom_pp tam 0 ise 'değişmedi' "
         "diye anlat, rakamı verme.\n"
-        "11. TARİH: paragrafta INPUT'taki `release_date` field'ında yazılan "
-        "formatı kullan ('1 Mart 2026'). ISO formatı veya köşeli parantezli "
-        "timestamp YAZMA. INPUT alan ADLARINI ('[release_date]', "
-        "'[expected_yoy_pct]' vb.) düz metin olarak ASLA paragrafa kopyalama "
+        "11. TARİH SEMANTIĞI (KRİTİK): veri AİT olduğu döneme `observation_period` "
+        "alanında ('Nisan 2026'), AÇIKLANMA tarihine `published_at` alanında "
+        "('12 Mayıs 2026') yazıyor. Bunları KARIŞTIRMA. Doğru kalıp: 'Nisan 2026 "
+        "enflasyon verileri 12 Mayıs'ta açıklandı'. YANLIŞ: '1 Nisan 2026'da "
+        "açıklandı' (1 Nisan ay başı, BLS o gün hiçbir şey duyurmadı). "
+        "published_at null ise sadece 'Nisan 2026 verileri yayımlandı' yaz, "
+        "günü uydurma. INPUT alan ADLARINI ('[observation_period]', "
+        "'[published_at]', '[expected_yoy_pct]' vb.) düz metin olarak ASLA "
+        "paragrafa kopyalama "
         "— bunlar JSON anahtarlarıdır, sen sadece değerleri kullan.\n"
         "12. Çıktı sadece JSON — story_md tek string, satır sonları için \\n.\n"
     )
