@@ -116,38 +116,40 @@ _SOURCES: dict[str, SourceCitation] = {
         "FRED:CUUR0000SA0L1E", "FRED Core CPI (NSA)",
         "https://fred.stlouisfed.org/series/CUUR0000SA0L1E",
     ),
-    # CPI sub-kalemleri (Faz D, 2026-05-12) — storyteller sektörel kırılım
+    # CPI sub-kalemleri (Faz D, 2026-05-12) — storyteller sektörel kırılım.
+    # FRED naming mixed: bazıları CUUR0000SA* (BLS standart), bazıları
+    # FRED'in kendi aliasları (CPIENGNS, CPIFABNS...). Test edilmiş, working.
     "FRED:CUUR0000SAH1": SourceCitation(
         "FRED:CUUR0000SAH1", "FRED CPI Shelter (NSA)",
         "https://fred.stlouisfed.org/series/CUUR0000SAH1",
     ),
-    "FRED:CUUR0000SA0E": SourceCitation(
-        "FRED:CUUR0000SA0E", "FRED CPI Energy (NSA)",
-        "https://fred.stlouisfed.org/series/CUUR0000SA0E",
+    "FRED:CPIENGNS": SourceCitation(
+        "FRED:CPIENGNS", "FRED CPI Energy (NSA)",
+        "https://fred.stlouisfed.org/series/CPIENGNS",
     ),
-    "FRED:CUUR0000SAF1": SourceCitation(
-        "FRED:CUUR0000SAF1", "FRED CPI Food (NSA)",
-        "https://fred.stlouisfed.org/series/CUUR0000SAF1",
+    "FRED:CPIFABNS": SourceCitation(
+        "FRED:CPIFABNS", "FRED CPI Food and Beverages (NSA)",
+        "https://fred.stlouisfed.org/series/CPIFABNS",
     ),
-    "FRED:CUUR0000SAM": SourceCitation(
-        "FRED:CUUR0000SAM", "FRED CPI Medical Care (NSA)",
-        "https://fred.stlouisfed.org/series/CUUR0000SAM",
+    "FRED:CPIMEDNS": SourceCitation(
+        "FRED:CPIMEDNS", "FRED CPI Medical Care (NSA)",
+        "https://fred.stlouisfed.org/series/CPIMEDNS",
     ),
-    "FRED:CUUR0000SAA": SourceCitation(
-        "FRED:CUUR0000SAA", "FRED CPI Apparel (NSA)",
-        "https://fred.stlouisfed.org/series/CUUR0000SAA",
+    "FRED:CPIAPPNS": SourceCitation(
+        "FRED:CPIAPPNS", "FRED CPI Apparel (NSA)",
+        "https://fred.stlouisfed.org/series/CPIAPPNS",
     ),
-    "FRED:CUUR0000SAT": SourceCitation(
-        "FRED:CUUR0000SAT", "FRED CPI Transportation Services (NSA)",
-        "https://fred.stlouisfed.org/series/CUUR0000SAT",
+    "FRED:CUUR0000SETA": SourceCitation(
+        "FRED:CUUR0000SETA", "FRED CPI Transportation (NSA)",
+        "https://fred.stlouisfed.org/series/CUUR0000SETA",
     ),
-    "FRED:CUUR0000SAR": SourceCitation(
-        "FRED:CUUR0000SAR", "FRED CPI Recreation (NSA)",
-        "https://fred.stlouisfed.org/series/CUUR0000SAR",
+    "FRED:CPIRECNS": SourceCitation(
+        "FRED:CPIRECNS", "FRED CPI Recreation (NSA)",
+        "https://fred.stlouisfed.org/series/CPIRECNS",
     ),
-    "FRED:CUUR0000SAE1": SourceCitation(
-        "FRED:CUUR0000SAE1", "FRED CPI Education & Communication (NSA)",
-        "https://fred.stlouisfed.org/series/CUUR0000SAE1",
+    "FRED:CPIEDUNS": SourceCitation(
+        "FRED:CPIEDUNS", "FRED CPI Education & Communication (NSA)",
+        "https://fred.stlouisfed.org/series/CPIEDUNS",
     ),
     "FRED:PAYEMS": SourceCitation(
         "FRED:PAYEMS", "FRED Nonfarm Payrolls",
@@ -807,13 +809,13 @@ def _cpi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
     # CPI sub-kalemleri (Faz D) — MoM% kırılımı
     _CPI_COMPONENT_META = {
         "CPI_SHELTER":    ("Barınma",          "FRED:CUUR0000SAH1"),
-        "CPI_ENERGY":     ("Enerji",           "FRED:CUUR0000SA0E"),
-        "CPI_FOOD":       ("Gıda",             "FRED:CUUR0000SAF1"),
-        "CPI_MEDICAL":    ("Sağlık",           "FRED:CUUR0000SAM"),
-        "CPI_APPAREL":    ("Giyim",            "FRED:CUUR0000SAA"),
-        "CPI_TRANSPORT":  ("Ulaşım hizmetleri", "FRED:CUUR0000SAT"),
-        "CPI_RECREATION": ("Eğlence",          "FRED:CUUR0000SAR"),
-        "CPI_EDUCATION":  ("Eğitim/iletişim",  "FRED:CUUR0000SAE1"),
+        "CPI_ENERGY":     ("Enerji",           "FRED:CPIENGNS"),
+        "CPI_FOOD":       ("Gıda",             "FRED:CPIFABNS"),
+        "CPI_MEDICAL":    ("Sağlık",           "FRED:CPIMEDNS"),
+        "CPI_APPAREL":    ("Giyim",            "FRED:CPIAPPNS"),
+        "CPI_TRANSPORT":  ("Ulaşım",           "FRED:CUUR0000SETA"),
+        "CPI_RECREATION": ("Eğlence",          "FRED:CPIRECNS"),
+        "CPI_EDUCATION":  ("Eğitim/iletişim",  "FRED:CPIEDUNS"),
     }
     components = []
     for c in (payload.get("cpi_components") or []):

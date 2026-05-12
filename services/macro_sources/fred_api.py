@@ -37,14 +37,15 @@ SERIES = {
     # CPI sub-kalemleri (2026-05-12, Faz D) — "kuru veriyi zaten herkes veriyor"
     # diferansiyasyonu. NSA serileri, CPI ile aynı release. Storyteller payload'ında
     # join edilen DATA, kendi başlarına narrative üretmez (_is_data_point_event guard).
+    # ID'ler test edildi (Apr 2026 data döner), FRED naming mixed (CUUR vs CPI*NS).
     "fred_cpi_shelter":   "CUUR0000SAH1",     # Shelter (barınma — kira + OER) NSA
-    "fred_cpi_energy":    "CUUR0000SA0E",     # Energy (enerji — yakıt + elektrik) NSA
-    "fred_cpi_food":      "CUUR0000SAF1",     # Food (gıda — evde + dışarıda) NSA
-    "fred_cpi_medical":   "CUUR0000SAM",      # Medical care (sağlık hizmetleri + ürünleri) NSA
-    "fred_cpi_apparel":   "CUUR0000SAA",      # Apparel (giyim) NSA
-    "fred_cpi_transport": "CUUR0000SAT",      # Transportation services NSA
-    "fred_cpi_recreation":"CUUR0000SAR",      # Recreation NSA
-    "fred_cpi_education": "CUUR0000SAE1",     # Education and communication NSA
+    "fred_cpi_energy":    "CPIENGNS",         # Energy (enerji) NSA
+    "fred_cpi_food":      "CPIFABNS",         # Food and Beverages NSA
+    "fred_cpi_medical":   "CPIMEDNS",         # Medical care NSA
+    "fred_cpi_apparel":   "CPIAPPNS",         # Apparel (giyim) NSA
+    "fred_cpi_transport": "CUUR0000SETA",     # Transportation NSA
+    "fred_cpi_recreation":"CPIRECNS",         # Recreation NSA
+    "fred_cpi_education": "CPIEDUNS",         # Education and communication NSA
     "fred_nfp": "PAYEMS",                     # Total Nonfarm Payrolls SA, thousands
     "fred_unrate": "UNRATE",                  # Civilian Unemployment Rate SA, % (4.2 = 4.2%)
     # NFP supersector breakdown (BLS Tablo B-1 eşdeğeri, FRED üzerinden) — Faz 3 sektörel kırılım
