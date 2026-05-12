@@ -52,14 +52,49 @@ _HTTP_TIMEOUT = httpx.Timeout(30.0, connect=8.0)
 
 Tier = Literal["premium", "advance"]
 
-# BLS CPI relative importance (sabit; yıllık reweight'te elle bump et).
-# Kaynak: BLS Table 1, Dec 2024 reference weights.
+# BLS CPI relative importance.
+# Kaynak: BLS Table 1 (https://www.bls.gov/cpi/tables/relative-importance/),
+# Dec 2024 reference (2025 yılı boyunca geçerli — BLS yıllık Şubat'ta revize eder).
+# Yıllık manuel update: yeni Şubat'ta BLS Table 1'i kontrol et, dict'i güncelle,
+# _CPI_WEIGHTS_UPDATED_AT'ı bumpla. Sistem 13 ay'dan eski weights ile çalışırsa
+# startup log warning verir (services/macro_sources/release_detect.py check'i).
 _CPI_WEIGHTS_PCT = {
-    "shelter": 35.0,
-    "energy": 6.5,
-    "services_ex_shelter": 58.0,  # rough — "tüm hizmetler" çatısı
-    "food": 13.5,
+    "shelter": 36.2,             # 35.0 → 36.2 (Dec 2024 reweight)
+    "energy": 6.7,               # 6.5 → 6.7
+    "services_ex_shelter": 60.5, # 58.0 → 60.5 (services overall ~62%, ex-shelter ~60.5)
+    "food": 13.5,                # 13.5 stable
 }
+_CPI_WEIGHTS_UPDATED_AT = "2025-02"  # Dec 2024 reference, Şubat 2025'te BLS yayımladı
+
+
+def _check_cpi_weights_freshness() -> None:
+    """Startup-time check — _CPI_WEIGHTS_PCT > 13 ay eski ise log warning.
+
+    BLS Table 1'i yıllık Şubat'ta yayımlar. Sistemin 14 ay'a yakın eski
+    weights ile çalışması demek prior year'ın ağırlıkları — sektörel
+    importance %1-2 puan kayar (barınma her sene tipik +0.2-0.5 puan).
+    Kullanıcı hikayedeki "barınma %36.2 ağırlığa sahip" rakamını
+    kıyaslarken bozuk rakam görmesin.
+
+    Çağrı: module import sırasında bir kez (aşağıda).
+    """
+    try:
+        y, m = _CPI_WEIGHTS_UPDATED_AT.split("-")
+        last = datetime(int(y), int(m), 1, tzinfo=timezone.utc)
+        age_months = (datetime.now(timezone.utc) - last).days / 30
+        if age_months > 13:
+            import logging
+            logging.getLogger("axiom.macro.storyteller").warning(
+                f"⚠️ _CPI_WEIGHTS_PCT stale ({age_months:.0f} ay eski, son update "
+                f"{_CPI_WEIGHTS_UPDATED_AT}). BLS Table 1'i kontrol et: "
+                f"https://www.bls.gov/cpi/tables/relative-importance/ → "
+                f"_CPI_WEIGHTS_PCT dict'ini ve _CPI_WEIGHTS_UPDATED_AT'ı güncelle."
+            )
+    except Exception:
+        pass
+
+
+_check_cpi_weights_freshness()
 
 
 @dataclass(frozen=True)
