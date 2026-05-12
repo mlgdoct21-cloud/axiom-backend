@@ -65,6 +65,16 @@ SERIES = {
     "fred_retail_sales": "RSAFS",             # Advance Monthly Retail Sales (ex food services) SA, ~mid-month
     "fred_ppi": "PPIFIS",                     # PPI Final Demand SA, monthly index (market-standard headline, was PPIACO basket switch 2026-05-11)
     "fred_core_ppi": "WPSFD49116",            # PPI Final Demand Less Foods & Energy SA = Core PPI
+    # PPI sub-kalemleri (2026-05-12 evening) — CPI iskeletinin PPI muadili.
+    # "Üretici hangi maliyetten baskı altında" hikayesi: goods vs services
+    # split + energy/food + trade-margin (perakendeci marjı) + lojistik.
+    # ID'ler FRED arama ile doğrulandı (PPID*, PPIT* prefix family).
+    "fred_ppi_goods":      "PPIDGS",          # PPI Final Demand: Final Demand Goods SA
+    "fred_ppi_services":   "PPIDSS",          # PPI Final Demand: Final Demand Services SA
+    "fred_ppi_energy":     "PPIDES",          # PPI Final Demand: Final Demand Energy SA
+    "fred_ppi_foods":      "PPIDFS",          # PPI Final Demand: Final Demand Foods SA
+    "fred_ppi_trade":      "PPITSS",          # PPI Final Demand: Final Demand Trade Services SA (perakendeci/toptancı marjı — CPI'a passthrough lead)
+    "fred_ppi_transport":  "PPITAW",          # PPI Final Demand: Final Demand Transportation & Warehousing Services SA (lojistik sağlığı)
     "fred_housing_starts": "HOUST",           # Housing Starts: Total New Privately Owned SA, ~17th
     "fred_gdp": "GDPC1",                      # Real GDP, Quarterly Annualized SA, ~25th of quarter+1
     # FOMC decoder (Faz 3, 2026-05-11): Fed Funds target range upper/lower bounds.

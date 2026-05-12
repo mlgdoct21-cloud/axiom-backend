@@ -85,6 +85,13 @@ SOURCE_INTERVAL: dict[str, timedelta] = {
     "fred_cpi_transport":  timedelta(minutes=60),
     "fred_cpi_recreation": timedelta(minutes=60),
     "fred_cpi_education":  timedelta(minutes=60),
+    # PPI sub-kalemleri (2026-05-12 evening) — aylık, PPI ile aynı release
+    "fred_ppi_goods":     timedelta(minutes=60),
+    "fred_ppi_services":  timedelta(minutes=60),
+    "fred_ppi_energy":    timedelta(minutes=60),
+    "fred_ppi_foods":     timedelta(minutes=60),
+    "fred_ppi_trade":     timedelta(minutes=60),
+    "fred_ppi_transport": timedelta(minutes=60),
     # FOMC decoder (Faz 3) — günlük seriler ama FOMC kararı dışında değer
     # değişmez; 60dk yeterli (8 toplantı/yıl, ±60dk gecikme önemsiz).
     "fred_fed_funds_upper": timedelta(minutes=60),
@@ -121,6 +128,9 @@ _FRED_SOURCES = (
     # CPI sub-kalemleri (Faz D) — storyteller sektörel kırılım
     "fred_cpi_shelter", "fred_cpi_energy", "fred_cpi_food", "fred_cpi_medical",
     "fred_cpi_apparel", "fred_cpi_transport", "fred_cpi_recreation", "fred_cpi_education",
+    # PPI sub-kalemleri (2026-05-12 evening) — storyteller "üretici baskısı" lens
+    "fred_ppi_goods", "fred_ppi_services", "fred_ppi_energy", "fred_ppi_foods",
+    "fred_ppi_trade", "fred_ppi_transport",
 )
 
 # Number of historical observations to fetch per probe. 13 lets the public
@@ -185,6 +195,13 @@ _STATES: dict[str, _SourceState] = {
     "fred_cpi_transport":  _SourceState(name="fred_cpi_transport"),
     "fred_cpi_recreation": _SourceState(name="fred_cpi_recreation"),
     "fred_cpi_education":  _SourceState(name="fred_cpi_education"),
+    # PPI sub-kalemleri (2026-05-12 evening)
+    "fred_ppi_goods":     _SourceState(name="fred_ppi_goods"),
+    "fred_ppi_services":  _SourceState(name="fred_ppi_services"),
+    "fred_ppi_energy":    _SourceState(name="fred_ppi_energy"),
+    "fred_ppi_foods":     _SourceState(name="fred_ppi_foods"),
+    "fred_ppi_trade":     _SourceState(name="fred_ppi_trade"),
+    "fred_ppi_transport": _SourceState(name="fred_ppi_transport"),
     "kalshi_fed": _SourceState(name="kalshi_fed"),
     "fmp_economic": _SourceState(name="fmp_economic"),
     # Day 28 part 3 — TCMB EVDS sources (3 aktif; kalan 3 kod EVDS3'te değişti)

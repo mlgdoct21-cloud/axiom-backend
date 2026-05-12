@@ -214,6 +214,31 @@ _SOURCES: dict[str, SourceCitation] = {
         "FRED:PPIACO", "FRED Producer Price Index (All Commodities, legacy)",
         "https://fred.stlouisfed.org/series/PPIACO",
     ),
+    # PPI sub-kalemleri (2026-05-12 evening) — Final Demand kategorisi alt-serileri
+    "FRED:PPIDGS": SourceCitation(
+        "FRED:PPIDGS", "FRED PPI Final Demand: Goods",
+        "https://fred.stlouisfed.org/series/PPIDGS",
+    ),
+    "FRED:PPIDSS": SourceCitation(
+        "FRED:PPIDSS", "FRED PPI Final Demand: Services",
+        "https://fred.stlouisfed.org/series/PPIDSS",
+    ),
+    "FRED:PPIDES": SourceCitation(
+        "FRED:PPIDES", "FRED PPI Final Demand: Energy",
+        "https://fred.stlouisfed.org/series/PPIDES",
+    ),
+    "FRED:PPIDFS": SourceCitation(
+        "FRED:PPIDFS", "FRED PPI Final Demand: Foods",
+        "https://fred.stlouisfed.org/series/PPIDFS",
+    ),
+    "FRED:PPITSS": SourceCitation(
+        "FRED:PPITSS", "FRED PPI Final Demand: Trade Services",
+        "https://fred.stlouisfed.org/series/PPITSS",
+    ),
+    "FRED:PPITAW": SourceCitation(
+        "FRED:PPITAW", "FRED PPI Final Demand: Transportation & Warehousing Services",
+        "https://fred.stlouisfed.org/series/PPITAW",
+    ),
     # FOMC decoder (Faz 3) — fed funds target range + statement
     "FRED:DFEDTARU": SourceCitation(
         "FRED:DFEDTARU", "FRED Fed Funds Target Range Upper",
@@ -541,6 +566,27 @@ async def _load_event_payload(event_id: str) -> Optional[dict]:
             })).mappings().all()
             payload["cpi_components"] = [
                 {k: r[k] for k in r.keys()} for r in crows
+            ]
+        # PPI sub-kalemleri (2026-05-12 evening) — CPI iskeletinin PPI muadili.
+        # Goods vs Services split + 4 spesifik alt-kalem (enerji, gıda,
+        # perakende marjı, lojistik). "Kuru veriyi zaten herkes veriyor"
+        # diferansiyasyonu — PPI üretici lensi, CPI'dan farklı hikaye.
+        payload["ppi_components"] = []
+        if et == "PPI" and row["released_at"]:
+            psql_pc = text("""
+                SELECT event_type, actual_value, prior_value
+                FROM macro_releases
+                WHERE event_type IN (
+                    'PPI_GOODS', 'PPI_SERVICES', 'PPI_ENERGY',
+                    'PPI_FOODS', 'PPI_TRADE', 'PPI_TRANSPORT'
+                )
+                AND source = :src AND released_at = :ts
+            """)
+            pcrows = (await conn.execute(psql_pc, {
+                "src": row["source"], "ts": row["released_at"],
+            })).mappings().all()
+            payload["ppi_components"] = [
+                {k: r[k] for k in r.keys()} for r in pcrows
             ]
         # NFP sektör alt-serileri (Faz 3 BLS B-1 eşdeğeri) — aynı released_at'te
         # 8 supersector change_k hesaplanır, prompt'a inject edilir.
@@ -1445,11 +1491,28 @@ def _pce_prompt(llm_input: dict, tier: Tier) -> str:
 
 # ---------- PPI prompt builder ----------
 
+# PPI sub-component metadata — TR label + weight bilgisi (BLS Table A 2025 ref).
+# Final Demand içindeki tahmini ağırlıklar (BLS resmi yayınında detay var,
+# burada hikayede "ana üç" anlatımı için yeterli):
+#   Final Demand Goods ~33%, Final Demand Services ~65%, Construction ~2%.
+# Sub-services içinden Trade, Transportation/Warehousing önemli.
+_PPI_COMPONENT_META = {
+    "PPI_GOODS":     ("Mal (goods) üretici fiyatı",         33.0),
+    "PPI_SERVICES":  ("Hizmet (services) üretici fiyatı",   65.0),
+    "PPI_ENERGY":    ("Enerji (final demand)",              5.0),
+    "PPI_FOODS":     ("Gıda (final demand)",                4.5),
+    "PPI_TRADE":     ("Trade services (perakende/toptancı marjı)", 19.5),
+    "PPI_TRANSPORT": ("Lojistik (transport & warehousing)", 5.0),
+}
+
+
 def _ppi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
     """PPI = üretici fiyat endeksi. CPI'dan 1-3 ay önce hareket eder (pipeline
     basıncı). 2026-05-11 basket switch: headline FRED:PPIFIS (Final Demand SA,
     market-standard), core FRED:WPSFD49116 (Final Demand Less Foods & Energy
-    SA). Paired core CPI/PCE pattern'iyle aynı.
+    SA). 2026-05-12 evening: + ppi_components (6 alt-kalem) — Goods vs
+    Services split + enerji/gıda/trade-margin/transport. CPI'dan farklı bir
+    lens: "üretici hangi maliyetten baskı altında, CPI'a kim yansıtacak".
     """
     actual = float(payload["actual_value"]) if payload.get("actual_value") is not None else None
     prior = float(payload["prior_value"]) if payload.get("prior_value") is not None else None
@@ -1480,9 +1543,49 @@ def _ppi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
     avg_3m_mom = _mom_3m_avg(history, n=3)
     avg_6m_mom = _mom_3m_avg(history, n=6)
 
+    # PPI sub-kalemleri (2026-05-12 evening) — MoM% kırılım, en hareketliden sakine.
+    # PPI_GOODS/SERVICES = ana split; diğer 4 = spesifik hikaye.
+    components_mom: list[dict] = []
+    _PPI_CITATION_MAP = {
+        "PPI_GOODS":     "FRED:PPIDGS",
+        "PPI_SERVICES":  "FRED:PPIDSS",
+        "PPI_ENERGY":    "FRED:PPIDES",
+        "PPI_FOODS":     "FRED:PPIDFS",
+        "PPI_TRADE":     "FRED:PPITSS",
+        "PPI_TRANSPORT": "FRED:PPITAW",
+    }
+    for c in (payload.get("ppi_components") or []):
+        et_c = c.get("event_type")
+        meta = _PPI_COMPONENT_META.get(et_c)
+        if not meta:
+            continue
+        c_actual = float(c["actual_value"]) if c.get("actual_value") is not None else None
+        c_prior = float(c["prior_value"]) if c.get("prior_value") is not None else None
+        c_mom = _pct(c_actual, c_prior)
+        if c_mom is None:
+            continue
+        # Sanity filter — composite/translated FRED level seri bozuklukları
+        # (örn. CPI_EDUCATION scale mismatch öğretti) için ±15 dışını dışla.
+        if abs(c_mom) > 15:
+            continue
+        label, weight = meta
+        components_mom.append({
+            "code": et_c,
+            "label": label,
+            "weight_pct": weight,
+            "mom_pct": c_mom,
+            "source_code": _PPI_CITATION_MAP.get(et_c, "FRED:PPIFIS"),
+        })
+    # En hareketliden sakine sırala — Goods/Services en üstte değil; mutlak
+    # MoM%'a göre. Story başlangıcında en şaşırtıcı kalemi ön plana çıkar.
+    components_mom.sort(key=lambda x: abs(x["mom_pct"]), reverse=True)
+
     sources_used = ["FRED:PPIFIS", "BLS"]
     if paired:
         sources_used.append("FRED:WPSFD49116")
+    for c in components_mom:
+        if c["source_code"] not in sources_used:
+            sources_used.append(c["source_code"])
 
     llm_input = {
         "release_date": _format_tr_date(payload.get("released_at")),
@@ -1509,6 +1612,7 @@ def _ppi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
             "mom_avg_3m_pct": avg_3m_mom,
             "mom_avg_6m_pct": avg_6m_mom,
         },
+        "components_mom": components_mom,
         "available_sources": [
             {"code": c, "name": _SOURCES[c].name}
             for c in sources_used if c in _SOURCES
@@ -1520,6 +1624,10 @@ def _ppi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
         core_actual, core_prior, core_mom, core_expected_mom,
         avg_3m_mom, avg_6m_mom,
     ]
+    # PPI sub-component MoM% + weight'leri allowed_inputs'a
+    for c in components_mom:
+        allowed_inputs.append(c["mom_pct"])
+        allowed_inputs.append(c["weight_pct"])
     # Tarih günleri allowed'a — "12 Mayıs'ta açıklandı" yazarken validator
     # 12'yi unknown sanmasın. Idempotent (CPI'da Faz E ile zaten eklendi).
     if payload.get("released_at"):
@@ -1534,43 +1642,126 @@ def _ppi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
 
 def _ppi_prompt(llm_input: dict, tier: Tier) -> str:
+    has_components = bool(llm_input.get("components_mom"))
+
     if tier == "premium":
-        word_min, word_max = 150, 500
-        sections = (
-            "(1) Manşet PPI Final Demand vs beklenti — sürpriz büyüklüğü kelime "
-            "ile anlat.\n"
+        word_min, word_max = 180, 550
+        parts: list[str] = []
+        parts.append(
+            "(1) Manşet PPI Final Demand vs beklenti — sürpriz büyüklüğü "
+            "kelime ile anlat. Yüzdeyi virgüllü Türk usulü yaz (örn. %0,4).\n"
+        )
+        parts.append(
             "(2) Çekirdek PPI (gıda + enerji hariç) — Fed bunu manşet PPI'dan "
             "neden daha çok takip eder (volatil emtia gürültüsü çıkarılmış, "
             "altta yatan üretici fiyat baskısını gösterir). KAVRAM olarak "
             "anlat, yeni rakam üretme.\n"
-            "(3) PPI ne demek — üretici maliyeti, CPI'ya 1-3 ay önden hareket "
-            "eden 'pipeline basıncı'. Kavram olarak anlat, fake lead-lag "
-            "rakamı yazma.\n"
-            "(4) Tüketiciye geçiş — PPI yukarı çıkıyorsa şirket marjı sıkışır "
-            "veya fiyatı tüketiciye yansır. Hangi senaryo daha olası, INPUT "
-            "verisine bakarak kelime ile anlat.\n"
-            "(5) Aklında tut + 'Senin için 1-cümle'."
         )
+        if has_components:
+            parts.append(
+                "(3) ÜRETİCİ BASKISI NEREDEN — components_mom dizisini oku, "
+                "en hareketli 2-3 alt-kalemi adlandır. Mal mı hizmet mi öne "
+                "çıkıyor (Goods vs Services hangi tarafta baskı var?) "
+                "Enerji/gıda mı tetikliyor yoksa trade-margin/lojistik mi? "
+                "Her sayıda [KAYNAK_KODU] olmalı.\n"
+            )
+            parts.append(
+                "(4) Tüketiciye geçiş — Trade services (perakendeci marjı) "
+                "artıyorsa şirketler maliyeti tüketiciye yansıtmaya başlamış "
+                "demektir → CPI'a 1-3 ay önden lead. Hangi senaryo daha olası, "
+                "INPUT verisine bakarak kelime ile anlat.\n"
+            )
+        else:
+            parts.append(
+                "(3) PPI ne demek — üretici maliyeti, CPI'ya 1-3 ay önden "
+                "hareket eden 'pipeline basıncı'. Kavram olarak anlat, fake "
+                "lead-lag rakamı yazma.\n"
+            )
+            parts.append(
+                "(4) Tüketiciye geçiş — PPI yukarı çıkıyorsa şirket marjı "
+                "sıkışır veya fiyatı tüketiciye yansır. Hangi senaryo daha "
+                "olası, INPUT verisine bakarak kelime ile anlat.\n"
+            )
+        parts.append("(5) Aklında tut + 'Senin için 1-cümle'.")
+        sections = "".join(parts)
     else:  # advance
-        word_min, word_max = 340, 680
-        sections = (
+        word_min, word_max = 340, 720
+        parts = []
+        parts.append(
             "(1) Manşet vs beklenti + tarihsel bağlam (history'ye bakarak "
-            "'son X ayın en yüksek/düşük MoM'u').\n"
+            "'son X ayın en yüksek/düşük MoM'u'). Yüzdeyi Türk usulü "
+            "virgüllü yaz (örn. %0,4).\n"
+        )
+        parts.append(
             "(2) Çekirdek PPI detayı — gıda ve enerji çıkarılmış 'temiz' "
             "üretici fiyat sinyali; manşet ile divergence varsa adlandır "
             "(emtia-driven vs altta yatan demand-pull).\n"
-            "(3) PPI lead-CPI ilişkisi detayı — 'pipeline basıncı' kavramı + "
-            "marj sıkışması tezi (somut lead-lag rakamı YAZMA, INPUT'ta yok).\n"
-            "(4) 3-ay ve 6-ay rolling — momentum trendi (yön + ivme).\n"
-            "(5) Supply-side vs demand-side enflasyon ayrımı — manşet hızlı "
-            "yukarı + çekirdek yumuşaksa supply-driven, ikisi birlikte "
-            "yukarı ise demand-driven. Kavramsal anlat.\n"
-            "(6) Fed kararına etki — Fed PPI'a direkt bakmaz ama 'core PCE'ye "
-            "geçiş kanalı' okuyabilir. Çekirdek PPI'ın yönü kritik.\n"
-            "(7) Risk dengesi — emtia + enerji PPI'ı tetikliyorsa hangi sektör "
-            "marjı en çok sıkışır (kavramsal, sayı yok).\n"
-            "(8) Aklında tut + 'Senin için 1-cümle' (DXY/BTC/altın yönü)."
         )
+        if has_components:
+            parts.append(
+                "(3) ÜRETİCİ BASKISI ANATOMİSİ — components_mom alt-kalemleri "
+                "tek tek oku (Goods, Services, Energy, Foods, Trade Services, "
+                "Transportation). Hangisi en hareketli, hangisi sakin? Goods "
+                "vs Services split önemli: Goods baskısı emtia/tarife kaynaklı "
+                "(geçici olabilir), Services baskısı sticky (uzun süre "
+                "yapışkan). Her MoM%'da [KAYNAK_KODU] zorunlu.\n"
+            )
+            parts.append(
+                "(4) TRADE-MARGIN HİKAYESİ — Trade services (perakendeci/"
+                "toptancı marjı) MoM% kritik: yukarı = şirketler maliyeti "
+                "tüketiciye yansıtıyor (CPI passthrough yakın); aşağı = marj "
+                "sıkışıyor (şirket kârı baskı altında, gelecek çeyrek "
+                "earnings risk). INPUT'taki PPI_TRADE rakamına bakarak "
+                "hangisi olduğunu söyle.\n"
+            )
+            parts.append(
+                "(5) LOJİSTİK SAĞLIĞI — Transportation & Warehousing MoM% "
+                "freight rate'lerin sinyali. Yukarı = supply chain gerilim, "
+                "ithalat maliyeti yansıması; aşağı = lojistik kapasitesi "
+                "rahat, mal akışı sağlıklı.\n"
+            )
+            parts.append(
+                "(6) Supply-side vs demand-side enflasyon ayrımı — "
+                "Goods+Energy hızlı yukarı + Services yumuşaksa supply-driven "
+                "(geçici); ikisi birlikte yukarı ise demand-driven "
+                "(yapışkan, Fed sorun). Kavramsal anlat.\n"
+            )
+            parts.append(
+                "(7) Fed kararına etki — Fed PPI'a direkt bakmaz ama 'core "
+                "PCE'ye geçiş kanalı' okuyabilir. Çekirdek PPI'ın yönü + "
+                "Trade-margin baskısı kritik.\n"
+            )
+            parts.append(
+                "(8) Risk dengesi — bugünkü PPI okuduğunda piyasada en çok "
+                "hangi sektör marjı sıkışır (perakende/imalat/lojistik), "
+                "INPUT components'a bakarak adlandır (kavramsal, sayı yok).\n"
+            )
+        else:
+            parts.append(
+                "(3) PPI lead-CPI ilişkisi detayı — 'pipeline basıncı' "
+                "kavramı + marj sıkışması tezi (somut lead-lag rakamı YAZMA, "
+                "INPUT'ta yok).\n"
+            )
+            parts.append(
+                "(4) 3-ay ve 6-ay rolling — momentum trendi (yön + ivme).\n"
+            )
+            parts.append(
+                "(5) Supply-side vs demand-side enflasyon ayrımı — manşet "
+                "hızlı yukarı + çekirdek yumuşaksa supply-driven, ikisi "
+                "birlikte yukarı ise demand-driven. Kavramsal anlat.\n"
+            )
+            parts.append(
+                "(6) Fed kararına etki — Fed PPI'a direkt bakmaz ama 'core "
+                "PCE'ye geçiş kanalı' okuyabilir. Çekirdek PPI'ın yönü kritik.\n"
+            )
+            parts.append(
+                "(7) Risk dengesi — emtia + enerji PPI'ı tetikliyorsa hangi "
+                "sektör marjı en çok sıkışır (kavramsal, sayı yok).\n"
+            )
+        parts.append("(9) Aklında tut + 'Senin için 1-cümle' (DXY/BTC/altın yönü)."
+                     if has_components else
+                     "(8) Aklında tut + 'Senin için 1-cümle' (DXY/BTC/altın yönü).")
+        sections = "".join(parts)
 
     available_codes = [s["code"] for s in llm_input["available_sources"]]
 

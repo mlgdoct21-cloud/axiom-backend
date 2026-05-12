@@ -39,7 +39,39 @@ _EVENT_TYPE_TO_FRED_SERIES = {
     "CPI": "CPIAUCNS",
     "CORE_CPI": "CUUR0000SA0L1E",
     "UNRATE": "UNRATE",
+    # 2026-05-12 evening — FMP-primary expansion. FMP gives MoM% (or thousands
+    # delta for NFP); release_detect composite translates to FRED-level
+    # so when FRED catches up hours later the values converge.
+    "PPI": "PPIFIS",
+    "CORE_PPI": "WPSFD49116",
+    "PCE": "PCEPI",
+    "CORE_PCE": "PCEPILFE",
+    "NFP": "PAYEMS",
+    "JOBLESS_INITIAL": "ICSA",
+    "JOBLESS_CONTINUING": "CCSA",
+    "RETAIL_SALES": "RSAFS",
 }
+
+# event_types where FMP returns MoM% (compose level from prior FRED level).
+_FMP_MOM_PCT_EVENT_TYPES = frozenset({
+    "PPI", "CORE_PPI", "PCE", "CORE_PCE",
+    "RETAIL_SALES", "CORE_RETAIL_SALES",
+})
+# event_type where FMP returns thousands-of-jobs delta (compose level from
+# prior PAYEMS level by addition).
+_FMP_DELTA_K_EVENT_TYPES = frozenset({"NFP"})
+# event_types where FMP returns level directly (no translation needed).
+_FMP_DIRECT_LEVEL_EVENT_TYPES = frozenset({
+    "CPI", "CORE_CPI", "UNRATE",
+    "JOBLESS_INITIAL", "JOBLESS_CONTINUING",
+})
+
+# All FMP-primary event_types — used for tolerance-based equality in
+# _upsert_release_with_revision so FRED catchup with slight rounding
+# difference doesn't fire a spurious revision broadcast.
+_FMP_PRIMARY_EVENT_TYPES = (
+    _FMP_MOM_PCT_EVENT_TYPES | _FMP_DELTA_K_EVENT_TYPES | _FMP_DIRECT_LEVEL_EVENT_TYPES
+)
 
 logger = get_logger("macro.release_detect")
 
@@ -69,6 +101,17 @@ _FRED_EVENT_TYPE = {
     "fred_cpi_transport":  "CPI_TRANSPORT",
     "fred_cpi_recreation": "CPI_RECREATION",
     "fred_cpi_education":  "CPI_EDUCATION",
+    # PPI sub-kalemleri (2026-05-12 evening) — CPI iskeletinin PPI muadili.
+    # "Üretici hangi maliyetten baskı altında" hikayesi için. Headline +
+    # core PPI'dan farklı bir lens: goods vs services split, healthcare lead,
+    # margin story. PPI_* prefixi _is_data_point_event guard'a giriyor:
+    # kendi başlarına narrative/revision broadcast tetiklemez.
+    "fred_ppi_goods":      "PPI_GOODS",
+    "fred_ppi_services":   "PPI_SERVICES",
+    "fred_ppi_energy":     "PPI_ENERGY",
+    "fred_ppi_foods":      "PPI_FOODS",
+    "fred_ppi_trade":      "PPI_TRADE",
+    "fred_ppi_transport":  "PPI_TRANSPORT",
     # NFP sektör alt-serileri (Faz 3 sektörel kırılım). Bu event_type'lar
     # storyteller payload'ında join edilir; kendi başlarına narrative/story
     # üretilmez (narrative trigger aşağıda override edilir).
@@ -107,6 +150,8 @@ def _is_data_point_event(event_type: str) -> bool:
         return True
     if event_type.startswith("CPI_") and event_type not in ("CPI", "CORE_CPI"):
         return True
+    if event_type.startswith("PPI_") and event_type not in ("PPI", "CORE_PPI"):
+        return True
     return False
 
 # Day 28 part 3 — Türkiye TCMB EVDS source name → event_type label mapping.
@@ -138,6 +183,41 @@ def _parse_obs_date(raw: Optional[str]) -> Optional[datetime]:
         return datetime.fromisoformat(raw).replace(tzinfo=timezone.utc)
     except ValueError:
         return None
+
+
+def _is_within_fmp_tolerance(
+    old: Optional[Decimal],
+    new: Decimal,
+    event_type: str,
+) -> bool:
+    """For FMP-primary event_types, allow small rounding diff between
+    FMP-composite level and FRED official level.
+
+    Composite for PPI: prior_level × (1 + MoM/100), rounded to 3 decimals.
+    FRED publishes 3-decimal level. Difference usually <0.05 in 138.xxx scale.
+
+    Tolerance: 0.1% relative (or absolute 0.05 in the unit if level<10).
+    """
+    if event_type not in _FMP_PRIMARY_EVENT_TYPES:
+        return False
+    if old is None or new is None:
+        return False
+    try:
+        abs_diff = abs(new - old)
+        if abs_diff == 0:
+            return True
+        if old == 0:
+            return abs_diff < Decimal("0.01")
+        # Relative diff < 0.1%
+        rel_diff = abs_diff / abs(old)
+        if rel_diff < Decimal("0.001"):
+            return True
+        # Absolute diff < 0.05 for small-scale numbers (UNRATE % around 3-4)
+        if abs(old) < Decimal("10") and abs_diff < Decimal("0.05"):
+            return True
+    except (InvalidOperation, ZeroDivisionError):
+        return False
+    return False
 
 
 async def _upsert_release_with_revision(
@@ -221,6 +301,21 @@ async def _upsert_release_with_revision(
                 # as a "no-op" since the original could have arrived as
                 # missing data and we'd want to back-fill quietly.
                 if old_actual == actual:
+                    return "unchanged"
+                # FMP-composite ↔ FRED official rounding convergence:
+                # FMP wrote 138.553 (composite from MoM%), FRED later writes
+                # 138.520 (official). Treat as silent backfill if within
+                # tolerance — overwrite to FRED's exact value, NO revision
+                # broadcast (this is a precision fix, not a real revision).
+                if _is_within_fmp_tolerance(old_actual, actual, event_type):
+                    await conn.execute(
+                        text("""
+                            UPDATE macro_releases
+                            SET actual_value = :actual_value
+                            WHERE event_id = :event_id
+                        """),
+                        {"event_id": event_id, "actual_value": actual},
+                    )
                     return "unchanged"
                 if old_actual is None:
                     # Edge: existing row has NULL actual; treat as silent
@@ -384,6 +479,92 @@ async def record_tcmb_observation(
     return outcome == "inserted"
 
 
+async def _fetch_prior_fred_level(
+    event_type: str, before: datetime
+) -> Optional[Decimal]:
+    """Fetch the most recent FRED-level for `event_type` strictly before
+    `before` (the new observation period). Used by composite translation
+    for FMP MoM%-only or delta-only events.
+
+    Returns None if no prior level exists in macro_releases.
+    """
+    sql = text("""
+        SELECT actual_value FROM macro_releases
+        WHERE event_type = :et
+          AND released_at < :before
+          AND actual_value IS NOT NULL
+        ORDER BY released_at DESC
+        LIMIT 1
+    """)
+    try:
+        async with engine.begin() as conn:
+            row = (await conn.execute(sql, {
+                "et": event_type, "before": before,
+            })).first()
+        if row is None:
+            return None
+        return Decimal(str(row[0]))
+    except Exception as e:
+        logger.warning(f"prior FRED level fetch failed for {event_type}: {e}")
+        return None
+
+
+async def _translate_fmp_actual(ev: FMPEvent) -> tuple[Optional[Decimal], Optional[Decimal]]:
+    """Translate FMP's `actual` and `previous` into FRED-level convention.
+
+    Returns (translated_actual, translated_prior) — both Decimal or None.
+
+    Branching:
+      - DIRECT_LEVEL: pass-through (CPI, CORE_CPI, UNRATE, JOBLESS_*).
+      - MOM_PCT: new_level = prior_level × (1 + MoM/100).
+        prior_level comes from latest FRED row in macro_releases for the
+        same event_type. translated_prior = prior_level (the level we
+        composed against; useful for storyteller's mom_pct sanity).
+      - DELTA_K (NFP): new_level = prior_level + delta. prior_level from
+        macro_releases. translated_prior = prior_level.
+
+    If prior_level is missing for a translation-required event, returns
+    (None, None) — caller should skip the row (will be retried on next
+    probe once FRED has seeded historical data).
+    """
+    et = ev.event_type
+    if et in _FMP_DIRECT_LEVEL_EVENT_TYPES:
+        return ev.actual, ev.previous
+
+    prior_level = await _fetch_prior_fred_level(et, before=ev.released_at)
+    if prior_level is None:
+        logger.warning(
+            f"fmp_economic translation skip: no prior FRED level for {et} "
+            f"period={ev.released_at.date().isoformat()} — backfill needed"
+        )
+        return None, None
+
+    if et in _FMP_MOM_PCT_EVENT_TYPES:
+        # FMP actual is MoM% (e.g. 0.4 means +0.4%). Compose new level.
+        try:
+            mom_factor = Decimal("1") + (ev.actual / Decimal("100"))
+            new_level = prior_level * mom_factor
+            # Round to 3 decimal places to match FRED's typical index precision.
+            new_level = new_level.quantize(Decimal("0.001"))
+        except (InvalidOperation, ZeroDivisionError) as e:
+            logger.warning(f"MoM%→level translate failed for {et}: {e}")
+            return None, None
+        return new_level, prior_level
+
+    if et in _FMP_DELTA_K_EVENT_TYPES:
+        # NFP: FMP actual is thousands of jobs added (delta).
+        # FRED PAYEMS is thousands of jobs (level). new_level = prior + delta.
+        try:
+            new_level = prior_level + ev.actual
+        except (InvalidOperation, TypeError) as e:
+            logger.warning(f"delta+level translate failed for {et}: {e}")
+            return None, None
+        return new_level, prior_level
+
+    # Should not reach — unknown event_type. Pass through.
+    return ev.actual, ev.previous
+
+
 async def record_fmp_events(events: list[FMPEvent]) -> int:
     """FMP economic-calendar release rows → macro_releases (idempotent).
 
@@ -408,13 +589,21 @@ async def record_fmp_events(events: list[FMPEvent]) -> int:
             if series_id
             else "https://financialmodelingprep.com/economic-calendar"
         )
+        # FMP returns MoM%/delta/level depending on event_type. Translate to
+        # FRED-level so downstream storyteller (which expects level for
+        # MoM% computation) keeps working unchanged.
+        translated_actual, translated_prior = await _translate_fmp_actual(ev)
+        if translated_actual is None:
+            # No prior FRED level available — skip silently; next FRED probe
+            # will seed prior and a subsequent FMP probe will translate.
+            continue
         outcome = await _upsert_release_with_revision(
             event_id=event_id,
             event_type=ev.event_type,
             country=ev.country,
             released_at=ev.released_at,
-            prior=ev.previous,
-            actual=ev.actual,
+            prior=translated_prior,
+            actual=translated_actual,
             source="fred",
             source_url=source_url,
             trigger_narrative=True,
@@ -439,21 +628,32 @@ async def record_fmp_events(events: list[FMPEvent]) -> int:
 async def _record_consensus_from_fmp(event_id: str, ev: FMPEvent) -> None:
     """Write FMP's `estimate` as the consensus expected value.
 
-    For level series (CPI/CORE_CPI/UNRATE) the storyteller surprise math
-    works off MoM% which we compute downstream — but the admin endpoint
-    has historically taken `expected_mom_pct`. Until we add an explicit
-    level-consensus column, FMP's estimate is stored on
-    macro_releases as `expected_value` (already exists alongside
-    expected_mom_pct).
+    Branching by event_type:
+      - DIRECT_LEVEL (CPI/CORE_CPI/UNRATE/JOBLESS_*): FMP estimate IS a level
+        → write to expected_value column.
+      - MOM_PCT (PPI/CORE_PPI/PCE/CORE_PCE/RETAIL): FMP estimate IS MoM%
+        → write to expected_mom_pct column (storyteller reads from there).
+      - DELTA_K (NFP): FMP estimate is thousands-of-jobs delta. Storyteller
+        reads NFP's MoM% via paired UNRATE; we store estimate raw on
+        expected_value for now (will refine if NFP narrative requires it).
     """
-    sql = text("""
-        UPDATE macro_releases
-        SET expected_value = :expected_value
-        WHERE event_id = :event_id
-          AND (expected_value IS NULL OR expected_value <> :expected_value)
-    """)
+    et = ev.event_type
+    if et in _FMP_MOM_PCT_EVENT_TYPES:
+        sql = text("""
+            UPDATE macro_releases
+            SET expected_mom_pct = :estimate
+            WHERE event_id = :event_id
+              AND (expected_mom_pct IS NULL OR expected_mom_pct <> :estimate)
+        """)
+    else:
+        sql = text("""
+            UPDATE macro_releases
+            SET expected_value = :estimate
+            WHERE event_id = :event_id
+              AND (expected_value IS NULL OR expected_value <> :estimate)
+        """)
     async with engine.begin() as conn:
-        await conn.execute(sql, {"event_id": event_id, "expected_value": ev.estimate})
+        await conn.execute(sql, {"event_id": event_id, "estimate": ev.estimate})
 
 
 async def backfill_fred_series(
