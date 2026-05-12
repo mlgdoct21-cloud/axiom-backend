@@ -58,6 +58,17 @@ _FRED_EVENT_TYPE = {
     "fred_retail_sales": "RETAIL_SALES",
     "fred_ppi": "PPI",
     "fred_core_ppi": "CORE_PPI",
+    # CPI sub-kalemleri (Faz D, 2026-05-12) — storyteller'a "kira %X, enerji %Y,
+    # sağlık %Z arttı" anlatımı için. CPI_* prefixi _is_data_point_event guard'a
+    # giriyor: kendi başlarına narrative/revision broadcast tetiklemez.
+    "fred_cpi_shelter":    "CPI_SHELTER",
+    "fred_cpi_energy":     "CPI_ENERGY",
+    "fred_cpi_food":       "CPI_FOOD",
+    "fred_cpi_medical":    "CPI_MEDICAL",
+    "fred_cpi_apparel":    "CPI_APPAREL",
+    "fred_cpi_transport":  "CPI_TRANSPORT",
+    "fred_cpi_recreation": "CPI_RECREATION",
+    "fred_cpi_education":  "CPI_EDUCATION",
     # NFP sektör alt-serileri (Faz 3 sektörel kırılım). Bu event_type'lar
     # storyteller payload'ında join edilir; kendi başlarına narrative/story
     # üretilmez (narrative trigger aşağıda override edilir).
@@ -85,13 +96,16 @@ def _is_data_point_event(event_type: str) -> bool:
 
     Includes NFP supersector breakdown (NFP_HEALTH, NFP_GOVT, ...),
     FOMC fed funds target range (FED_FUNDS_UPPER, FED_FUNDS_LOWER),
-    and SEP projection medians (SEP_FUNDS_END_0, SEP_GDP_0, ...).
+    SEP projection medians (SEP_FUNDS_END_0, SEP_GDP_0, ...), and
+    CPI sub-kalemleri (CPI_SHELTER, CPI_ENERGY, CPI_FOOD, ...).
     """
     if event_type.startswith("NFP_") and event_type != "NFP":
         return True
     if event_type.startswith("FED_FUNDS_"):
         return True
     if event_type.startswith("SEP_"):
+        return True
+    if event_type.startswith("CPI_") and event_type not in ("CPI", "CORE_CPI"):
         return True
     return False
 

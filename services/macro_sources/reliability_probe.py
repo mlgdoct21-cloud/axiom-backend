@@ -75,6 +75,15 @@ SOURCE_INTERVAL: dict[str, timedelta] = {
     "fred_core_ppi": timedelta(minutes=60),
     "fred_housing_starts": timedelta(minutes=60),
     "fred_gdp": timedelta(minutes=60),
+    # CPI sub-kalemleri (Faz D) — aylık, CPI ile aynı release
+    "fred_cpi_shelter":    timedelta(minutes=60),
+    "fred_cpi_energy":     timedelta(minutes=60),
+    "fred_cpi_food":       timedelta(minutes=60),
+    "fred_cpi_medical":    timedelta(minutes=60),
+    "fred_cpi_apparel":    timedelta(minutes=60),
+    "fred_cpi_transport":  timedelta(minutes=60),
+    "fred_cpi_recreation": timedelta(minutes=60),
+    "fred_cpi_education":  timedelta(minutes=60),
     # FOMC decoder (Faz 3) — günlük seriler ama FOMC kararı dışında değer
     # değişmez; 60dk yeterli (8 toplantı/yıl, ±60dk gecikme önemsiz).
     "fred_fed_funds_upper": timedelta(minutes=60),
@@ -108,6 +117,9 @@ _FRED_SOURCES = (
     "fred_nfp_mfg", "fred_nfp_const", "fred_nfp_tpu", "fred_nfp_info",
     # FOMC decoder (Faz 3) — fed funds target range
     "fred_fed_funds_upper", "fred_fed_funds_lower",
+    # CPI sub-kalemleri (Faz D) — storyteller sektörel kırılım
+    "fred_cpi_shelter", "fred_cpi_energy", "fred_cpi_food", "fred_cpi_medical",
+    "fred_cpi_apparel", "fred_cpi_transport", "fred_cpi_recreation", "fred_cpi_education",
 )
 
 # Number of historical observations to fetch per probe. 13 lets the public
@@ -163,6 +175,15 @@ _STATES: dict[str, _SourceState] = {
     # FOMC decoder (Faz 3)
     "fred_fed_funds_upper": _SourceState(name="fred_fed_funds_upper"),
     "fred_fed_funds_lower": _SourceState(name="fred_fed_funds_lower"),
+    # CPI sub-kalemleri (Faz D)
+    "fred_cpi_shelter":    _SourceState(name="fred_cpi_shelter"),
+    "fred_cpi_energy":     _SourceState(name="fred_cpi_energy"),
+    "fred_cpi_food":       _SourceState(name="fred_cpi_food"),
+    "fred_cpi_medical":    _SourceState(name="fred_cpi_medical"),
+    "fred_cpi_apparel":    _SourceState(name="fred_cpi_apparel"),
+    "fred_cpi_transport":  _SourceState(name="fred_cpi_transport"),
+    "fred_cpi_recreation": _SourceState(name="fred_cpi_recreation"),
+    "fred_cpi_education":  _SourceState(name="fred_cpi_education"),
     "kalshi_fed": _SourceState(name="kalshi_fed"),
     "fmp_economic": _SourceState(name="fmp_economic"),
     # Day 28 part 3 — TCMB EVDS sources (3 aktif; kalan 3 kod EVDS3'te değişti)

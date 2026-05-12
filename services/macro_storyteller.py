@@ -81,6 +81,39 @@ _SOURCES: dict[str, SourceCitation] = {
         "FRED:CUUR0000SA0L1E", "FRED Core CPI (NSA)",
         "https://fred.stlouisfed.org/series/CUUR0000SA0L1E",
     ),
+    # CPI sub-kalemleri (Faz D, 2026-05-12) — storyteller sektörel kırılım
+    "FRED:CUUR0000SAH1": SourceCitation(
+        "FRED:CUUR0000SAH1", "FRED CPI Shelter (NSA)",
+        "https://fred.stlouisfed.org/series/CUUR0000SAH1",
+    ),
+    "FRED:CUUR0000SA0E": SourceCitation(
+        "FRED:CUUR0000SA0E", "FRED CPI Energy (NSA)",
+        "https://fred.stlouisfed.org/series/CUUR0000SA0E",
+    ),
+    "FRED:CUUR0000SAF1": SourceCitation(
+        "FRED:CUUR0000SAF1", "FRED CPI Food (NSA)",
+        "https://fred.stlouisfed.org/series/CUUR0000SAF1",
+    ),
+    "FRED:CUUR0000SAM": SourceCitation(
+        "FRED:CUUR0000SAM", "FRED CPI Medical Care (NSA)",
+        "https://fred.stlouisfed.org/series/CUUR0000SAM",
+    ),
+    "FRED:CUUR0000SAA": SourceCitation(
+        "FRED:CUUR0000SAA", "FRED CPI Apparel (NSA)",
+        "https://fred.stlouisfed.org/series/CUUR0000SAA",
+    ),
+    "FRED:CUUR0000SAT": SourceCitation(
+        "FRED:CUUR0000SAT", "FRED CPI Transportation Services (NSA)",
+        "https://fred.stlouisfed.org/series/CUUR0000SAT",
+    ),
+    "FRED:CUUR0000SAR": SourceCitation(
+        "FRED:CUUR0000SAR", "FRED CPI Recreation (NSA)",
+        "https://fred.stlouisfed.org/series/CUUR0000SAR",
+    ),
+    "FRED:CUUR0000SAE1": SourceCitation(
+        "FRED:CUUR0000SAE1", "FRED CPI Education & Communication (NSA)",
+        "https://fred.stlouisfed.org/series/CUUR0000SAE1",
+    ),
     "FRED:PAYEMS": SourceCitation(
         "FRED:PAYEMS", "FRED Nonfarm Payrolls",
         "https://fred.stlouisfed.org/series/PAYEMS",
@@ -452,6 +485,26 @@ async def _load_event_payload(event_id: str) -> Optional[dict]:
             })).mappings().first()
             if prow:
                 payload["paired"] = {k: prow[k] for k in prow.keys()}
+        # CPI sub-kalemleri (Faz D, 2026-05-12) — aynı released_at'te
+        # 8 alt-seri MoM% hesaplanır, prompt'a inject edilir.
+        # "Kuru veriyi zaten herkes veriyor" diferansiyasyonu.
+        payload["cpi_components"] = []
+        if et == "CPI" and row["released_at"]:
+            csql = text("""
+                SELECT event_type, actual_value, prior_value
+                FROM macro_releases
+                WHERE event_type IN (
+                    'CPI_SHELTER', 'CPI_ENERGY', 'CPI_FOOD', 'CPI_MEDICAL',
+                    'CPI_APPAREL', 'CPI_TRANSPORT', 'CPI_RECREATION', 'CPI_EDUCATION'
+                )
+                AND source = :src AND released_at = :ts
+            """)
+            crows = (await conn.execute(csql, {
+                "src": row["source"], "ts": row["released_at"],
+            })).mappings().all()
+            payload["cpi_components"] = [
+                {k: r[k] for k in r.keys()} for r in crows
+            ]
         # NFP sektör alt-serileri (Faz 3 BLS B-1 eşdeğeri) — aynı released_at'te
         # 8 supersector change_k hesaplanır, prompt'a inject edilir.
         payload["sectors"] = []
@@ -716,9 +769,42 @@ def _cpi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
 
     weights = _CPI_WEIGHTS_PCT
 
+    # CPI sub-kalemleri (Faz D) — MoM% kırılımı
+    _CPI_COMPONENT_META = {
+        "CPI_SHELTER":    ("Barınma",          "FRED:CUUR0000SAH1"),
+        "CPI_ENERGY":     ("Enerji",           "FRED:CUUR0000SA0E"),
+        "CPI_FOOD":       ("Gıda",             "FRED:CUUR0000SAF1"),
+        "CPI_MEDICAL":    ("Sağlık",           "FRED:CUUR0000SAM"),
+        "CPI_APPAREL":    ("Giyim",            "FRED:CUUR0000SAA"),
+        "CPI_TRANSPORT":  ("Ulaşım hizmetleri", "FRED:CUUR0000SAT"),
+        "CPI_RECREATION": ("Eğlence",          "FRED:CUUR0000SAR"),
+        "CPI_EDUCATION":  ("Eğitim/iletişim",  "FRED:CUUR0000SAE1"),
+    }
+    components = []
+    for c in (payload.get("cpi_components") or []):
+        et_c = c.get("event_type")
+        meta = _CPI_COMPONENT_META.get(et_c)
+        if not meta:
+            continue
+        label, source_code = meta
+        a = float(c["actual_value"]) if c.get("actual_value") is not None else None
+        p = float(c["prior_value"]) if c.get("prior_value") is not None else None
+        mom_c = _pct(a, p)
+        if mom_c is None:
+            continue
+        components.append({
+            "label": label,
+            "mom_pct": mom_c,
+            "source_code": source_code,
+        })
+    # MoM% mutlak büyüklüğüne göre sırala (en hareketli en başta)
+    components.sort(key=lambda x: abs(x["mom_pct"] or 0), reverse=True)
+
     sources_used = ["FRED:CPIAUCNS", "BLS"]
     if paired:
         sources_used.append("FRED:CUUR0000SA0L1E")
+    for comp in components:
+        sources_used.append(comp["source_code"])
 
     llm_input = {
         # Observation period (data IS FOR Apr) vs publication date (data WAS
@@ -748,6 +834,10 @@ def _cpi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
             "mom_avg_3m_pct": avg_3m_mom,
             "mom_avg_6m_pct": avg_6m_mom,
         },
+        # Faz D — CPI sub-kalemleri (MoM%, en hareketliden en sakine). Storyteller
+        # paragrafta "barınma %X arttı, enerji %Y düştü, sağlık sabit kaldı"
+        # diye anlatım yapacak.
+        "components_mom": components,
         "available_sources": [
             {"code": c, "name": _SOURCES[c].name}
             for c in sources_used if c in _SOURCES
@@ -761,6 +851,10 @@ def _cpi_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
         weights["shelter"], weights["energy"],
         weights["services_ex_shelter"], weights["food"],
     ]
+    # Sub-kalem MoM%'leri allowed_numbers'a ekle (validator için)
+    for comp in components:
+        if comp["mom_pct"] is not None:
+            allowed_inputs.append(comp["mom_pct"])
     allowed = build_allowed_numbers([v for v in allowed_inputs if v is not None])
     allowed_codes = {s["code"] for s in llm_input["available_sources"]}
     return llm_input, allowed, allowed_codes
@@ -1001,27 +1095,50 @@ def _nfp_prompt(llm_input: dict, tier: Tier) -> str:
 
 
 def _cpi_prompt(llm_input: dict, tier: Tier) -> str:
+    has_components = bool(llm_input.get("components_mom"))
     if tier == "premium":
-        word_min, word_max = 150, 500
+        word_min, word_max = 180, 550
         sections = (
-            "(1) Manşet vs beklenti — sürpriz büyüklüğü kelime ile anlatılır "
-            "(z-score yazma).\n"
+            "(1) Manşet vs beklenti — sürpriz büyüklüğü kelime ile anlatılır.\n"
             "(2) Çekirdek + 'süper çekirdek' kavramı — Fed neden buraya bakar?\n"
-            "(3) Ağırlıklar (barınma %35 vs enerji %6.5) → manşeti enerji "
+            "(3) **Enflasyon nereden geldi?** components_mom'a bak: en çok artan "
+            "ve en çok düşen 3-4 kalemi adlandır ('barınma +%X, enerji +%Y, sağlık "
+            "+%Z'). Her birinin günlük hayata etkisi 1 cümle. Bu paragraf zorunlu "
+            "— kuru endeks rakamı veriyi anlatmıyor, alt-kalemler anlatır.\n"
+            "(4) Ağırlıklar (barınma %35 vs enerji %6.5) → manşeti enerji "
             "tetikler, asıl tabloyu barınma söyler.\n"
-            "(4) Fed kararına etkisi — INPUT'taki sayılarla, yorumla.\n"
-            "(5) Aklında tut + 'Senin için 1-cümle' (BTC veya portföy)."
+            "(5) Fed kararına etkisi — INPUT'taki sayılarla, yorumla.\n"
+            "(6) Aklında tut + 'Senin için 1-cümle' (BTC veya portföy)."
+        ) if has_components else (
+            "(1) Manşet vs beklenti — sürpriz büyüklüğü kelime ile anlatılır.\n"
+            "(2) Çekirdek + 'süper çekirdek' kavramı.\n"
+            "(3) Ağırlıklar (barınma %35 vs enerji %6.5).\n"
+            "(4) Fed kararına etkisi.\n"
+            "(5) Aklında tut + 'Senin için 1-cümle'."
         )
     else:  # advance
-        word_min, word_max = 340, 680
+        word_min, word_max = 380, 750
         sections = (
             "(1) Manşet vs beklenti + tarihsel bağlam.\n"
             "(2) Çekirdek + süper çekirdek detayı.\n"
-            "(3) Ağırlıklar + sektörel önem.\n"
-            "(4) 3-aylık ve 6-aylık MoM trend → momentum okuma.\n"
-            "(5) Fed kararına etki + senaryo (örn. 'enerji %20 artarsa "
+            "(3) **Sektörel kırılım** — components_mom'da 8 alt-kalem var, en "
+            "az 5'ini MoM% rakamıyla anlat: 'barınma +%X (kira baskısı sürüyor), "
+            "enerji +%Y (akaryakıt zammı), sağlık +%Z, gıda +%W, giyim +%V'. "
+            "Hangi kalem manşeti çekti, hangi kalem yatıştırdı — kompozisyon "
+            "yorumu yap. Bu bölüm asıl katma değer; kuru veriyi rakipler veriyor.\n"
+            "(4) Ağırlıklar + sektörel önem.\n"
+            "(5) 3-aylık ve 6-aylık MoM trend → momentum okuma.\n"
+            "(6) Fed kararına etki + senaryo (örn. 'enerji %20 artarsa "
             "manşete katkısı %20 × %6.5 = %1.3').\n"
-            "(6) Risk dengesi (enerji vs istihdam yönü).\n"
+            "(7) Risk dengesi.\n"
+            "(8) Aklında tut + 'Senin için 1-cümle'."
+        ) if has_components else (
+            "(1) Manşet vs beklenti + tarihsel bağlam.\n"
+            "(2) Çekirdek + süper çekirdek detayı.\n"
+            "(3) Ağırlıklar + sektörel önem.\n"
+            "(4) 3-aylık ve 6-aylık MoM trend.\n"
+            "(5) Fed kararına etki + senaryo.\n"
+            "(6) Risk dengesi.\n"
             "(7) Aklında tut + 'Senin için 1-cümle'."
         )
 
