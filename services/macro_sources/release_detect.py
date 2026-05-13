@@ -541,7 +541,23 @@ async def _translate_fmp_actual(ev: FMPEvent) -> tuple[Optional[Decimal], Option
 
     if et in _FMP_MOM_PCT_EVENT_TYPES:
         # FMP actual is MoM% (e.g. 0.4 means +0.4%). Compose new level.
+        # Sanity guard: |MoM%| > 3.0 rejects. PPI/CORE_PPI/PCE/CORE_PCE/RETAIL
+        # monthly moves cluster in -1.5..+1.5; >3% means FMP either reported
+        # YoY in the MoM field, mapped a wrong PPI subset, or had a stale row.
+        # 2026-05-13 PPI Apr: FMP returned +4.40 (BLS canonical was +1.38) —
+        # composite produced 160.782 vs canonical 156.496 (+2.7% inflation).
+        # Block the spurious row so storyteller doesn't broadcast a fake
+        # "üretici fiyatları patladı" headline.
         try:
+            mom_abs = abs(ev.actual)
+            if mom_abs > Decimal("3.0"):
+                logger.warning(
+                    f"FMP composite sanity reject: {et} MoM%={ev.actual} "
+                    f"|{mom_abs}| > 3.0 — likely YoY-in-MoM-field or wrong "
+                    f"subset, src='{ev.raw_event_name}'. Skipping insert; "
+                    f"FRED probe will seed canonical value on next tick."
+                )
+                return None, None
             mom_factor = Decimal("1") + (ev.actual / Decimal("100"))
             new_level = prior_level * mom_factor
             # Round to 3 decimal places to match FRED's typical index precision.
@@ -832,6 +848,14 @@ async def _autoparse_sep(event_id: str, released_at: datetime) -> None:
         logger.error(f"SEP autoparse persist failed for {event_id}: {e}")
 
 
+# Strong-ref set so fire-and-forget narrative generation tasks aren't GC'd
+# while waiting on Gemini / DB. Mirrors _REVISION_BROADCAST_INFLIGHT below
+# and _STORY_BROADCAST_INFLIGHT in macro_storyteller. 2026-05-13 PPI Apr
+# incident: narrative task was scheduled but lost to GC before generate_*
+# ran, leaving narrative_md=NULL → no Telegram broadcast.
+_NARRATIVE_INFLIGHT: set = set()
+
+
 def _trigger_narrative(event_id: str) -> None:
     """Fire-and-forget narrative generation. Imported lazily to keep
     macro_narrative ↔ release_detect import order safe (narrative reads from
@@ -839,7 +863,9 @@ def _trigger_narrative(event_id: str) -> None:
     """
     try:
         from services.macro_narrative import generate_narrative_safe
-        asyncio.create_task(generate_narrative_safe(event_id))
+        task = asyncio.create_task(generate_narrative_safe(event_id))
+        _NARRATIVE_INFLIGHT.add(task)
+        task.add_done_callback(_NARRATIVE_INFLIGHT.discard)
     except Exception as e:
         logger.error(f"narrative trigger failed for {event_id}: {e}")
 

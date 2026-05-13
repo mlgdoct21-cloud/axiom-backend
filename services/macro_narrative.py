@@ -514,21 +514,48 @@ async def generate_narrative(event_id: str) -> NarrativeResult:
     return result
 
 
+# Strong-ref sets so fire-and-forget tasks aren't GC'd while awaiting
+# Telegram / Gemini. Same pattern as _STORY_BROADCAST_INFLIGHT in
+# macro_storyteller and _REVISION_BROADCAST_INFLIGHT in release_detect.
+_BROADCAST_INFLIGHT: set = set()
+_STORY_TRIGGER_INFLIGHT: set = set()
+
+
 def _trigger_broadcast(event_id: str) -> None:
-    """Fire-and-forget Telegram broadcast + market reaction capture. Lazy
-    import keeps the macro_narrative ↔ macro_broadcaster cycle safe
-    (broadcaster also uses the engine).
+    """Fire-and-forget Telegram broadcast + market reaction capture + tiered
+    storyteller (Premium/Advance multi-section). Lazy imports keep the
+    macro_narrative ↔ macro_broadcaster ↔ macro_storyteller cycle safe.
 
     Market reaction (DXY/SPY/US10Y) sadece ABD release'leri için anlamlı.
     TR release'lerinde US asset'leri yakalamak yanıltıcı olur — bu yüzden
-    event_id'sinde 'tcmb:' prefix'i varsa reaction'ı skip ediyoruz. Faz 4'te
-    TR için USDTRY/BIST/TR2Y handler'ı eklenebilir.
+    event_id'sinde 'tcmb:' prefix'i varsa reaction'ı skip ediyoruz.
+
+    Storyteller (Premium+Advance) zaten narrative oluştuğu anda fire etmeli;
+    önceden sadece admin endpoint'inden tetikleniyordu, dün PPI Apr tier
+    push'u atlandı çünkü manuel admin call yapılmamıştı. Şimdi otomatik.
     """
+    # Short broadcast (free + paid). last_broadcast_at burada stamp olur.
     try:
         from services.macro_broadcaster import broadcast_release_safe
-        asyncio.create_task(broadcast_release_safe(event_id))
+        task = asyncio.create_task(broadcast_release_safe(event_id))
+        _BROADCAST_INFLIGHT.add(task)
+        task.add_done_callback(_BROADCAST_INFLIGHT.discard)
     except Exception as e:
         logger.error(f"broadcast trigger failed for {event_id}: {e}")
+
+    # Multi-section storyteller (Premium + Advance). Each tier writes a
+    # macro_stories row + broadcasts via broadcast_story_safe inside the
+    # storyteller. Idempotent at (event_id, tier) so duplicate triggers
+    # from manual admin re-runs don't double-push.
+    try:
+        from services.macro_storyteller import generate_story_safe
+        for tier in ("premium", "advance"):
+            t = asyncio.create_task(generate_story_safe(event_id, tier, force=False))
+            _STORY_TRIGGER_INFLIGHT.add(t)
+            t.add_done_callback(_STORY_TRIGGER_INFLIGHT.discard)
+    except Exception as e:
+        logger.error(f"story trigger failed for {event_id}: {e}")
+
     if not event_id.startswith("tcmb:"):
         try:
             from services.macro_market_reaction import trigger_reaction

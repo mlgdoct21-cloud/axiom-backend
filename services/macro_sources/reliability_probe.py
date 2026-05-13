@@ -505,6 +505,18 @@ async def probe_once(*, force: bool = False) -> dict:
     except Exception as e:
         logger.error(f"pre-announce dispatcher in probe_once: {e}")
 
+    # Narrative/story backfill dispatcher — safety net for releases whose
+    # fire-and-forget chain dropped (GC, restart, exception escape). Self
+    # throttled to ~5min cadence so it doesn't pound Gemini on every tick.
+    # 2026-05-13 PPI Apr motivated this: release inserted but narrative
+    # task was lost, no Telegram broadcast went out. Strong-ref pattern is
+    # the primary fix; this is the safety net.
+    try:
+        from services.macro_backfill import backfill_missing_narratives_and_stories_safe
+        await backfill_missing_narratives_and_stories_safe()
+    except Exception as e:
+        logger.error(f"backfill dispatcher in probe_once: {e}")
+
     return {"fired": [r["source"] for r in fired], "rows": fired}
 
 
