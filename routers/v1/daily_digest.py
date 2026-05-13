@@ -1,11 +1,39 @@
 """Daily digest endpoint - Breaking news + market insights özeti"""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import asyncio
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from services.daily_digest_service import DailyDigestService
 from core.logger import get_logger
+
+# Tüm digest payload'ı için sert üst-sınır. Service zaten per-task 5s sınırlı,
+# ama route bu degraded fallback'i garanti ediyor → frontend en geç 8s'de yanıt alır.
+_DIGEST_ROUTE_TIMEOUT = 8.0
+
+
+def _degraded_payload(reason: str) -> dict:
+    return {
+        "risk_radar": {
+            "title": "AXIOM RISK RADAR",
+            "analysis": "Veri kaynağı şu an yavaş, kısa süre sonra tekrar deneyin.",
+            "symbols": [],
+            "color": "yellow",
+        },
+        "portfolio_signal": {
+            "title": "PORTFÖY SINYAL",
+            "recommendation": "Pazar verisi güncellenirken bekleyin.",
+            "symbols": [],
+            "color": "blue",
+        },
+        "vix": None,
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+        "status": "degraded",
+        "reason": reason,
+    }
 
 logger = get_logger("daily_digest_router")
 
@@ -46,7 +74,10 @@ async def get_daily_digest(db: AsyncSession = Depends(get_db)):
       Radar modal'ında, earnings sayısı MiniEarningsChip'te.
     """
     try:
-        digest = await DailyDigestService.get_daily_digest(db)
+        digest = await asyncio.wait_for(
+            DailyDigestService.get_daily_digest(db),
+            timeout=_DIGEST_ROUTE_TIMEOUT,
+        )
 
         if "error" in digest:
             logger.warning("Digest generation partially failed, returning fallback")
@@ -60,9 +91,11 @@ async def get_daily_digest(db: AsyncSession = Depends(get_db)):
             "status": "ok",
         }
 
+    except asyncio.TimeoutError:
+        # Route-level safety net: service per-task timeout'ları yeterli olmalıydı,
+        # buraya düşersek bir bağımlılık await beklenmedik şekilde uzadı demektir.
+        logger.error(f"Daily digest route timeout (>{_DIGEST_ROUTE_TIMEOUT}s) — degraded fallback")
+        return _degraded_payload("route_timeout")
     except Exception as e:
         logger.error(f"Daily digest endpoint error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to generate daily digest",
-        )
+        return _degraded_payload(f"exception: {type(e).__name__}")

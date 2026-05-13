@@ -280,31 +280,35 @@ class DailyDigestService:
         import asyncio
 
         try:
-            urgent_count_task = DailyDigestService._get_urgent_news_count(db, hours=12)
-            urgent_symbols_task = DailyDigestService._get_top_urgent_symbols(db, limit=3, hours=12)
-            overnight_task = get_overnight_markets()
-            sectors_task = get_sector_performance()
-            movers_task = get_premarket_movers(limit=3)
-            etf_flows_task = get_etf_flows()
+            # Per-task hard timeout — eski hata: bir yavaş bağımlılık (CryptoQuant
+            # cold-cache, FMP 429) tüm gather'ı kilitliyordu; Risk Radar + Portföy
+            # Sinyali UI'da boş kalıyordu (2026-05-13 incidence).
+            # Şimdi her task sınırlı; biri timeout olursa `_safe` default'a düşer,
+            # diğerleri etkilenmez.
+            _TASK_TIMEOUT = 5.0
 
-            # Earnings count (lightweight)
+            async def _bounded(coro, label: str):
+                try:
+                    return await asyncio.wait_for(coro, timeout=_TASK_TIMEOUT)
+                except asyncio.TimeoutError:
+                    logger.warning(f"daily-digest task timeout: {label}")
+                    return None
+                except Exception as e:
+                    logger.warning(f"daily-digest task error ({label}): {e}")
+                    return None
+
             from services.market_summary_service import get_earnings_today
-            earnings_task = get_earnings_today(limit=20)
-
-            # BTC on-chain snapshot (cache-first; CryptoQuant supervisor 4h refresh).
-            # Risk Radar artık netflow + funding rate ile yön sinyali veriyor.
             from services.cryptoquant_service import get_onchain_snapshot
-            onchain_task = get_onchain_snapshot("BTC")
 
             results = await asyncio.gather(
-                urgent_count_task,
-                urgent_symbols_task,
-                overnight_task,
-                sectors_task,
-                movers_task,
-                etf_flows_task,
-                earnings_task,
-                onchain_task,
+                _bounded(DailyDigestService._get_urgent_news_count(db, hours=12),       "urgent_count"),
+                _bounded(DailyDigestService._get_top_urgent_symbols(db, limit=3, hours=12), "urgent_symbols"),
+                _bounded(get_overnight_markets(),                                          "overnight"),
+                _bounded(get_sector_performance(),                                         "sectors"),
+                _bounded(get_premarket_movers(limit=3),                                    "movers"),
+                _bounded(get_etf_flows(),                                                  "etf_flows"),
+                _bounded(get_earnings_today(limit=20),                                     "earnings"),
+                _bounded(get_onchain_snapshot("BTC"),                                      "onchain"),
                 return_exceptions=True,
             )
 
@@ -320,8 +324,8 @@ class DailyDigestService:
             earnings_list = _safe(results[6], [])
             onchain = _safe(results[7], None)
 
-            # VIX (FMP-first, yfinance fallback)
-            vix = await DailyDigestService._get_vix()
+            # VIX (FMP-first, yfinance fallback) — yfinance arada 30s hang yapıyor
+            vix = await _bounded(DailyDigestService._get_vix(), "vix")
 
             # 2 card oluştur (Kantitatif kaldırıldı — Day 28 part 5)
             risk_radar = DailyDigestService._build_risk_radar(

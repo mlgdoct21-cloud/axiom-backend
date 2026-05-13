@@ -1446,10 +1446,22 @@ async def _build_eth_snapshot() -> dict:
     }
 
 
+# Cold-cache build için üst-seviye timeout. 20 fetcher × sema=5 × 12s per-call
+# worst-case 48s yapabiliyor; route ve daily-digest bu kadar bekleyemez.
+# Aşılırsa stale-any cache'e düşeriz (2026-05-13: boş-kart incidence fix).
+_SNAPSHOT_BUILD_TIMEOUT_SEC = 10.0
+
+
 async def get_onchain_snapshot(symbol: str = "BTC") -> dict:
     """
     Returns on-chain snapshot for BTC (16 sinyal full), ETH (7 sinyal),
     or XRP (8 sinyal full). Diğer semboller error döner.
+
+    Resilience katmanları (sırayla):
+      1. Fresh cache (TTL içinde) → anında dön.
+      2. Cold build, üst-seviye `_SNAPSHOT_BUILD_TIMEOUT_SEC` sınırlı.
+      3. Build timeout/exception veya degrade → stale-any cache'e düş.
+      4. Stale de yoksa structured error dön — endpoint asla hang etmez.
     """
     symbol = (symbol or "BTC").upper()
     if not _is_configured():
@@ -1459,17 +1471,34 @@ async def get_onchain_snapshot(symbol: str = "BTC") -> dict:
         return {"error": "symbol_not_supported", "symbol": symbol,
                 "supported": ["BTC", "ETH", "XRP"]}
 
-    # Try cache first
+    # 1) Fresh cache
     cached = await _cache_get("snapshot", symbol, "day")
     if cached and cached.get("_snapshot_full"):
         return cached
 
-    if symbol == "BTC":
-        raw = await _build_btc_snapshot()
-    elif symbol == "ETH":
-        raw = await _build_eth_snapshot()
-    else:  # XRP
-        raw = await _build_xrp_snapshot()
+    # 2) Cold build with hard timeout
+    async def _do_build():
+        if symbol == "BTC":
+            return await _build_btc_snapshot()
+        elif symbol == "ETH":
+            return await _build_eth_snapshot()
+        return await _build_xrp_snapshot()
+
+    raw = None
+    try:
+        raw = await asyncio.wait_for(_do_build(), timeout=_SNAPSHOT_BUILD_TIMEOUT_SEC)
+    except asyncio.TimeoutError:
+        logger.warning(f"CQ snapshot build timeout ({_SNAPSHOT_BUILD_TIMEOUT_SEC}s) — {symbol}, falling back to stale cache")
+    except Exception as e:
+        logger.warning(f"CQ snapshot build error — {symbol}: {e}, falling back to stale cache")
+
+    if raw is None:
+        stale = await _cache_get_any("snapshot", symbol, "day")
+        if stale:
+            stale = {**stale, "_stale": True}
+            return stale
+        return {"error": "snapshot_unavailable", "symbol": symbol, "_stale": False}
+
     interpreted = _interpret_signals(raw)
     snapshot = {**raw, **interpreted}
 
@@ -1480,11 +1509,16 @@ async def get_onchain_snapshot(symbol: str = "BTC") -> dict:
     actual = len(snapshot.get("signals", {}))
     if actual >= int(expected * 0.8):
         await _cache_set("snapshot", symbol, "day", snapshot, _TTL_EXCHANGE_FLOW)
-    else:
-        logger.warning(
-            f"CQ snapshot degrade — {symbol} {actual}/{expected} sinyal, "
-            f"cache yazılmadı (mevcut cache korunuyor)."
-        )
+        return snapshot
+
+    # Degrade: cache'e yazma. Mevcut stale varsa onu döndür — UI hiç boş kalmasın.
+    logger.warning(
+        f"CQ snapshot degrade — {symbol} {actual}/{expected} sinyal, "
+        f"cache yazılmadı (mevcut cache korunuyor)."
+    )
+    stale = await _cache_get_any("snapshot", symbol, "day")
+    if stale:
+        return {**stale, "_stale": True}
     return snapshot
 
 
@@ -1860,10 +1894,19 @@ async def get_btc_spot_price() -> Optional[float]:
 
 
 async def refresh_all_metrics() -> None:
-    """Force-refresh all metrics for BTC + ETH. Called by scheduler."""
+    """Force-refresh BTC + ETH snapshots.
+
+    DELETE yerine `expires_at = NOW()` — cache fiziksel olarak duruyor, sadece
+    `_cache_get` (fresh-only) miss veriyor → fresh build başlıyor. Build sırasında
+    veya başarısızsa `_cache_get_any` (stale-OK) eski veriyi servis ediyor.
+    Eskiden DELETE wipe vardı → refresh sırasında 30-60 sn boyunca tüm UI boş kalıyordu
+    (2026-05-13 incidence root cause)."""
     logger.info("CryptoQuant: refreshing BTC + ETH snapshots...")
     try:
-        sql = text("DELETE FROM cryptoquant_cache WHERE metric_key = 'snapshot'")
+        sql = text(
+            "UPDATE cryptoquant_cache SET expires_at = NOW() "
+            "WHERE metric_key = 'snapshot' AND expires_at > NOW()"
+        )
         async with engine.begin() as conn:
             await conn.execute(sql)
         # Sequential to avoid simultaneous CryptoQuant rate-limit hits.

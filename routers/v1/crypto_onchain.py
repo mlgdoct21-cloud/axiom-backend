@@ -9,6 +9,7 @@ Admin (BOT_INTERNAL_SECRET):
   POST /api/v1/admin/crypto/morning-briefing — fire briefing now
   POST /api/v1/admin/crypto/refresh        — bust cache + refresh
 """
+import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -17,8 +18,21 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from core.database import engine
+from core.logger import get_logger
 from core.security import assert_internal_secret
-from services.cryptoquant_service import get_onchain_snapshot, _is_configured, refresh_all_metrics
+from services.cryptoquant_service import (
+    get_onchain_snapshot,
+    _is_configured,
+    refresh_all_metrics,
+    _cache_get_any,
+)
+
+logger = get_logger("crypto_onchain_router")
+
+# Route-seviye sert üst-sınır. Service `get_onchain_snapshot` zaten 10s sınırlı
+# build + stale fallback yapıyor; bu route timeout sadece beklenmedik bir await
+# blokajına karşı son katman (defansif). Frontend en geç 12s'de yanıt alır.
+_ONCHAIN_ROUTE_TIMEOUT = 12.0
 from services.cryptoquant_alerts import sweep_and_dispatch, morning_briefing
 from services.cryptoquant_market import (
     get_erc20_radar,
@@ -39,8 +53,30 @@ async def onchain_snapshot(symbol: str = Query(default="BTC", max_length=10)):
             status_code=503,
             content={"error": "cryptoquant_not_configured", "symbol": symbol},
         )
-    data = await get_onchain_snapshot(symbol)
-    return JSONResponse(content=data)
+    try:
+        data = await asyncio.wait_for(
+            get_onchain_snapshot(symbol),
+            timeout=_ONCHAIN_ROUTE_TIMEOUT,
+        )
+        return JSONResponse(content=data)
+    except asyncio.TimeoutError:
+        logger.error(f"onchain route timeout (>{_ONCHAIN_ROUTE_TIMEOUT}s) — {symbol}, stale fallback")
+        stale = await _cache_get_any("snapshot", symbol, "day")
+        if stale:
+            return JSONResponse(content={**stale, "_stale": True, "_reason": "route_timeout"})
+        return JSONResponse(
+            status_code=503,
+            content={"error": "snapshot_unavailable", "symbol": symbol, "_reason": "route_timeout"},
+        )
+    except Exception as e:
+        logger.error(f"onchain route error {symbol}: {e}")
+        stale = await _cache_get_any("snapshot", symbol, "day")
+        if stale:
+            return JSONResponse(content={**stale, "_stale": True, "_reason": str(type(e).__name__)})
+        return JSONResponse(
+            status_code=503,
+            content={"error": "snapshot_unavailable", "symbol": symbol, "_reason": str(type(e).__name__)},
+        )
 
 
 @router.get("/crypto/score-history")
