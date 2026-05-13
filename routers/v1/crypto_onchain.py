@@ -236,6 +236,48 @@ async def admin_market_refresh(x_internal_secret: Optional[str] = Header(None)):
     return {"status": "market_refreshed"}
 
 
+# ── Crypto Intel Storyteller ──────────────────────────────────────────────
+
+@router.get("/market/intel-story")
+async def market_intel_story(
+    tab: str = Query(..., pattern="^(overview|erc20|stable)$"),
+    tier: str = Query(default="premium", pattern="^(premium|advance)$"),
+):
+    """Crypto Intel Storyteller — Pusula/ERC20/Stablecoin tab'ları için
+    Gemini-üretimi market commentary + deterministic action box.
+
+    Scheduler 6 saatte bir pre-generate eder; bu endpoint cache okur.
+    Premium = ~45-75 kelime narrative + action box; Advance = ~90-140 kelime + action box.
+    Free tier UI'de bu endpoint çağrılmaz (gating frontend tarafında).
+    """
+    from services.crypto_intel_storyteller import get_intel_story
+    result = await get_intel_story(tab, tier)  # type: ignore[arg-type]
+    if not result:
+        return JSONResponse(
+            status_code=204,  # No Content — scheduler henüz doldurmadı
+            content=None,
+        )
+    return JSONResponse(
+        content={
+            "tab": result.tab,
+            "tier": result.tier,
+            "story_md": result.story_md,
+            "action_box": result.action_box,
+            "generated_at": result.generated_at.isoformat() if result.generated_at else None,
+            "source_snapshot": result.source_snapshot,
+        },
+        headers={"Cache-Control": "public, max-age=900, stale-while-revalidate=3600"},
+    )
+
+
+@router.post("/admin/market/intel-story-refresh")
+async def admin_intel_story_refresh(x_internal_secret: Optional[str] = Header(None)):
+    """Tüm intel story'leri zorla yeniden üret (scheduler'ı beklemeden)."""
+    assert_internal_secret(x_internal_secret)
+    from services.crypto_intel_storyteller import refresh_all_intel_stories
+    return await refresh_all_intel_stories()
+
+
 # ── On-Chain Storyteller ─────────────────────────────────────────────────
 
 @router.get("/crypto/onchain-story")

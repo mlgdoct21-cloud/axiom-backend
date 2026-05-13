@@ -46,12 +46,17 @@ async def _refresh_loop() -> None:
 async def _market_loop() -> None:
     """Market-wide cache refresh every 6h (ERC20 radar + stablecoin pulse +
     altseason). 9 ERC20 tokens × 3 endpoints × 30s gap ≈ 14 min cold; the 6h
-    cadence gives 4 refreshes/day with plenty of headroom."""
+    cadence gives 4 refreshes/day with plenty of headroom.
+
+    Refresh sonrası Crypto Intel Storyteller'ı tetikler — 6 Gemini call ile
+    (3 tab × 2 tier) plain-Türkçe yorum + deterministic action box üretir,
+    crypto_intel_stories tablosuna yazar. Frontend bu tabloyu okur."""
     # 90s grace period at startup so the BTC/ETH refresh has the rate-limit
     # budget first; market-wide is lower priority.
     await asyncio.sleep(90)
     try:
         await refresh_market_metrics()
+        await _refresh_intel_stories_safe()
     except Exception as e:
         logger.error(f"CryptoQuant market startup refresh error: {e}")
 
@@ -59,11 +64,21 @@ async def _market_loop() -> None:
         try:
             await asyncio.sleep(_MARKET_REFRESH_INTERVAL.total_seconds())
             await refresh_market_metrics()
+            await _refresh_intel_stories_safe()
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.error(f"CryptoQuant market loop error: {e}. Retrying in 30min.")
             await asyncio.sleep(1800)
+
+
+async def _refresh_intel_stories_safe() -> None:
+    """Storyteller hatası market_loop'u öldürmesin — wrap + log."""
+    try:
+        from services.crypto_intel_storyteller import refresh_all_intel_stories
+        await refresh_all_intel_stories()
+    except Exception as e:
+        logger.error(f"Intel storyteller refresh error: {e}")
 
 
 async def _alert_loop() -> None:
