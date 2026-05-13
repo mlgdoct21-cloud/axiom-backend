@@ -47,6 +47,17 @@ _MIN_INTERVAL = timedelta(minutes=5)
 
 _LAST_RUN_AT: Optional[datetime] = None
 
+# Cost guard: per-event retry counter (process-life). After MAX_RETRIES
+# attempts where the row is still NULL or the story tier is still missing,
+# subsequent backfill ticks skip that event. Prevents a stuck release
+# (validator-reject loop, persistent Gemini outage, broken event_type)
+# from burning Gemini calls indefinitely. Restart clears the counter,
+# which is the correct semantic — operator restarts after a fix should
+# allow retry.
+MAX_RETRIES_PER_EVENT = 3
+_NARRATIVE_RETRY: dict[str, int] = {}
+_STORY_RETRY: dict[tuple[str, str], int] = {}
+
 
 def _is_due(now: datetime) -> bool:
     global _LAST_RUN_AT
@@ -63,17 +74,21 @@ async def _backfill_narratives(now: datetime) -> int:
     looks at headline event types where a narrative is expected.
     """
     cutoff = now - _BACKFILL_WINDOW
+    # Cost guard in SQL: skip patologically-revising rows (e.g. an event
+    # caught in an FMP variant collision loop). revision_count >= 5
+    # signals the row is unstable; don't waste Gemini calls until ops fix.
     sql = text("""
         SELECT event_id
         FROM macro_releases
         WHERE narrative_md IS NULL
           AND created_at >= :cutoff
+          AND revision_count < 5
           AND event_type NOT LIKE 'SEP_%'
           AND event_type NOT LIKE 'NFP_%'
           AND event_type NOT LIKE 'CPI_%'
           AND event_type NOT LIKE 'PPI_%'
           AND event_type NOT IN ('FED_FUNDS_UPPER', 'FED_FUNDS_LOWER')
-        ORDER BY released_at DESC
+        ORDER BY created_at DESC
         LIMIT 20
     """)
     try:
@@ -87,7 +102,18 @@ async def _backfill_narratives(now: datetime) -> int:
     if not event_ids:
         return 0
 
-    logger.info(f"backfill narratives: {len(event_ids)} missing → {event_ids}")
+    # Cost guard in-process: drop event_ids that already exceeded MAX_RETRIES.
+    eligible = [eid for eid in event_ids if _NARRATIVE_RETRY.get(eid, 0) < MAX_RETRIES_PER_EVENT]
+    skipped = set(event_ids) - set(eligible)
+    if skipped:
+        logger.warning(
+            f"backfill narrative: skipping {len(skipped)} event(s) at retry cap "
+            f"({MAX_RETRIES_PER_EVENT}): {sorted(skipped)}"
+        )
+    if not eligible:
+        return 0
+
+    logger.info(f"backfill narratives: {len(eligible)} missing → {eligible}")
     fired = 0
     try:
         from services.macro_narrative import generate_narrative_safe
@@ -95,7 +121,8 @@ async def _backfill_narratives(now: datetime) -> int:
         logger.error(f"backfill narrative import failed: {e}")
         return 0
 
-    for eid in event_ids:
+    for eid in eligible:
+        _NARRATIVE_RETRY[eid] = _NARRATIVE_RETRY.get(eid, 0) + 1
         try:
             await generate_narrative_safe(eid)
             fired += 1
@@ -119,13 +146,14 @@ async def _backfill_stories(now: datetime) -> int:
                       WHERE s.event_id = r.event_id AND s.tier = 'advance') AS has_advance
         FROM macro_releases r
         WHERE r.narrative_md IS NOT NULL
-          AND r.released_at >= :cutoff
+          AND r.created_at >= :cutoff
+          AND r.revision_count < 5
           AND r.event_type NOT LIKE 'SEP_%'
           AND r.event_type NOT LIKE 'NFP_%'
           AND r.event_type NOT LIKE 'CPI_%'
           AND r.event_type NOT LIKE 'PPI_%'
           AND r.event_type NOT IN ('FED_FUNDS_UPPER', 'FED_FUNDS_LOWER')
-        ORDER BY r.released_at DESC
+        ORDER BY r.created_at DESC
         LIMIT 20
     """)
     try:
@@ -145,7 +173,18 @@ async def _backfill_stories(now: datetime) -> int:
     if not missing:
         return 0
 
-    logger.info(f"backfill stories: {len(missing)} (event_id, tier) pairs missing")
+    # Cost guard in-process: drop pairs at retry cap.
+    eligible = [(eid, tier) for (eid, tier) in missing if _STORY_RETRY.get((eid, tier), 0) < MAX_RETRIES_PER_EVENT]
+    skipped = set(missing) - set(eligible)
+    if skipped:
+        logger.warning(
+            f"backfill story: skipping {len(skipped)} pair(s) at retry cap "
+            f"({MAX_RETRIES_PER_EVENT}): {sorted(skipped)}"
+        )
+    if not eligible:
+        return 0
+
+    logger.info(f"backfill stories: {len(eligible)} (event_id, tier) pairs missing")
     fired = 0
     try:
         from services.macro_storyteller import generate_story_safe
@@ -153,7 +192,8 @@ async def _backfill_stories(now: datetime) -> int:
         logger.error(f"backfill story import failed: {e}")
         return 0
 
-    for eid, tier in missing:
+    for eid, tier in eligible:
+        _STORY_RETRY[(eid, tier)] = _STORY_RETRY.get((eid, tier), 0) + 1
         try:
             await generate_story_safe(eid, tier, force=False)
             fired += 1
