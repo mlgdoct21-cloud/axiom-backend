@@ -29,11 +29,13 @@ if not SECRET_KEY or len(SECRET_KEY) < 32:
     SECRET_KEY = "dev-only-fallback-not-for-production-please-set-SECRET_KEY-env"
 
 ALGORITHM = "HS256"
-# 15 dk çok kısa → kullanıcı her 15 dk'da bir tekrar /login akışına düşüyordu
-# (frontend 401 handler yok). 24h'a çıkardık; refresh token (7 gün) hâlâ daha
-# uzun kalıyor, leak blast radius makul.
+# Access token 24h, refresh token 30 gün. Refresh token rotation aktif:
+# her /auth/refresh çağrısı yeni access + yeni refresh döner; eski refresh
+# istemcide üzerine yazılır. Sonuç: kullanıcı 30 gün içinde tek bir dashboard
+# açılışı yaparsa oturum süresiz uzar (sliding window). Pratikte günlük
+# kullanan biri için "sonsuz" oturum.
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 saat
-REFRESH_TOKEN_EXPIRE_DAYS = 7
+REFRESH_TOKEN_EXPIRE_DAYS = 30
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")

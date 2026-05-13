@@ -244,14 +244,20 @@ async def refresh_token(
                 detail="User not found or inactive"
             )
 
-        # Create new access token
+        # Refresh token rotation: yeni access + yeni refresh döndür.
+        # İstemci eski refresh'i üzerine yazınca sliding-window oturum oluşur —
+        # 30 gün içinde tek refresh yapan kullanıcı süresiz oturum kalır.
         new_access_token = AuthService.create_access_token(
-            data={"sub": user.id, "telegram_id": user.telegram_id}
+            data={"sub": str(user.id), "telegram_id": user.telegram_id}
+        )
+        new_refresh_token = AuthService.create_refresh_token(
+            data={"sub": str(user.id), "telegram_id": user.telegram_id}
         )
 
-        logger.info(f"Token refreshed for user: {user_id}")
+        logger.info(f"Token refreshed (rotated) for user: {user_id}")
         return {
             "access_token": new_access_token,
+            "refresh_token": new_refresh_token,
             "token_type": "bearer"
         }
     except HTTPException:
