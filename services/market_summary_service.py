@@ -378,7 +378,10 @@ async def get_economic_calendar(limit: int = 8) -> List[Dict[str, Any]]:
     if not data or not isinstance(data, list):
         return []
 
-    high_impact_countries = {"US", "EU", "DE", "GB", "JP", "TR", "CN", "FR"}
+    # Kullanıcı talebiyle (2026-05-13) sadece 5 majör bölge:
+    # ABD, AB, Türkiye, Çin, Japonya. DE/GB/FR ayrıca AB ile redundant,
+    # TR portföy için doğrudan ilgili, US/CN/JP makro risk yönü.
+    high_impact_countries = {"US", "EU", "TR", "CN", "JP"}
     filtered = [
         e for e in data
         if e.get("impact") in ("High", "Medium")
