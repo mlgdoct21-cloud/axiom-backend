@@ -339,6 +339,27 @@ async def _upsert_release_with_revision(
                 except (InvalidOperation, ZeroDivisionError):
                     delta_pct = None
 
+                # Revision sanity guard: |delta_pct| > 5% means a spurious
+                # FMP variant (e.g. "PPI YoY" matched as "PPI"), a wrong
+                # subset, or a stale cache hit. Real BLS/FRED revisions are
+                # typically <1% (rounding/methodology). Reject revision +
+                # no UPDATE + no audit row + no broadcast. Logged loudly so
+                # ops can audit.
+                #
+                # 2026-05-13 PPI Apr incident: FMP returned multiple PPI
+                # variants in one fetch (MoM, YoY, ex-Food&Energy), all
+                # mapped to event_type=PPI by the loose ^PPI\b regex. Each
+                # variant overwrote the prior row, generating 60+ revision
+                # broadcasts to Advance tier in 20 min.
+                if delta_pct is not None and abs(delta_pct) > Decimal("5.0"):
+                    logger.warning(
+                        f"REVISION SANITY REJECT {event_id}: "
+                        f"{old_actual} → {actual} delta_pct={delta_pct:.2f}% "
+                        f"|>5%| — likely spurious FMP variant or wrong "
+                        f"subset. Row unchanged, no broadcast."
+                    )
+                    return "unchanged"
+
                 await conn.execute(
                     text("""
                         UPDATE macro_releases
