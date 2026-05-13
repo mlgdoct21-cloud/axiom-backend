@@ -29,7 +29,10 @@ if not SECRET_KEY or len(SECRET_KEY) < 32:
     SECRET_KEY = "dev-only-fallback-not-for-production-please-set-SECRET_KEY-env"
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 15
+# 15 dk çok kısa → kullanıcı her 15 dk'da bir tekrar /login akışına düşüyordu
+# (frontend 401 handler yok). 24h'a çıkardık; refresh token (7 gün) hâlâ daha
+# uzun kalıyor, leak blast radius makul.
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 saat
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 
 # Password hashing
