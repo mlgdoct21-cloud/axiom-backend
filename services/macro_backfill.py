@@ -28,10 +28,18 @@ from core.logger import get_logger
 
 logger = get_logger("macro.backfill")
 
-# Look-back window: 24h covers the longest plausible LLM/Telegram outage
-# without re-processing ancient releases. Pre-2026-05-13 releases are
-# already complete from manual admin pushes.
-_BACKFILL_WINDOW = timedelta(hours=24)
+# Look-back window: 6h covers normal release-detect → narrative → broadcast
+# latency, restarts, and Gemini/Telegram transient outages, without dragging
+# in day-old "already missed the moment" releases. Filter is on `created_at`
+# (DB insert wall-clock) not `released_at` (observation-period start, which
+# is always the 1st of the previous month for monthly releases — useless
+# for freshness filtering).
+#
+# 2026-05-13 PPI Apr context: filed at created_at=12:34:41 UTC, this catches
+# it within 6h. Day-old JOBLESS releases (created 2026-05-12) fall outside
+# this window — they need an explicit admin /backfill call, NOT an
+# automatic 24h-late Telegram push that would look broken to users.
+_BACKFILL_WINDOW = timedelta(hours=6)
 
 # Minimum spacing between full backfill passes. probe_once ticks every
 # 30s but backfill is heavier (Gemini calls), so we throttle to 5 min.
@@ -59,7 +67,7 @@ async def _backfill_narratives(now: datetime) -> int:
         SELECT event_id
         FROM macro_releases
         WHERE narrative_md IS NULL
-          AND released_at >= :cutoff
+          AND created_at >= :cutoff
           AND event_type NOT LIKE 'SEP_%'
           AND event_type NOT LIKE 'NFP_%'
           AND event_type NOT LIKE 'CPI_%'
