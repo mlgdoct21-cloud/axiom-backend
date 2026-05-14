@@ -65,26 +65,32 @@ _EVENT_TYPE_MAP = (
     (re.compile(r"^Unemployment Rate\s*\(", re.I),       "UNRATE",    "US"),
 
     # --- MoM% events (composite translation to FRED level in release_detect) ----
-    # Core PPI — daha spesifik ("Core" kelimesi PPI'dan önce) önce yazılmalı.
-    (re.compile(r"^Core PPI\b", re.I),                  "CORE_PPI",  "US"),
-    (re.compile(r"^PPI\b", re.I),                       "PPI",       "US"),
-    (re.compile(r"^Producer Price Index", re.I),        "PPI",       "US"),
-    # Core PCE — daha spesifik önce.
-    (re.compile(r"^Core PCE", re.I),                    "CORE_PCE",  "US"),
-    (re.compile(r"^PCE Price Index", re.I),             "PCE",       "US"),
-    (re.compile(r"^PCE\b", re.I),                       "PCE",       "US"),
-    # Retail Sales (Core önce)
-    (re.compile(r"^Core Retail Sales", re.I),           "CORE_RETAIL_SALES", "US"),
-    (re.compile(r"^Retail Sales", re.I),                "RETAIL_SALES", "US"),
+    # 2026-05-14: FMP variant collision fix. FMP her release için 3-4 variant
+    # gönderiyor (MoM / YoY / Ex Food&Trade / Ex Autos / Private). Geniş
+    # regex'ler ("^PPI\b", "^Core PPI\b", "^Nonfarm Payrolls") bu variant'ları
+    # yutup spurious revision + actual_value bozulması üretiyordu (PPI Apr
+    # incident). Artık sadece headline MoM variant'ı match ediyor; YoY/Ex/
+    # Private variant'ları reddedilir.
+    (re.compile(r"^Core PPI MoM\s*\(", re.I),                "CORE_PPI",          "US"),
+    (re.compile(r"^Producer Price Index MoM\s*\(", re.I),    "PPI",               "US"),
+    (re.compile(r"^Core PCE Price Index MoM\s*\(", re.I),    "CORE_PCE",          "US"),
+    (re.compile(r"^PCE Price Index MoM\s*\(", re.I),         "PCE",               "US"),
+    # "Retail Sales Ex Autos" = Investing.com "Core Retail Sales" (FMP'in
+    # ayrı bir "Core Retail Sales" event'i yok). "Ex Gas/Autos" başka bir
+    # variant — Core değil, reddedilir.
+    (re.compile(r"^Retail Sales Ex Autos MoM\s*\(", re.I),   "CORE_RETAIL_SALES", "US"),
+    (re.compile(r"^Retail Sales MoM\s*\(", re.I),            "RETAIL_SALES",      "US"),
 
     # --- Thousands-of-jobs delta (composite: prior PAYEMS + delta) ----
-    (re.compile(r"^Nonfarm Payrolls", re.I),            "NFP",       "US"),
-    (re.compile(r"^Non-Farm Payrolls", re.I),           "NFP",       "US"),
-    (re.compile(r"^NFP\b", re.I),                       "NFP",       "US"),
+    # FMP "Non Farm Payrolls (Apr)" (tiresiz, boşluklu). Eski "^Nonfarm
+    # Payrolls" "Nonfarm Payrolls Private" sektör variant'ını yutuyordu
+    # (collision); "^Non-Farm Payrolls" (tireli) FMP'in tiresiz formatını
+    # miss ediyordu (NFP headline hiç ingest edilmiyor olabilirdi).
+    (re.compile(r"^Non Farm Payrolls\s*\(", re.I),           "NFP",               "US"),
 
     # --- Thousands level (FMP and FRED ICSA both store thousands) ----
-    (re.compile(r"^Initial Jobless Claims", re.I),      "JOBLESS_INITIAL", "US"),
-    (re.compile(r"^Continuing Jobless Claims", re.I),   "JOBLESS_CONTINUING", "US"),
+    (re.compile(r"^Initial Jobless Claims\s*\(", re.I),      "JOBLESS_INITIAL",   "US"),
+    (re.compile(r"^Continuing Jobless Claims\s*\(", re.I),   "JOBLESS_CONTINUING", "US"),
 )
 
 # Months for period parsing — both English (FMP locale) and short forms.
