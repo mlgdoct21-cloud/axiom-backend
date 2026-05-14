@@ -85,16 +85,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to start crawler supervisor: {e}")
 
-    # Start ETF flow scraper (daily, scrapes coinglass + fallback chain)
-    try:
-        etf_scraper_task = asyncio.create_task(etf_scraper_supervisor())
-        logger.info("ETF flow scraper started")
-    except Exception as e:
-        logger.error(f"Failed to start ETF scraper: {e}")
+    # 2026-05-14: legacy `etf_scraper_supervisor` (24h fallback chain via
+    # bitbo/btcetffundflow/fmp_approx) disabled. It was running in parallel
+    # with coinglass_scraper_supervisor and overwriting fresh CoinGlass data
+    # with stale/derived values from secondary sources every 24h — visible
+    # as "value changed" complaints when in fact two schedulers fought.
+    # CoinGlass cron-style (daily at TARGET_HOUR_UTC) is now the sole source.
+    # Re-enable only if CoinGlass scraping breaks for >48h.
+    # try:
+    #     etf_scraper_task = asyncio.create_task(etf_scraper_supervisor())
+    #     logger.info("ETF flow scraper started")
+    # except Exception as e:
+    #     logger.error(f"Failed to start ETF scraper: {e}")
 
-    # CoinGlass Playwright supervisor — 6h cadence, BTC + ETH fresh data.
-    # Replaces the unreliable .github/workflows/coinglass-etf-cron.yml
-    # (May 6 06:00 UTC schedule run was deferred 2.5h, leaving stale modal).
+    # CoinGlass Playwright supervisor — cron-style daily fire at TARGET_HOUR_UTC
+    # (default 04:00 UTC = TR 07:00, ~7h after NYSE close). Sole ETF flow
+    # source; replaces both the legacy 24h fallback scheduler above and the
+    # unreliable .github/workflows/coinglass-etf-cron.yml.
     try:
         coinglass_task = asyncio.create_task(coinglass_scraper_supervisor())
         logger.info("CoinGlass scheduler started")

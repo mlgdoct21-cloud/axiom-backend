@@ -5,17 +5,24 @@ GitHub Actions scheduled cron — that turned out unreliable (the May 6 06:00
 UTC run was deferred 2.5h, leaving the dashboard 9h stale). Running here
 gives us:
   - 24/7 process lifecycle tied to the backend
-  - 6h cadence (4 runs/day) so users see post-market data within the window
+  - Cron-style daily fire at a fixed UTC hour (default 04:00 UTC = TR 07:00,
+    ~7h after NYSE close so the prior trading day's flow is finalized)
   - Direct DB writes via save_etf_flow (no HTTP roundtrip back to ourselves)
   - One source of truth for secrets (no GH secret duplication)
 
 Requires Chromium installed in the container — added to Dockerfile via
 `playwright install --with-deps chromium`. If the install is missing the
 supervisor logs the failure once and stays quiescent (does not crash startup).
+
+2026-05-14: switched from 6h fixed interval to cron-style fixed UTC hour.
+The 6h schedule drifted with Railway restarts (boot at 22:26 → scrapes at
+22:26/04:26/10:26/16:26; next deploy at 13:28 → scrapes at 13:28/19:28/...).
+Users expected "each morning at the same time" — fixed UTC hour delivers that.
 """
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -36,9 +43,16 @@ USER_AGENT = (
 COINGECKO_IDS = {"BTC": "bitcoin", "ETH": "ethereum"}
 SPOT_PRICE_FALLBACK = {"BTC": 80_000.0, "ETH": 2_300.0}
 
-SCRAPE_INTERVAL = timedelta(hours=6)
+# Daily fire at this UTC hour (default 04:00 UTC = TR 07:00). NYSE closes at
+# 21:00 UTC; CoinGlass typically finalizes prior-day flow within 4-6h after
+# close, so 04:00 UTC is comfortably past the settle window.
+TARGET_HOUR_UTC = int(os.getenv("COINGLASS_SCRAPE_HOUR_UTC", "4"))
+TARGET_MINUTE_UTC = int(os.getenv("COINGLASS_SCRAPE_MINUTE_UTC", "0"))
 RETRY_INTERVAL = timedelta(minutes=30)
-STARTUP_REFRESH_THRESHOLD = timedelta(hours=6)
+# Startup catch-up: if cache is older than this, scrape immediately on boot
+# instead of waiting until the next TARGET_HOUR_UTC tick. 18h means a daily
+# scrape that missed once still gets corrected the same day.
+STARTUP_REFRESH_THRESHOLD = timedelta(hours=18)
 
 
 # ─── Parsing helpers ───────────────────────────────────────────────────────
@@ -282,22 +296,49 @@ async def _needs_refresh(symbol: str) -> bool:
     return age >= STARTUP_REFRESH_THRESHOLD
 
 
-async def coinglass_scraper_supervisor():
-    """6h cadence supervisor. Runs in main.py lifespan as a background task.
+def _seconds_until_next_target(now: datetime) -> tuple[float, datetime]:
+    """How many seconds until the next TARGET_HOUR_UTC:TARGET_MINUTE_UTC tick.
 
-    On startup: if cache is older than STARTUP_REFRESH_THRESHOLD, scrape now;
-    otherwise wait one full interval. Failures back off by RETRY_INTERVAL but
-    never crash the supervisor (caught and logged)."""
-    logger.info("CoinGlass scheduler supervisor started (interval=6h)")
+    Returns (seconds, target_datetime). If today's tick is already past,
+    schedule for tomorrow.
+    """
+    target = now.replace(
+        hour=TARGET_HOUR_UTC,
+        minute=TARGET_MINUTE_UTC,
+        second=0,
+        microsecond=0,
+    )
+    if target <= now:
+        target += timedelta(days=1)
+    return (target - now).total_seconds(), target
+
+
+async def coinglass_scraper_supervisor():
+    """Cron-style supervisor — fires once per UTC day at TARGET_HOUR_UTC.
+
+    Runs in main.py lifespan as a background task. Startup catch-up:
+    if cache is older than STARTUP_REFRESH_THRESHOLD, scrape immediately
+    instead of waiting for the next tick (covers the case where a deploy
+    missed the daily tick window). Failures retry once after RETRY_INTERVAL
+    but never crash the supervisor (caught and logged).
+    """
+    logger.info(
+        f"CoinGlass scheduler started — daily fire at "
+        f"{TARGET_HOUR_UTC:02d}:{TARGET_MINUTE_UTC:02d} UTC "
+        f"(TR {(TARGET_HOUR_UTC + 3) % 24:02d}:{TARGET_MINUTE_UTC:02d})"
+    )
 
     try:
         btc_old = await _needs_refresh("BTC")
         eth_old = await _needs_refresh("ETH")
         if btc_old or eth_old:
-            logger.info(f"Startup: stale cache (btc={btc_old} eth={eth_old}) — scraping now")
+            logger.info(
+                f"Startup catch-up: stale cache (btc={btc_old} eth={eth_old}) "
+                f"— scraping now"
+            )
             await scrape_both_symbols()
         else:
-            logger.info("Startup: cache fresh, deferring first scrape")
+            logger.info("Startup: cache fresh, waiting for next daily tick")
     except asyncio.CancelledError:
         return
     except Exception as e:
@@ -305,11 +346,19 @@ async def coinglass_scraper_supervisor():
 
     while True:
         try:
-            await asyncio.sleep(SCRAPE_INTERVAL.total_seconds())
-            logger.info("CoinGlass scheduled scrape triggered")
+            now = datetime.now(timezone.utc)
+            wait_seconds, next_target = _seconds_until_next_target(now)
+            logger.info(
+                f"Next CoinGlass scrape scheduled for {next_target.isoformat()} "
+                f"({wait_seconds/3600:.1f}h from now)"
+            )
+            await asyncio.sleep(wait_seconds)
+            logger.info("CoinGlass daily scheduled scrape triggered")
             results = await scrape_both_symbols()
             if not (results["btc"] and results["eth"]):
-                logger.warning(f"Partial scrape ({results}); retry in {RETRY_INTERVAL}")
+                logger.warning(
+                    f"Partial scrape ({results}); retry in {RETRY_INTERVAL}"
+                )
                 await asyncio.sleep(RETRY_INTERVAL.total_seconds())
                 await scrape_both_symbols()
         except asyncio.CancelledError:
