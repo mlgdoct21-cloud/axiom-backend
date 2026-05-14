@@ -71,7 +71,13 @@ _EVENT_TYPE_MAP = (
     # yutup spurious revision + actual_value bozulması üretiyordu (PPI Apr
     # incident). Artık sadece headline MoM variant'ı match ediyor; YoY/Ex/
     # Private variant'ları reddedilir.
-    (re.compile(r"^Core PPI MoM\s*\(", re.I),                "CORE_PPI",          "US"),
+    # 2026-05-14: CORE_PPI FMP regex disabled. FMP rounds Core PPI MoM to
+    # 1 decimal (e.g. "1.0%") while BLS canonical WPSFD49116 yields 0.566%
+    # for Apr 2026. Composite 140.447 × 1.010 = 141.851 vs FRED canonical
+    # 141.242 → 0.43% per-tick toggle spam between FMP+FRED probes. FRED
+    # primary is canonical for Core PPI; re-enable only if FMP precision
+    # improves or with a source-precedence guard in release_detect.
+    # (re.compile(r"^Core PPI MoM\s*\(", re.I),                "CORE_PPI",          "US"),
     (re.compile(r"^Producer Price Index MoM\s*\(", re.I),    "PPI",               "US"),
     (re.compile(r"^Core PCE Price Index MoM\s*\(", re.I),    "CORE_PCE",          "US"),
     (re.compile(r"^PCE Price Index MoM\s*\(", re.I),         "PCE",               "US"),
