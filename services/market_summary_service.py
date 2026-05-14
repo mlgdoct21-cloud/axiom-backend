@@ -268,6 +268,7 @@ def _format_hybrid(cached: Dict[str, Any], fmp: Dict[str, Any]) -> Dict[str, Any
         "coin_price": cached.get("spot_price") or fmp.get("coin_price") or 0,
         "source": cached["source"],
         "scraped_at": cached["scraped_at"],
+        "data_date": cached.get("data_date"),
         "age_hours": cached["age_hours"],
         "is_fresh": cached["is_fresh"],
         "is_stale": cached["is_stale"],

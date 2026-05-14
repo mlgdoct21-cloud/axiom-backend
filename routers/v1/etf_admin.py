@@ -36,13 +36,30 @@ async def trigger_coinglass_scrape(
 ):
     """Run CoinGlass Playwright scrape NOW for BTC + ETH and write to cache.
 
-    Useful after a deploy or to force a refresh outside the 6h supervisor
-    interval. Returns the per-symbol success map. Synchronous — request
-    waits for both scrapes (typically ~15s)."""
+    Useful after a deploy or to force a refresh outside the daily supervisor
+    tick. Returns the per-symbol success map. Synchronous — request waits
+    for both scrapes (typically ~15s).
+
+    Also invalidates the in-memory dashboard-summary cache so the fresh
+    values surface immediately on the next dashboard load (previously,
+    operators had to wait up to 5min for the 300s TTL to expire even
+    though the DB row was already fresh).
+    """
     assert_internal_secret(x_internal_secret)
     from services.coinglass_scheduler import scrape_both_symbols
     results = await scrape_both_symbols()
-    return {"ok": True, "results": results}
+
+    # Invalidate dashboard-summary cache so fresh ETF data is visible
+    # immediately rather than waiting for the 5min TTL.
+    try:
+        from routers.v1 import dashboard_summary as _ds
+        _ds._cache["data"] = None
+        _ds._cache["expires_at"] = 0.0
+    except Exception:
+        # Non-fatal: cache will expire on its own within 5min.
+        pass
+
+    return {"ok": True, "results": results, "cache_invalidated": True}
 
 
 @router.post("/cache")
