@@ -49,6 +49,39 @@ async def health_report(
     return await rolling_health_report(source=source, hours=hours)
 
 
+@router.get("/budget")
+async def budget_snapshot(x_internal_secret: Optional[str] = Header(None)):
+    """Operational guardrail snapshot: Gemini 24h budget + recent broadcast
+    counters. Use during incidents to see if either cap is about to fire
+    (pathological revision loop, Gemini call storm).
+    """
+    assert_internal_secret(x_internal_secret)
+    from services.gemini_budget import current_usage as gemini_usage
+    async with engine.begin() as conn:
+        broadcast_top = (await conn.execute(text("""
+            SELECT event_id, COUNT(*) AS n
+            FROM macro_release_revisions
+            WHERE broadcasted_at IS NOT NULL
+              AND broadcasted_at >= NOW() - INTERVAL '24 hours'
+            GROUP BY event_id
+            ORDER BY n DESC
+            LIMIT 10
+        """))).mappings().all()
+        broadcast_total = (await conn.execute(text("""
+            SELECT COUNT(*) FROM macro_release_revisions
+            WHERE broadcasted_at IS NOT NULL
+              AND broadcasted_at >= NOW() - INTERVAL '24 hours'
+        """))).scalar() or 0
+    return {
+        "gemini": gemini_usage(),
+        "broadcasts_24h": {
+            "total": int(broadcast_total),
+            "top_events": [{"event_id": r["event_id"], "count": int(r["n"])}
+                           for r in broadcast_top],
+        },
+    }
+
+
 @router.post("/probe")
 async def trigger_probe(x_internal_secret: Optional[str] = Header(None)):
     """Force-probe now (debug). Bypasses the 5-min interval."""

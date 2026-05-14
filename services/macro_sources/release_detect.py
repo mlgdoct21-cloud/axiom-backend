@@ -189,6 +189,9 @@ def _is_within_fmp_tolerance(
     old: Optional[Decimal],
     new: Decimal,
     event_type: str,
+    *,
+    old_source: Optional[str] = None,
+    new_source: Optional[str] = None,
 ) -> bool:
     """For FMP-primary event_types, allow small rounding diff between
     FMP-composite level and FRED official level.
@@ -196,7 +199,17 @@ def _is_within_fmp_tolerance(
     Composite for PPI: prior_level × (1 + MoM/100), rounded to 3 decimals.
     FRED publishes 3-decimal level. Difference usually <0.05 in 138.xxx scale.
 
-    Tolerance: 0.1% relative (or absolute 0.05 in the unit if level<10).
+    2026-05-14: source-aware threshold — when the write crosses source
+    boundary (FMP→FRED or FRED→FMP) we accept up to 1% rounding spread
+    because FMP rounds MoM to 1 decimal (e.g. 1.0% vs real 0.566%) and
+    its composite level can drift that much from FRED canonical. CORE_PPI
+    Apr 2026 incident: FMP 141.851 vs FRED 141.242, 0.43% gap, sneaks
+    under the old 0.1% guard and toggles every probe tick.
+
+    Same-source writes (FRED retroactive revision) keep the tight 0.1%
+    threshold — real BLS methodology revisions should still broadcast.
+
+    Falls back to absolute 0.05 for small-scale (e.g. UNRATE % around 3-4).
     """
     if event_type not in _FMP_PRIMARY_EVENT_TYPES:
         return False
@@ -208,9 +221,15 @@ def _is_within_fmp_tolerance(
             return True
         if old == 0:
             return abs_diff < Decimal("0.01")
-        # Relative diff < 0.1%
         rel_diff = abs_diff / abs(old)
-        if rel_diff < Decimal("0.001"):
+        # Cross-source spread: looser 1% threshold. Same-source: tight 0.1%.
+        cross_source = (
+            old_source is not None
+            and new_source is not None
+            and old_source != new_source
+        )
+        threshold = Decimal("0.01") if cross_source else Decimal("0.001")
+        if rel_diff < threshold:
             return True
         # Absolute diff < 0.05 for small-scale numbers (UNRATE % around 3-4)
         if abs(old) < Decimal("10") and abs_diff < Decimal("0.05"):
@@ -251,7 +270,7 @@ async def _upsert_release_with_revision(
     try:
         async with engine.begin() as conn:
             old_row = (await conn.execute(
-                text("SELECT actual_value FROM macro_releases WHERE event_id = :eid"),
+                text("SELECT actual_value, source FROM macro_releases WHERE event_id = :eid"),
                 {"eid": event_id},
             )).mappings().first()
 
@@ -307,14 +326,30 @@ async def _upsert_release_with_revision(
                 # 138.520 (official). Treat as silent backfill if within
                 # tolerance — overwrite to FRED's exact value, NO revision
                 # broadcast (this is a precision fix, not a real revision).
-                if _is_within_fmp_tolerance(old_actual, actual, event_type):
+                if _is_within_fmp_tolerance(
+                    old_actual, actual, event_type,
+                    old_source=old_row.get("source"), new_source=source,
+                ):
+                    # Flip source to the latest writer so subsequent same-source
+                    # probes hit the tight tolerance path (they shouldn't change
+                    # the value, but if FMP/FRED converge over time this keeps
+                    # the row source canonical). Without the flip, alternating
+                    # probes can flap source back-and-forth even though the
+                    # value is silently backfilled.
                     await conn.execute(
                         text("""
                             UPDATE macro_releases
-                            SET actual_value = :actual_value
+                            SET actual_value = :actual_value,
+                                source = :source,
+                                source_url = :source_url
                             WHERE event_id = :event_id
                         """),
-                        {"event_id": event_id, "actual_value": actual},
+                        {
+                            "event_id": event_id,
+                            "actual_value": actual,
+                            "source": source,
+                            "source_url": source_url,
+                        },
                     )
                     return "unchanged"
                 if old_actual is None:

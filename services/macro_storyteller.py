@@ -1811,6 +1811,10 @@ def _ppi_prompt(llm_input: dict, tier: Tier) -> str:
 # ---------- Gemini ----------
 
 async def _call_gemini(prompt: str, *, max_tokens: int = 8192) -> Optional[dict]:
+    from services.gemini_budget import check_budget
+    allowed, _used, _cap = await check_budget(caller="macro_storyteller")
+    if not allowed:
+        return None
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key or "buraya" in api_key:
         logger.error("GEMINI_API_KEY missing for storyteller")

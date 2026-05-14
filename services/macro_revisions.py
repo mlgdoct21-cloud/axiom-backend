@@ -197,12 +197,43 @@ async def _stamp_revision_broadcast(revision_id: int) -> None:
         )
 
 
+# 2026-05-14: per-event-id rolling 24h broadcast cap. PPI Apr incident sent
+# 294 revision broadcasts for one event in 18h (FMP variant collision toggle).
+# 3 broadcasts/24h is a generous ceiling for legitimate revisions (BLS rarely
+# revises the same release more than 2-3 times in a cycle) and an absolute
+# kill-switch for pathological loops. Hit = stamp the audit row anyway
+# (idempotency) and emit a loud log line so ops can react.
+_MAX_BROADCASTS_PER_EVENT_24H = int(os.getenv("MACRO_REVISION_24H_CAP", "3"))
+
+
+async def _count_recent_broadcasts(event_id: str) -> int:
+    """How many revision rows for this event_id were broadcast in the last 24h."""
+    try:
+        async with AsyncSessionLocal() as session:
+            r = await session.execute(
+                text("""
+                    SELECT COUNT(*) FROM macro_release_revisions
+                    WHERE event_id = :eid
+                      AND broadcasted_at IS NOT NULL
+                      AND broadcasted_at >= NOW() - INTERVAL '24 hours'
+                """),
+                {"eid": event_id},
+            )
+            return int(r.scalar() or 0)
+    except Exception as e:
+        # Fail-open: count failure shouldn't block a real revision broadcast.
+        # The risk window is small; loud log so we notice.
+        logger.warning(f"recent broadcast count failed for {event_id}: {e}")
+        return 0
+
+
 async def broadcast_revision(event_id: str, *, force: bool = False) -> dict:
     """Latest revision for event_id'i Advance kullanıcılara push'la.
 
     Eşik kontrolü:
     - _REVISION_THRESHOLDS_ABS altı → skip (noise)
     - delta None → skip (audit row corrupt)
+    - 24h içinde aynı event >=_MAX_BROADCASTS_PER_EVENT_24H broadcast → cap (PPI spam guard)
 
     Idempotency: revision row'un broadcasted_at stamp'i.
     Kill-switch: MACRO_REVISION_BROADCAST_ENABLED=false.
@@ -220,6 +251,22 @@ async def broadcast_revision(event_id: str, *, force: bool = False) -> dict:
 
     if not force and ctx.get("broadcasted_at"):
         return {"sent": 0, "failed": 0, "skipped_already_broadcasted": True}
+
+    # Pathological-loop cap. force=True bypasses for legitimate admin re-broadcast.
+    if not force:
+        recent = await _count_recent_broadcasts(event_id)
+        if recent >= _MAX_BROADCASTS_PER_EVENT_24H:
+            await _stamp_revision_broadcast(ctx["id"])  # idempotency
+            logger.error(
+                f"🚨 REVISION BROADCAST CAP HIT for {event_id}: "
+                f"{recent} broadcasts in last 24h >= cap={_MAX_BROADCASTS_PER_EVENT_24H}. "
+                f"Skipping — likely pathological revision loop (FMP↔FRED toggle, "
+                f"variant collision, etc.). Investigate macro_release_revisions."
+            )
+            return {
+                "sent": 0, "failed": 0, "cap_hit": True,
+                "recent_count_24h": recent, "cap": _MAX_BROADCASTS_PER_EVENT_24H,
+            }
 
     delta_abs = ctx.get("delta_abs")
     if delta_abs is None:

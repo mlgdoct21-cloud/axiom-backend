@@ -335,6 +335,10 @@ def _build_prompt(payload: dict, impact: SectorImpact) -> str:
 
 
 async def _call_gemini(prompt: str) -> Optional[dict]:
+    from services.gemini_budget import check_budget
+    allowed, _used, _cap = await check_budget(caller="macro_narrative")
+    if not allowed:
+        return None
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key or "buraya" in api_key:
         logger.error("GEMINI_API_KEY missing/invalid for narrative")

@@ -241,6 +241,10 @@ _PROMPT_FN = {
 
 
 async def _call_gemini(prompt: str, max_tokens: int = 1024) -> Optional[str]:
+    from services.gemini_budget import check_budget
+    allowed, _used, _cap = await check_budget(caller="crypto_intel_storyteller")
+    if not allowed:
+        return None
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key or "buraya" in api_key:
         logger.error("GEMINI_API_KEY missing for crypto_intel_storyteller")
