@@ -69,6 +69,18 @@ CORE_CPI_COOL:
   sectors_positive: [tech, growth_stocks, real_estate, consumer_discretionary, utilities]
   sectors_negative: [energy, financials]
 
+CORE_PPI_HOT:
+  description: "Core PPI above expectation; pipeline inflation ex food/energy sticky"
+  mechanism: "Underlying wholesale pressure feeds Core CPI; cuts deferred"
+  sectors_negative: [tech, growth_stocks, real_estate, consumer_discretionary, utilities]
+  sectors_positive: [energy, financials, commodities, materials]
+
+CORE_PPI_COOL:
+  description: "Core PPI undershoots; underlying wholesale pressures easing"
+  mechanism: "Pipeline disinflation supports cut bets; duration leads"
+  sectors_positive: [tech, growth_stocks, real_estate, consumer_discretionary, utilities]
+  sectors_negative: [energy, financials]
+
 CORE_PCE_HOT:
   description: "Core PCE above expectation; Fed's preferred gauge sticky"
   mechanism: "Highest Fed-policy weight; cuts pushed out more aggressively"

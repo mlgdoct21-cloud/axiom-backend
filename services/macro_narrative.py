@@ -183,6 +183,8 @@ def _categorise(release: dict) -> Optional[str]:
         return "RETAIL_HOT" if delta_pct >= 0 else "RETAIL_COOL"
     if et == "PPI":
         return "PPI_HOT" if delta_pct >= 0 else "PPI_COOL"
+    if et == "CORE_PPI":
+        return "CORE_PPI_HOT" if delta_pct >= 0 else "CORE_PPI_COOL"
     if et == "HOUSING_STARTS":
         return "HOUSING_HOT" if delta_pct >= 0 else "HOUSING_COOL"
     if et == "GDP":

@@ -23,10 +23,27 @@ logger = get_logger("macro.sector_map")
 _YAML_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "sector_impact_map.yaml"
 
 _VALID_CATEGORIES = {
+    # Headline US series
     "CPI_HOT", "CPI_COOL",
     "NFP_HOT", "NFP_COOL",
     "FOMC_HAWKISH", "FOMC_DOVISH",
     "PCE_HOT", "PCE_COOL",
+    "PPI_HOT", "PPI_COOL",
+    "RETAIL_HOT", "RETAIL_COOL",
+    "JOBLESS_LOW", "JOBLESS_HIGH",
+    "HOUSING_HOT", "HOUSING_COOL",
+    "GDP_HOT", "GDP_COOL",
+    # Core US series (food/energy stripped)
+    "CORE_CPI_HOT", "CORE_CPI_COOL",
+    "CORE_PPI_HOT", "CORE_PPI_COOL",
+    "CORE_PCE_HOT", "CORE_PCE_COOL",
+    # TR (TCMB EVDS) series
+    "TR_TUFE_HOT", "TR_TUFE_COOL",
+    "TR_CORE_TUFE_HOT", "TR_CORE_TUFE_COOL",
+    "TR_UFE_HOT", "TR_UFE_COOL",
+    "TR_HAWKISH", "TR_DOVISH",
+    "TR_UNRATE_UP", "TR_UNRATE_DOWN",
+    "TR_CURACCT_BETTER", "TR_CURACCT_WORSE",
 }
 
 
