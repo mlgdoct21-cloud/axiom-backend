@@ -104,6 +104,14 @@ async def get_latest_etf_flow(symbol: str) -> Optional[Dict[str, Any]]:
             )
             return None
 
+        # `data_date` is the trading day the flow applies to (e.g. "2026-05-13"
+        # for a scrape made on 2026-05-14 02:22 UTC reading the previous-day
+        # close). Distinguishes data-date from scrape-clock — UI was showing
+        # the latter as the headline date which misled users into thinking
+        # the number was stale or referred to today.
+        raw = row.raw_data or {}
+        data_date = raw.get("scraped_date") if isinstance(raw, dict) else None
+
         return {
             "net_flow_usd": float(row.net_flow_usd),
             "net_flow_coins": float(row.net_flow_coins),
@@ -116,6 +124,7 @@ async def get_latest_etf_flow(symbol: str) -> Optional[Dict[str, Any]]:
             ),
             "source": row.source,
             "scraped_at": scraped_at.isoformat(),
+            "data_date": data_date,
             "age_hours": round(age.total_seconds() / 3600, 1),
             "is_fresh": age <= CACHE_FRESH_MAX_AGE,
             "is_stale": age > CACHE_FRESH_MAX_AGE,
