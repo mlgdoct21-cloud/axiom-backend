@@ -152,7 +152,12 @@ async def _backfill_stories(now: datetime) -> int:
           AND r.event_type NOT LIKE 'NFP_%'
           AND r.event_type NOT LIKE 'CPI_%'
           AND r.event_type NOT LIKE 'PPI_%'
-          AND r.event_type NOT IN ('FED_FUNDS_UPPER', 'FED_FUNDS_LOWER')
+          AND r.event_type NOT IN (
+              'FED_FUNDS_UPPER', 'FED_FUNDS_LOWER',
+              -- Core companions: storyteller anchors these to their parent
+              -- series; standalone story would duplicate content.
+              'CORE_CPI', 'CORE_PPI', 'CORE_PCE', 'CORE_RETAIL_SALES'
+          )
         ORDER BY r.created_at DESC
         LIMIT 20
     """)

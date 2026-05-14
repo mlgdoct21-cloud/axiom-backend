@@ -1892,6 +1892,16 @@ _SUPPORTED_EVENT_TYPES = frozenset({
     "TR_TUFE", "TR_POLICY_RATE", "TR_UNEMPLOYMENT",
 })
 
+# Core/sub-series event types are anchored to their parent's storyteller
+# output — the parent decoder already pulls the core companion (see
+# _DECODER_DISPATCH and the "core companion" lookup at line ~531). Issuing
+# a standalone story for these would duplicate the same content the user
+# already received under the parent event, so we short-circuit with a
+# semantic "companion" reason rather than a missing-support error.
+_COMPANION_EVENT_TYPES = frozenset({
+    "CORE_CPI", "CORE_PPI", "CORE_PCE", "CORE_RETAIL_SALES",
+})
+
 # ---------- FOMC prompt builder ----------
 
 def _fomc_payload(payload: dict) -> tuple[dict, set[Decimal], set[str]]:
@@ -2760,6 +2770,12 @@ async def generate_story(
         return result
 
     et = (payload.get("event_type") or "").upper()
+    if et in _COMPANION_EVENT_TYPES:
+        result.rejection_reason = (
+            f"{et} is a companion to its parent series — anchored to the "
+            f"parent's story by design; no standalone storyteller output"
+        )
+        return result
     if et not in _SUPPORTED_EVENT_TYPES:
         result.rejection_reason = (
             f"event_type {et} not yet supported by storyteller "
