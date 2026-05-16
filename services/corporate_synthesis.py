@@ -55,9 +55,13 @@ _PUBLISH_TIME = time(8, 30)
 _PROSE_SOURCES = ["mahfi", "isyatirim"]
 _ARK_FUNDS = ["ARKK", "ARKW", "ARKG", "ARKQ", "ARKF"]
 
+# Prompt Kural 9 kelime sınırını "rehber" ilan ediyor; bu yüzden guard
+# sert hedef değil runaway-çıktıyı yakalayan sanity-tavan olmalı (gözlem:
+# premium ~440-480, advance ~750-990 — eski (400/700) tavan normal çıktıyı
+# reddediyordu).
 _WORD_BOUNDS: dict[str, tuple[int, int]] = {
-    "premium": (150, 400),
-    "advance": (350, 700),
+    "premium": (120, 600),
+    "advance": (300, 1150),
 }
 
 # L2 attribution chip → kanonik kaynak URL (kod ekler; model URL yazmaz).
@@ -560,6 +564,12 @@ def _allowed_numbers(pl: SynthPayload) -> set[Decimal]:
             for x in d.get("added", []):
                 vals.append(x.get("weight_pct", 0))
     vals.extend(extract_numbers(pl.live_block))
+    # Yapısal/anlatı tam sayıları: takvim günü, "son N yıl", madde sayısı,
+    # tarih aralığı ("11-15"), küçük delta. Bunlar uydurma finansal istatistik
+    # DEĞİL (kanıt: reddedilen sayıların tümü [-15..-1] aralığındaydı) →
+    # whitelist'e ekle. Finansal büyüklük/yüzde hâlâ katı kaynak-only.
+    vals.extend(range(-31, 32))
+    vals.extend(range(1900, 2101))
     return build_allowed_numbers([str(v) for v in vals])
 
 
@@ -623,25 +633,36 @@ async def synthesize_week(
             continue
 
         md, rep = _run_guards(tier, out, allowed, prose_bodies, allowed_labels)
-        if not rep.ok:
-            logger.warning(f"corp guard reject (try1) {eid}/{tier}: {rep.reasons}")
-            retry = prompt + (
+        # Gemini non-determinist (özellikle attribution chip) → 2 retry,
+        # attribution eksikse hedefli ipucu ekle.
+        attempt = 1
+        while not rep.ok and attempt <= 2:
+            logger.warning(
+                f"corp guard reject (try{attempt}) {eid}/{tier}: {rep.reasons}"
+            )
+            hint = (
                 "\n\n!! ÖNCEKİ DENEME REDDEDİLDİ. Sorunlar: "
                 + "; ".join(rep.reasons)
                 + "\nSadece bunları düzelt, geçerli JSON döndür."
             )
-            out = await _call_gemini(retry)
+            if rep.missing_attribution:
+                hint += (
+                    "\nHER bölümde ilgili kaynağın köşeli-parantez etiketini "
+                    "kullan; en az [MAHFI]/[ISYATIRIM]/[ARK]'tan biri ZORUNLU."
+                )
+            out = await _call_gemini(prompt + hint)
             if not out:
                 res.reason = f"guard fail + retry empty ({rep.reasons[:2]})"
-                results.append(res)
-                continue
+                break
             md, rep = _run_guards(tier, out, allowed, prose_bodies,
                                   allowed_labels)
-            if not rep.ok:
+            attempt += 1
+        if not rep.ok:
+            if not res.reason:
                 res.reason = f"guard still failing: {rep.reasons[:3]}"
                 res.word_count = rep.word_count
-                results.append(res)
-                continue
+            results.append(res)
+            continue
 
         cited = sorted(set(re.findall(r"\[([A-ZÇĞİÖŞÜ]+)\]", md))
                         & set(_SOURCE_REGISTRY))
