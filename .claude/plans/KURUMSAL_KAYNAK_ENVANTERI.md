@@ -141,6 +141,23 @@ pencere okunur. Mahfi düşük-hacim olduğu için fetch-at-synthesis yeterli.
 → Commit 3 scheduler tasarımı: kaynak başına `poll_cadence` + accumulation
 layer. ARK CSV (günlük snapshot) da benzer biriktirme ister.
 
+## 5c. S1b — ARK CSV bulgusu (smoke, 2026-05-16)
+
+S1b adaptörü (`ark_csv.py`) yazıldı + smoke koşuldu:
+- ✅ **5/5 fon** 200 (ARKK/ARKW/ARKG/ARKQ/ARKF). ARKQ dosya adı tahmin
+  değil probe ile bulundu: `ARK_AUTONOMOUS_TECH._%26_ROBOTICS_ETF_ARKQ...`.
+- ✅ Parse sağlıklı: her fonda **ağırlık toplamı %100.0**, footer/disclaimer
+  satırı atlandı (skipped=1), boş-ticker (warrant/yabancı) korunuyor.
+- ⚠️ **ARKF bayat:** as_of=2026-01-02; diğer 4 fon 2026-05-15. ARKF CSV
+  ~4.5 ay güncellenmemiş. Adaptör hatası değil (as_of doğru yüzeye
+  çıkıyor). **Sonuç:** per-fon **staleness guard** şart — macro storyteller'ın
+  veri-yaşı rozeti pattern'i: as_of bugüne göre N günden eskiyse sentezden
+  dışla/işaretle. Commit 2/3 girdisi.
+- **Telif (footer'da doğrulandı):** "no part ... reproduced ... or referred
+  to ... without written permission". Kullanım = yalnız olgusal holdings
+  (pay/ağırlık/değer faktları); ARK prose ASLA. Commit 2 attribution
+  guard'ında ARK için özel atıf metni.
+
 ## 6. GÜNCEL FAZ S1 KAPSAMI (kilitlendi)
 
 S1a İş Yatırım RSS adaptörü — **kesin easy-win, full-text**, ilk iş.
