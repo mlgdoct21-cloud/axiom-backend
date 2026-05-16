@@ -52,7 +52,10 @@ _HTTP_TIMEOUT = httpx.Timeout(40.0, connect=8.0)
 _TR_TZ = timezone(timedelta(hours=3))
 _PUBLISH_TIME = time(8, 30)
 
-_PROSE_SOURCES = ["mahfi", "isyatirim"]
+_PROSE_SOURCES = ["mahfi", "isyatirim", "tooze", "overshoot"]
+# Arka-plan sinyali gövde kırpma — prompt şişmesini/maliyeti/L_DISPLACE
+# yüzeyini sınırla (tez/sinyal yeterli; tam-metin gerekmez).
+_SIGNAL_BODY_CAP = 2800
 _ARK_FUNDS = ["ARKK", "ARKW", "ARKG", "ARKQ", "ARKF"]
 
 # Prompt Kural 9 kelime sınırını "rehber" ilan ediyor; bu yüzden guard
@@ -66,7 +69,10 @@ _WORD_BOUNDS: dict[str, tuple[int, int]] = {
 
 # Arka-plan sinyali bloklarında kullanılan iç etiket (prompt girdisi;
 # çıktıda kaynak adı/atıf YOK — data-first atıfsız AXIOM sesi).
-_LABEL_FOR_SOURCE = {"mahfi": "MAHFI", "isyatirim": "ISYATIRIM"}
+_LABEL_FOR_SOURCE = {
+    "mahfi": "MAHFI", "isyatirim": "ISYATIRIM",
+    "tooze": "TOOZE", "overshoot": "OVERSHOOT",
+}
 
 _FOOTER = (
     "Bu içerik AXIOM'un bağımsız makro değerlendirmesidir; yatırım "
@@ -322,6 +328,8 @@ def _source_blocks(pl: SynthPayload) -> str:
         pub = r.get("published")
         pub_s = pub.isoformat() if hasattr(pub, "isoformat") else str(pub)
         body = (r.get("body_text") or "").strip()
+        if len(body) > _SIGNAL_BODY_CAP:
+            body = body[:_SIGNAL_BODY_CAP] + " …(kısaltıldı)"
         lines.append(
             f"[{label}] | {pub_s} | {r.get('kind','')} | "
             f"{(r.get('title') or '').strip()}\n{body}"

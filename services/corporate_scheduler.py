@@ -18,7 +18,13 @@ from datetime import datetime, time, timedelta, timezone
 from typing import Optional
 
 from core.logger import get_logger
-from services.corporate_sources import ark_csv, isyatirim_rss, mahfi_rss
+from services.corporate_sources import (
+    ark_csv,
+    isyatirim_rss,
+    mahfi_rss,
+    overshoot_rss,
+    tooze_rss,
+)
 from services.corporate_sources.store import (
     ingest_holdings_snapshot,
     ingest_posts,
@@ -78,6 +84,8 @@ async def _poll_once() -> list[dict]:
     out = []
     out.append(await _poll_rss(mahfi_rss, "mahfi", "article"))
     out.append(await _poll_rss(isyatirim_rss, "isyatirim", "report"))
+    out.append(await _poll_rss(tooze_rss, "tooze", "essay"))
+    out.append(await _poll_rss(overshoot_rss, "overshoot", "essay"))
     out.append(await _poll_ark())
     logger.info(f"corp poll: {out}")
     return out
