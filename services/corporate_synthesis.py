@@ -483,7 +483,7 @@ sansasyon yok, tamamen veri odaklı."""
 
 # ---------- Gemini (macro_storyteller forku) ----------
 
-async def _call_gemini(prompt: str, *, max_tokens: int = 8192) -> Optional[dict]:
+async def _call_gemini(prompt: str, *, max_tokens: int = 24000) -> Optional[dict]:
     try:
         from services.gemini_budget import check_budget
         allowed, _u, _c = await check_budget(caller="corporate_synthesis")
