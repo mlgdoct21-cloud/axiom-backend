@@ -193,6 +193,26 @@ async def create_checkout_session(telegram_id: str, tier: str) -> CheckoutResult
     except Exception as e:
         logger.warning(f"create_checkout: customer lookup failed for {telegram_id}: {e}")
 
+    # First-time payer (no stripe_customer_id yet): Checkout would otherwise
+    # spawn the Customer itself and default the billing-country dropdown to the
+    # merchant country (Romania), forcing every Turkish user to switch it
+    # manually before paying. Pre-creating the Customer with country='TR'
+    # makes Checkout prefill Turkey while the field stays editable. The id is
+    # persisted by the subsequent subscription webhook, so no duplicate
+    # customers on a later upgrade. Failure here is non-fatal.
+    if not customer_id:
+        try:
+            new_customer = stripe.Customer.create(  # type: ignore[union-attr]
+                metadata={"telegram_id": str(telegram_id)},
+                address={"country": "TR"},
+            )
+            customer_id = new_customer.id
+        except Exception as e:  # pragma: no cover -- defensive
+            logger.warning(
+                f"create_checkout: TR customer pre-create failed for {telegram_id}, "
+                f"falling back to Checkout-managed customer: {e}"
+            )
+
     try:
         params: dict = {
             "mode": "subscription",
@@ -405,6 +425,10 @@ async def _apply_subscription_state(
         params["cpe"] = current_period_end
     if not sets:
         return
+    # models.User.updated_at uses SQLAlchemy onupdate=func.now(), which only
+    # fires on ORM flushes; this handler issues raw text() SQL so the hook
+    # never runs and updated_at stays frozen at signup. Bump it explicitly.
+    sets.append("updated_at = NOW()")
     sql = text(f"UPDATE users SET {', '.join(sets)} WHERE telegram_id = :tid")
     if _session is not None:
         await _session.execute(sql, params)
