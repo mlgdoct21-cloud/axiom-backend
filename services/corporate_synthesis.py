@@ -334,7 +334,10 @@ Trading sinyali değil, makro bağlam sağlar.
 2. ARDIŞIK ALINTI YASAĞI (TELİF): hiçbir kaynaktan 12+ kelimelik ardışık
    alıntı/örtüşme YAPMA. Harmanlı anlatıda kaynağın cümle yapısını/sözcük
    dizilişini TAKİP ETME; her fikri tamamen KENDİ kelimelerinle, farklı
-   cümle kurgusuyla yeniden ifade et.
+   cümle kurgusuyla yeniden ifade et. Uzun sembol/hisse/veri listelerini
+   (ör. 4+ ardışık ticker veya rakam dizisi) BİREBİR DÖKME; bunları
+   niteliksel özetle ("çok sayıda banka ve sanayi hissesi", "geniş bir
+   hisse grubu" gibi), en çok 2-3 örnek ver.
 3. DOĞAL ATIF ZORUNLULUĞU (TELİF): her iddiayı kaynağına AD ile, cümle
    içinde doğal şekilde atfet — "Mahfi Eğilmez'e göre…", "İş Yatırım
    raporları işaret ediyor ki…", "ARK fonlarının açıklanan pozisyonlarına
