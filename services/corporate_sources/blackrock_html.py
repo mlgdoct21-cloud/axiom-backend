@@ -95,7 +95,12 @@ def _parse_pubdate(doc: str) -> Optional[datetime]:
     raw = m.group(1).strip()
     for fmt in ("%B %d, %Y", "%b %d, %Y"):
         try:
-            return datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc)
+            # Date-only kaynak → gün-ortası (12:00 UTC). 00:00 kullanılırsa
+            # Pzt-yayın haftalık pencere başına (Pzt 05:30 UTC = 08:30 TR)
+            # takılıp bir önceki haftaya düşüyor (boundary bug).
+            return datetime.strptime(raw, fmt).replace(
+                hour=12, tzinfo=timezone.utc
+            )
         except ValueError:
             continue
     return None
