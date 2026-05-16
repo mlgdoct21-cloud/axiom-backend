@@ -432,6 +432,20 @@ class GuardReport:
     reasons: list[str] = field(default_factory=list)
 
 
+def _as_text(v) -> str:
+    """Gemini bazen bölüm/footer'ı string yerine dict/list döndürüyor;
+    string yapraklarını düz metne indir (chip'ler korunur)."""
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, dict):
+        return "\n".join(_as_text(x) for x in v.values())
+    if isinstance(v, (list, tuple)):
+        return "\n".join(_as_text(x) for x in v)
+    return str(v)
+
+
 def _assemble_md(tier: Tier, obj: dict) -> str:
     order = (
         ["haftanin_resmi", "kaynaklar_ne_diyor", "axiom_gorusu_ve_risk"]
@@ -450,7 +464,7 @@ def _assemble_md(tier: Tier, obj: dict) -> str:
         "senaryolar_ve_takip": "Senaryolar ve Takip",
     }
     for k in order:
-        v = (obj.get(k) or "").strip()
+        v = _as_text(obj.get(k)).strip()
         if v:
             parts.append(f"## {titles[k]}\n{v}")
     return "\n\n".join(parts)
@@ -462,7 +476,7 @@ def _run_guards(
 ) -> tuple[str, GuardReport]:
     rep = GuardReport()
     md = _assemble_md(tier, obj)
-    footer = (obj.get("footer") or "").strip()
+    footer = _as_text(obj.get("footer")).strip()
 
     # Footer (tam metin zorunlu)
     if _FOOTER[:40] not in footer:
