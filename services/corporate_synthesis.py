@@ -60,7 +60,7 @@ _ARK_FUNDS = ["ARKK", "ARKW", "ARKG", "ARKQ", "ARKF"]
 # premium ~440-480, advance ~750-990 — eski (400/700) tavan normal çıktıyı
 # reddediyordu).
 _WORD_BOUNDS: dict[str, tuple[int, int]] = {
-    "premium": (120, 600),
+    "premium": (120, 700),
     "advance": (300, 1150),
 }
 
@@ -332,7 +332,9 @@ Trading sinyali değil, makro bağlam sağlar.
 1. YALNIZCA GİRDİDEKİ SAYILARI KULLAN. Context'te yoksa sayı yazma; geçmiş
    bilgini/faiz/fiyat ekleme. İhlal → o cümleyi düşür.
 2. ARDIŞIK ALINTI YASAĞI (TELİF): hiçbir kaynaktan 12+ kelimelik ardışık
-   alıntı YAPMA. Fikri KENDİ cümlelerinle ifade et.
+   alıntı/örtüşme YAPMA. Harmanlı anlatıda kaynağın cümle yapısını/sözcük
+   dizilişini TAKİP ETME; her fikri tamamen KENDİ kelimelerinle, farklı
+   cümle kurgusuyla yeniden ifade et.
 3. DOĞAL ATIF ZORUNLULUĞU (TELİF): her iddiayı kaynağına AD ile, cümle
    içinde doğal şekilde atfet — "Mahfi Eğilmez'e göre…", "İş Yatırım
    raporları işaret ediyor ki…", "ARK fonlarının açıklanan pozisyonlarına
@@ -686,6 +688,12 @@ async def synthesize_week(
                     "\nİddiaları kaynağına AD ile doğal cümlede atfet "
                     "(ör. 'Mahfi Eğilmez'e göre…', 'İş Yatırım raporları…'); "
                     "köşeli parantez/etiket KULLANMA."
+                )
+            if rep.displaced_ngram:
+                hint += (
+                    "\nTELİF: şu ardışık ifade kaynağa fazla yakın — "
+                    f"\"{rep.displaced_ngram[:80]}\" — bu cümleyi tamamen "
+                    "farklı kelime ve kurguyla SIFIRDAN yeniden yaz."
                 )
             out = await _call_gemini(prompt + hint)
             if not out:
