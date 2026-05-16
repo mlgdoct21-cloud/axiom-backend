@@ -18,6 +18,7 @@ from .macro_public import router as macro_public_router
 from .billing import router as billing_router
 from .crypto_onchain import router as crypto_onchain_router
 from .feature_quota import router as feature_quota_router
+from .corporate_admin import router as corporate_admin_router
 
 router = APIRouter(prefix="/api/v1", tags=["v1"])
 
@@ -35,6 +36,7 @@ router.include_router(daily_digest_router, tags=["daily-digest"])
 router.include_router(dashboard_summary_router, tags=["dashboard-summary"])
 router.include_router(etf_admin_router, tags=["admin"])
 router.include_router(macro_admin_router, tags=["admin"])
+router.include_router(corporate_admin_router, tags=["admin"])
 router.include_router(macro_public_router, tags=["macro"])
 router.include_router(billing_router, tags=["billing"])
 router.include_router(crypto_onchain_router, tags=["crypto"])
