@@ -1,5 +1,12 @@
 """Adam Tooze — Chartbook (Substack) RSS adaptörü — arka-plan sinyali.
 
+⚠️ AKTİF DEĞİL (S3 headless tier'a ertelendi): adamtooze.substack.com
+Cloudflare ile Railway datacenter-IP'sini 403'lüyor (lokal IP'den 200).
+Pipeline'a bağlı DEĞİL (_PROSE_SOURCES/scheduler'dan çıkarıldı). Dosya
+latent infra: headless/proxy fetch (S3) gelince fetch_feed değişir,
+parse_feed aynen kullanılır.
+
+
 `isyatirim_rss.py` forkudur: saf parser (`parse_feed`) network fetch'ten
 (`fetch_feed`) ayrı; ETag/If-Modified-Since persist'i
 `corporate_source_state` tablosunda (source='tooze').

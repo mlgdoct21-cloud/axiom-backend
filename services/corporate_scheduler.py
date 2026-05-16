@@ -23,7 +23,6 @@ from services.corporate_sources import (
     isyatirim_rss,
     mahfi_rss,
     overshoot_rss,
-    tooze_rss,
 )
 from services.corporate_sources.store import (
     ingest_holdings_snapshot,
@@ -84,7 +83,8 @@ async def _poll_once() -> list[dict]:
     out = []
     out.append(await _poll_rss(mahfi_rss, "mahfi", "article"))
     out.append(await _poll_rss(isyatirim_rss, "isyatirim", "report"))
-    out.append(await _poll_rss(tooze_rss, "tooze", "essay"))
+    # tooze: Substack Cloudflare datacenter-IP'yi 403'lüyor → headless
+    # tier'a (S3) ertelendi; adapter dosyası latent infra olarak duruyor.
     out.append(await _poll_rss(overshoot_rss, "overshoot", "essay"))
     out.append(await _poll_ark())
     logger.info(f"corp poll: {out}")
