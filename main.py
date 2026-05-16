@@ -18,6 +18,7 @@ from services.etf_flow_scheduler import etf_scraper_supervisor
 from services.coinglass_scheduler import coinglass_scraper_supervisor
 from services.macro_sources.reliability_probe import reliability_probe_supervisor
 from services.cryptoquant_scheduler import cryptoquant_supervisor
+from services.corporate_scheduler import corporate_supervisor
 from core.logger import get_logger
 from core.schema_guard import ensure_schema
 from core.rate_limit import limiter, RateLimitExceeded
@@ -122,10 +123,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to start CryptoQuant scheduler: {e}")
 
+    # Kurumsal Sentez: poll+accumulation (3h) + haftalık Pzt 08:30 TR
+    # sentez. Broadcast kill-switch CORPORATE_SYNTH_BROADCAST_ENABLED
+    # default OFF — açılana kadar yalnız DB'ye yazar (kullanıcıya spam yok).
+    corporate_task = None
+    try:
+        corporate_task = asyncio.create_task(corporate_supervisor())
+        logger.info("Corporate synthesis scheduler started")
+    except Exception as e:
+        logger.error(f"Failed to start corporate scheduler: {e}")
+
     yield
 
     logger.info("Application shutdown")
-    for task in [bot_task, crawler_task, etf_scraper_task, coinglass_task, macro_probe_task, cryptoquant_task]:
+    for task in [bot_task, crawler_task, etf_scraper_task, coinglass_task, macro_probe_task, cryptoquant_task, corporate_task]:
         if task:
             task.cancel()
             try:

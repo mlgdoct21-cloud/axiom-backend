@@ -146,6 +146,65 @@ async def _fetch_ark_facts() -> list[dict]:
     return out
 
 
+_DELTA_MIN_PP = 0.5  # ağırlık değişimi eşiği (puan) — gürültü filtresi
+
+
+async def _ark_delta(fund: str, start: datetime, end: datetime) -> Optional[dict]:
+    """corporate_holdings_snapshots'tan pencere içi en eski + en yeni
+    snapshot → 'hafta içi hareket' (artan/azalan/yeni/çıkan). <2 snapshot
+    veya DB yok → None (fail-soft; Commit 2 tek-snapshot davranışı korunur)."""
+    try:
+        async with engine.begin() as conn:
+            rows = (await conn.execute(
+                text(
+                    "SELECT as_of, payload FROM corporate_holdings_snapshots "
+                    "WHERE fund = :f AND as_of >= :s AND as_of <= :e "
+                    "ORDER BY as_of ASC"
+                ),
+                {"f": fund.upper(), "s": start.date(), "e": end.date()},
+            )).mappings().all()
+    except Exception as e:  # noqa: BLE001
+        logger.info(f"ark_delta skip {fund}: {e}")
+        return None
+    if len(rows) < 2:
+        return None
+
+    def _wmap(payload) -> dict:
+        items = payload if isinstance(payload, list) else json.loads(payload or "[]")
+        out: dict[str, tuple[str, float]] = {}
+        for h in items:
+            tk = (h.get("ticker") or h.get("company") or "").strip()
+            if tk:
+                out[tk] = (h.get("company") or tk, float(h.get("weight_pct") or 0))
+        return out
+
+    first = _wmap(rows[0]["payload"])
+    last = _wmap(rows[-1]["payload"])
+    increased, decreased, added, removed = [], [], [], []
+    for tk, (name, w_new) in last.items():
+        if tk not in first:
+            added.append({"ticker": tk, "company": name,
+                          "weight_pct": round(w_new, 2)})
+        else:
+            dp = w_new - first[tk][1]
+            if dp >= _DELTA_MIN_PP:
+                increased.append({"ticker": tk, "company": name,
+                                   "delta_pp": round(dp, 2)})
+            elif dp <= -_DELTA_MIN_PP:
+                decreased.append({"ticker": tk, "company": name,
+                                  "delta_pp": round(dp, 2)})
+    for tk, (name, _w) in first.items():
+        if tk not in last:
+            removed.append({"ticker": tk, "company": name})
+    if not (increased or decreased or added or removed):
+        return None
+    return {
+        "from": str(rows[0]["as_of"]), "to": str(rows[-1]["as_of"]),
+        "increased": increased[:6], "decreased": decreased[:6],
+        "added": added[:6], "removed": removed[:6],
+    }
+
+
 async def build_payload(ref: Optional[date] = None) -> SynthPayload:
     start, end, week_start = _week_bounds(ref)
     prose: list[dict] = []
@@ -154,6 +213,10 @@ async def build_payload(ref: Optional[date] = None) -> SynthPayload:
     except Exception as e:  # noqa: BLE001
         logger.warning(f"build_payload read_window error (yok sayılıyor): {e}")
     ark = await _fetch_ark_facts()
+    for a in ark:  # accumulation birikince hafta-içi hareket (fail-soft)
+        d = await _ark_delta(a["fund"], start, end)
+        if d:
+            a["delta"] = d
     pl = SynthPayload(
         week_start=week_start,
         prev_iso=start.date().isoformat(),
@@ -184,10 +247,27 @@ def _source_blocks(pl: SynthPayload) -> str:
             f"{t['company']} ({t['ticker'] or '-'}) %{t['weight_pct']}"
             for t in a["top"]
         )
-        lines.append(
+        block = (
             f"[ARK] | {a['as_of']} | structured | {a['fund']} en yüksek "
             f"ağırlıklar\n{tops}"
         )
+        d = a.get("delta")
+        if d:
+            mv = []
+            for x in d.get("increased", []):
+                mv.append(f"{x['ticker']} +{x['delta_pp']}pp")
+            for x in d.get("decreased", []):
+                mv.append(f"{x['ticker']} {x['delta_pp']}pp")
+            for x in d.get("added", []):
+                mv.append(f"{x['ticker']} yeni")
+            for x in d.get("removed", []):
+                mv.append(f"{x['ticker']} çıktı")
+            if mv:
+                block += (
+                    f"\nHafta içi hareket ({d['from']}→{d['to']}): "
+                    + "; ".join(mv)
+                )
+        lines.append(block)
     return "\n\n".join(lines) if lines else "(kaynak yok)"
 
 
@@ -473,6 +553,12 @@ def _allowed_numbers(pl: SynthPayload) -> set[Decimal]:
     for a in pl.ark:
         for t in a["top"]:
             vals.append(t["weight_pct"])
+        d = a.get("delta")
+        if d:
+            for x in d.get("increased", []) + d.get("decreased", []):
+                vals.append(x["delta_pp"])
+            for x in d.get("added", []):
+                vals.append(x.get("weight_pct", 0))
     vals.extend(extract_numbers(pl.live_block))
     return build_allowed_numbers([str(v) for v in vals])
 
