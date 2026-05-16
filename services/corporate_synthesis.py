@@ -277,18 +277,42 @@ async def _build_live_block() -> str:
     except Exception as e:  # noqa: BLE001
         logger.info(f"live_block market skip: {e}")
 
-    # 3) Global gündem — son 3 gün başlıklar (alakasızları model eler)
+    # 3) Global gündem — son 5g macro-ilgili haber + ai_summary (retail
+    #    hisse-pick spam'i elenir; özet zincir-detayını besler).
     try:
+        _MACRO_KW = (
+            r"hormuz|petrol|oil|opec|enflasyon|inflation|fed|faiz|rate|cpi|"
+            r"ppi|tarife|tariff|jeopolit|geopolit|merkez bank|central bank|"
+            r"resesyon|recession|büyüme|gdp|istihdam|jobs|payroll|"
+            r"enerji|energy|gübre|fertiliz|navlun|freight|sigorta|"
+            r"insurance|tahvil|yield|dolar|kur|emtia|commodit|altın|gold|"
+            r"çip|chip|tedarik|supply chain|stablecoin|bitcoin|ecb|tcmb"
+        )
+        _NOISE = (
+            r"stocks? to buy|better buy| vs\.|overlooked|before they soar|"
+            r"should you buy|motley|best stock|top \d+ stock|price target|"
+            r"buy now|to own|dividend stock"
+        )
         async with engine.connect() as conn:
             nrows = (await conn.execute(text(
-                "SELECT source, original_title, created_at FROM news_items "
-                "WHERE created_at >= NOW() - INTERVAL '3 days' "
-                "ORDER BY created_at DESC LIMIT 8"
-            ))).mappings().all()
+                "SELECT source, original_title, ai_summary, created_at "
+                "FROM news_items "
+                "WHERE created_at >= NOW() - INTERVAL '5 days' "
+                "AND (lower(original_title) ~ :kw "
+                "     OR lower(coalesce(ai_summary,'')) ~ :kw) "
+                "AND lower(coalesce(source,'')) !~ "
+                "    'fool\\.com|247wallst|seekingalpha' "
+                "AND lower(original_title) !~ :noise "
+                "ORDER BY created_at DESC LIMIT 25"
+            ), {"kw": _MACRO_KW, "noise": _NOISE})).mappings().all()
         if nrows:
-            lines.append("GÜNDEM (son 3g başlık):")
+            lines.append("GÜNDEM (son 5g, macro-ilgili — özet zincir için):")
             for n in nrows:
-                lines.append(f"  [{n['source']}] {(n['original_title'] or '')[:90]}")
+                s = (n["ai_summary"] or "").strip().replace("\n", " ")
+                lines.append(
+                    f"  [{n['source']}] {(n['original_title'] or '')[:80]}"
+                    + (f" — {s[:200]}" if s else "")
+                )
     except Exception as e:  # noqa: BLE001
         logger.info(f"live_block news skip: {e}")
 
@@ -420,20 +444,35 @@ ALINTILAMA, İSİM/kaynak VERME; fikri dönüştürüp kendi muhakemene kat)
    göre" damgası koy ya da hariç tut.
 7. YATIRIM TAVSİYESİ YASAĞI: "al/sat" deme, yönlendirme yapma. Makro
    değerlendirme + rasyonel olasılık dili.
-8. AXIOM GÖRÜŞÜ TÜREMELİ: analiz canlı veri + global gelişmeler + sinyalin
-   dönüştürülmüş sentezinden türemeli; dışarıdan ezbere iddia ekleme.
-   Anlatının sonunda AXIOM'un net bağımsız değerlendirmesi + risk
-   perspektifi olsun.
-9. YALNIZ ham geçerli JSON döndür. Markdown başlık/madde, kod fence,
+8. AXIOM GÖRÜŞÜ + İLERİYE DÖNÜK BEKLENTİ: analiz canlı veri + global
+   gelişmeler + sinyalin dönüştürülmüş sentezinden türemeli; dışarıdan
+   ezbere iddia ekleme. Anlatının sonunda (a) AXIOM'un net bağımsız
+   değerlendirmesi + risk, ve (b) İLERİYE DÖNÜK bir bölüm olsun:
+   yaklaşan/beklenen veri ve gelişmelerin olası etkileri, AXIOM'un baz
+   senaryosu + alternatif senaryo, hangi tetikleyicide hangi yöne
+   gideceği. ŞART: olasılık/senaryo dili ("olabilir, riski artar,
+   izlenmeli"); UYDURMA gelecek-rakam/hedef-fiyat YOK (Kural 1), al/sat
+   YOK (Kural 7). Öngörü = mekanizma temelli akıl yürütme, kehanet değil.
+9. NEDEN-ZİNCİRİ ZORUNLU: olguları sıralama; aktarım mekanizmasıyla
+   BAĞLA. Her önemli gelişme için "A olduğu için B → C; çünkü <mekanizma>"
+   kur (ör. Hürmüz kapalı → navlun + gemi sigortası primi ↑ ve gübre/
+   girdi maliyeti ↑ → gıda enflasyonu baskısı; çünkü …). En az 2-3 somut
+   ikincil-etki zinciri kur; yüzeysel "belirsizlik arttı" demekle yetinme.
+10. YALNIZ ham geçerli JSON döndür. Markdown başlık/madde, kod fence,
    açıklama, ön-söz YOK. "analiz" akıcı paragraf(lar) olsun (alt-başlık
    yazma). Kelime sınırı rehberdir; uyamasan bile geçerli JSON ver.
-10. JSON'un "footer" alanına AYNEN şu metni koy: "{_FOOTER}"
+11. JSON'un "footer" alanına AYNEN şu metni koy: "{_FOOTER}"
 
 # SENTEZ METODOLOJİSİ
-Tek bir AXIOM hikâyesi yaz: haftanın makro resmi (canlı veri + global
-gündem) → bunların birbiriyle çapraz okunması (veri yoksa "veri yok" de,
-UYDURMA) → AXIOM'un bağımsız görüşü ve riskler. Ayrı bölümler/atıflar
-değil, tek akış. Hiçbir yerde kaynak adı/ "rapora göre" ifadesi olmasın.
+Tek bir AXIOM hikâyesi yaz: (1) haftanın makro resmi (canlı veri +
+global gündem); (2) NEDEN-ZİNCİRLERİ — gelişmeleri aktarım
+mekanizmasıyla bağla, ikincil/üçüncül etkileri aç (ör. boğaz kapanışı →
+navlun+sigorta primi+girdi maliyeti → gıda/çekirdek enflasyon kanalı);
+(3) verilerin birbiriyle çapraz okunması (veri yoksa "veri yok" de,
+UYDURMA); (4) AXIOM'un bağımsız görüşü + riskler; (5) İLERİYE DÖNÜK:
+yaklaşan veri/gelişmeler için baz + alternatif senaryo, tetikleyiciler
+(olasılık dili; uydurma rakam/tavsiye YOK). Ayrı bölümler/atıflar değil
+tek akış; hiçbir yerde kaynak adı/"rapora göre" ifadesi olmasın.
 
 # ÇIKTI (JSON; tier={tier}; {tgt})
 {out_schema}
