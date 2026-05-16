@@ -64,7 +64,8 @@ _WORD_BOUNDS: dict[str, tuple[int, int]] = {
     "advance": (300, 1150),
 }
 
-# L2 attribution chip → kanonik kaynak URL (kod ekler; model URL yazmaz).
+# Kaynak kayıt defteri → sondaki Kaynaklar listesi (ad+URL; kod ekler,
+# model URL yazmaz). Atıf metinde doğal AD ile yapılır (chip değil).
 _SOURCE_REGISTRY: dict[str, dict] = {
     "MAHFI": {"name": "Mahfi Eğilmez", "url": "https://www.mahfiegilmez.com/"},
     "ISYATIRIM": {"name": "İş Yatırım Araştırma",
@@ -74,6 +75,27 @@ _SOURCE_REGISTRY: dict[str, dict] = {
     "GUNDEM": {"name": "Piyasa gündemi (tema-radar)", "url": ""},
 }
 _LABEL_FOR_SOURCE = {"mahfi": "MAHFI", "isyatirim": "ISYATIRIM"}
+
+# Doğal (cümle-içi) atıf tespiti — köşeli-parantez chip yerine kaynak
+# adının metinde geçmesi yeterli (telif: atıf zorunlu, formu serbest).
+_NAME_ALIASES: dict[str, tuple[str, ...]] = {
+    "MAHFI": ("Mahfi",),
+    "ISYATIRIM": ("İş Yatırım", "Is Yatirim"),
+    "ARK": ("ARK",),
+    "GUNDEM": ("piyasa gündemi", "gündem"),
+}
+
+
+def _names_present(md: str, labels: set[str]) -> set[str]:
+    """labels içinden adı md'de (case-insensitive) geçenler."""
+    low = md.casefold()
+    out = set()
+    for lb in labels:
+        for a in _NAME_ALIASES.get(lb, ()):
+            if a in md or a.casefold() in low:
+                out.add(lb)
+                break
+    return out
 
 _FOOTER = (
     "Bu içerik AXIOM'un bağımsız makro değerlendirmesidir; adı geçen kişi "
@@ -278,25 +300,26 @@ def _source_blocks(pl: SynthPayload) -> str:
 def _build_prompt(tier: Tier, pl: SynthPayload) -> str:
     if tier == "premium":
         out_schema = (
-            '{"haftanin_resmi":"...","kaynaklar_ne_diyor":"...",'
-            '"axiom_gorusu_ve_risk":"...","footer":"...(SABIT METIN)"}'
+            '{"analiz":"...(TEK harmanlanmış, akıcı, hikâyeleştirilmiş '
+            'AXIOM makro anlatısı; alt-başlık YOK)","footer":"...(SABIT METIN)"}'
         )
-        tgt = "toplam ~150-400 kelime hedef"
+        tgt = "analiz ~250-550 kelime hedef"
     else:
         out_schema = (
-            '{"haftanin_resmi":"...","kaynaklar_ne_diyor":"...",'
-            '"ark_pozisyon_ozeti":"yalnız olgusal: en son snapshot ağırlıkları, '
-            'gün-gün delta DEĞİL","canli_veri_capraz_okuma":"...",'
-            '"axiom_gorusu_ve_risk":"...","senaryolar_ve_takip":"...",'
+            '{"analiz":"...(TEK harmanlanmış, akıcı, hikâyeleştirilmiş '
+            'AXIOM makro ana anlatısı; alt-başlık YOK)",'
+            '"ark_pozisyon_ozeti":"yalnız olgusal: en son snapshot '
+            'ağırlıkları, gün-gün delta DEĞİL",'
+            '"senaryolar_ve_takip":"ileriye dönük izlenecekler",'
             '"footer":"...(SABIT METIN)"}'
         )
-        tgt = "toplam ~350-700 kelime hedef"
+        tgt = "analiz ~500-1000 kelime + kısa ark/senaryo bölümleri hedef"
     return f"""# ROL VE MİSYON
 Sen AXIOM'un bağımsız makro/piyasa sentez editörüsün. Görevin: sana sağlanan
-BİRDEN ÇOK kaynağı KARŞILAŞTIRMALI olarak sentezleyip o haftaya dair bağımsız
-bir "AXIOM görüşü" üretmektir. Bu bir ÖZET DEĞİL; kaynakların nerede hemfikir,
-nerede ayrıştığını gösteren bir sentez katmanıdır. Trading sinyali değil,
-makro bağlam sağlar.
+TÜM kaynakları oku ve TEK, harmanlanmış, hikâyeleştirilmiş bir "AXIOM makro
+analizi" üret. Bu kaynak-kaynak özet DEĞİL; hepsini tek bir akıcı anlatıda
+eritip o haftaya dair bağımsız AXIOM görüşü veren bir sentez katmanıdır.
+Trading sinyali değil, makro bağlam sağlar.
 
 # GİRDİ
 [HAFTA] {pl.prev_iso} - {pl.this_iso}
@@ -307,38 +330,43 @@ makro bağlam sağlar.
 
 # KESİN VE DEĞİŞMEZ KURALLAR
 1. YALNIZCA GİRDİDEKİ SAYILARI KULLAN. Context'te yoksa sayı yazma; geçmiş
-   bilgini/faiz/fiyat ekleme. İhlal → o bölümü düşür.
+   bilgini/faiz/fiyat ekleme. İhlal → o cümleyi düşür.
 2. ARDIŞIK ALINTI YASAĞI (TELİF): hiçbir kaynaktan 12+ kelimelik ardışık
    alıntı YAPMA. Fikri KENDİ cümlelerinle ifade et.
-3. ATIF ZORUNLULUĞU: her iddiayı kaynağına atfet: "[MAHFI] ...", "[ISYATIRIM]
-   ...". [ARK] = yalnız olgusal pozisyon (pay/ağırlık), yorum/niyet atfetme.
-   [GUNDEM] = yalnız başlık/tema. Etiketler YALNIZ girdide verilenlerden;
-   URL/bağlantı YAZMA — kod ekleyecek.
-4. KARŞILAŞTIRMA SADECE MEVCUT KAYNAKLAR ARASINDA: "çelişki" yalnız birden
-   çok kaynak varken yazılır. Tek kaynak varsa onu tezi + AXIOM görüşü olarak
-   sun, çelişki UYDURMA, kaynak azlığını açıkça belirt.
+3. DOĞAL ATIF ZORUNLULUĞU (TELİF): her iddiayı kaynağına AD ile, cümle
+   içinde doğal şekilde atfet — "Mahfi Eğilmez'e göre…", "İş Yatırım
+   raporları işaret ediyor ki…", "ARK fonlarının açıklanan pozisyonlarına
+   göre…". KÖŞELİ PARANTEZ / [ETİKET] / kod-işareti KULLANMA; akıcı düz
+   metin yaz. ARK = yalnız olgusal pozisyon (pay/ağırlık), niyet/yorum
+   atfetme. URL/bağlantı YAZMA — kod ekleyecek. Atıfsız iddia YASAK.
+4. HARMANLAMA: kaynakları tek anlatıda ört; nerede hemfikir/ayrışıyorlarsa
+   akış içinde göster. "çelişki" yalnız birden çok kaynak varken yazılır;
+   tek kaynak varsa çelişki UYDURMA, kaynak azlığını doğal cümleyle belirt.
 5. YÖN ETİKETİ ZORLAMA YOK: bir kaynak boğa/ayı/temkinli yön belirtmiyorsa
    ona yön etiketi ATAMA; görüşünü olduğu gibi aktar.
 6. BAYAT VERİ DAMGASI: bir kaynağın tarihi eskiyse "{{tarih}} tarihli veriye
    göre" damgası koy ya da hariç tut.
 7. YATIRIM TAVSİYESİ YASAĞI: "al/sat" deme, yönlendirme yapma. Makro
    değerlendirme + rasyonel olasılık dili.
-8. AXIOM GÖRÜŞÜ TÜREMELİ: axiom_gorusu kaynakların kesişim/ayrışımı + canlı
-   veri çapraz okumasından türemeli; dışarıdan yeni iddia ekleme.
-9. YALNIZ ham geçerli JSON döndür. Markdown, kod fence, açıklama, ön-söz YOK.
-   Kelime sınırı rehberdir; uyamasan bile geçerli JSON ver.
+8. AXIOM GÖRÜŞÜ TÜREMELİ: analiz kaynakların kesişim/ayrışımı + canlı veri
+   çapraz okumasından türemeli; dışarıdan yeni iddia ekleme. Anlatının
+   sonunda AXIOM'un bağımsız değerlendirmesi + risk perspektifi olsun.
+9. YALNIZ ham geçerli JSON döndür. Markdown başlık/madde, kod fence,
+   açıklama, ön-söz YOK. "analiz" akıcı paragraf(lar) olsun (alt-başlık
+   yazma). Kelime sınırı rehberdir; uyamasan bile geçerli JSON ver.
 10. JSON'un "footer" alanına AYNEN şu metni koy: "{_FOOTER}"
 
 # SENTEZ METODOLOJİSİ
-Kurumlar/analistler arası çelişkileri (yalnız yön belirtenler için) rasyonel
-karşılaştır. Tezleri [CANLI VERİ BAĞLAMI] ile çapraz kontrol et; tutarlı olup
-olmadığını açıkça belirt (veri yoksa veri yok de, uydurma).
+Tüm kaynakları tek bir hikâyede birleştir: haftanın resmi → kaynakların ne
+dediği (ada doğal atıfla, harmanlı) → canlı veriyle çapraz okuma (veri yoksa
+veri yok de, uydurma) → AXIOM'un bağımsız görüşü ve riskler. Bunları AYRI
+bölümler değil, tek akış olarak yaz.
 
 # ÇIKTI (JSON; tier={tier}; {tgt})
 {out_schema}
 
-TON: profesyonel, temkinli, bağımsız AXIOM sesi. Abartı/sansasyon yok,
-tamamen veri odaklı."""
+TON: profesyonel, temkinli, bağımsız AXIOM sesi; tek anlatıcı. Abartı/
+sansasyon yok, tamamen veri odaklı."""
 
 
 # ---------- Gemini (macro_storyteller forku) ----------
@@ -448,19 +476,14 @@ def _as_text(v) -> str:
 
 def _assemble_md(tier: Tier, obj: dict) -> str:
     order = (
-        ["haftanin_resmi", "kaynaklar_ne_diyor", "axiom_gorusu_ve_risk"]
+        ["analiz"]
         if tier == "premium" else
-        ["haftanin_resmi", "kaynaklar_ne_diyor", "ark_pozisyon_ozeti",
-         "canli_veri_capraz_okuma", "axiom_gorusu_ve_risk",
-         "senaryolar_ve_takip"]
+        ["analiz", "ark_pozisyon_ozeti", "senaryolar_ve_takip"]
     )
     parts = []
     titles = {
-        "haftanin_resmi": "Haftanın Resmi",
-        "kaynaklar_ne_diyor": "Kaynaklar Ne Diyor",
+        "analiz": "AXIOM Makro Analiz",
         "ark_pozisyon_ozeti": "ARK Pozisyon Özeti",
-        "canli_veri_capraz_okuma": "Canlı Veri Çapraz Okuma",
-        "axiom_gorusu_ve_risk": "AXIOM Görüşü ve Risk",
         "senaryolar_ve_takip": "Senaryolar ve Takip",
     }
     for k in order:
@@ -496,11 +519,10 @@ def _run_guards(
         rep.unknown_numbers = unk[:10]
         rep.reasons.append(f"unknown_numbers {unk[:5]}")
 
-    # L4 attribution — en az bir geçerli [ETİKET] olmalı
-    cited = set(re.findall(r"\[([A-ZÇĞİÖŞÜ]+)\]", md))
-    if not (cited & allowed_labels):
+    # L4 attribution — kaynak adı doğal cümlede geçmeli (chip değil)
+    if not _names_present(md, allowed_labels):
         rep.missing_attribution = True
-        rep.reasons.append("attribution chip yok")
+        rep.reasons.append("kaynak adı atfı yok")
 
     # banned phrases
     low = md.lower()
@@ -647,7 +669,7 @@ async def synthesize_week(
             continue
 
         md, rep = _run_guards(tier, out, allowed, prose_bodies, allowed_labels)
-        # Gemini non-determinist (özellikle attribution chip) → 2 retry,
+        # Gemini non-determinist (özellikle doğal atıf) → 2 retry,
         # attribution eksikse hedefli ipucu ekle.
         attempt = 1
         while not rep.ok and attempt <= 2:
@@ -661,8 +683,9 @@ async def synthesize_week(
             )
             if rep.missing_attribution:
                 hint += (
-                    "\nHER bölümde ilgili kaynağın köşeli-parantez etiketini "
-                    "kullan; en az [MAHFI]/[ISYATIRIM]/[ARK]'tan biri ZORUNLU."
+                    "\nİddiaları kaynağına AD ile doğal cümlede atfet "
+                    "(ör. 'Mahfi Eğilmez'e göre…', 'İş Yatırım raporları…'); "
+                    "köşeli parantez/etiket KULLANMA."
                 )
             out = await _call_gemini(prompt + hint)
             if not out:
@@ -678,10 +701,11 @@ async def synthesize_week(
             results.append(res)
             continue
 
-        cited = sorted(set(re.findall(r"\[([A-ZÇĞİÖŞÜ]+)\]", md))
-                        & set(_SOURCE_REGISTRY))
+        cited = sorted(
+            _names_present(md, set(_SOURCE_REGISTRY)) or allowed_labels
+        )
         kaynaklar = "\n".join(
-            f"- [{c}] {_SOURCE_REGISTRY[c]['name']}"
+            f"- {_SOURCE_REGISTRY[c]['name']}"
             + (f" — {_SOURCE_REGISTRY[c]['url']}" if _SOURCE_REGISTRY[c]['url'] else "")
             for c in cited
         )
