@@ -265,6 +265,7 @@ async def process_start_command(chat_id, user_id, username, start_payload: str =
         "/haber — Anlık pazar güncellemeleri\n"
         "/report AAPL — Hisse insider raporu (AI analiz)\n"
         "/onchain — BTC on-chain sinyaller (PREMIUM)\n"
+        "/sentez — Haftalık kurumsal makro sentez\n"
         "/tags — İlgi alanlarını seç (BTC, Altın, BIST...)\n"
         "/takip AAPL — Sembol takip et\n"
         "/takipcikar AAPL — Takipten çıkar\n"
@@ -641,6 +642,73 @@ async def _get_user_tier(user_id) -> str:
     except Exception as e:
         logger.error(f"DB hatası (_get_user_tier) user={user_id}: {e}")
         return "free"
+
+
+async def process_sentez_command(chat_id, user_id):
+    """Haftalık Kurumsal Sentez — tier-gated. DB read (Gemini yok, ağır
+    quota yok). free → teaser + /upgrade CTA; premium/advance → tam md."""
+    from core.database import engine
+    from sqlalchemy import text
+
+    tier = await _get_user_tier(user_id)
+    want = "advance" if tier == "advance" else "premium"
+    sql = text(
+        "SELECT tier, week_start, synthesis_md FROM corporate_syntheses "
+        "WHERE tier = :t ORDER BY week_start DESC, generated_at DESC LIMIT 1"
+    )
+    row = None
+    try:
+        async with engine.begin() as conn:
+            row = (await conn.execute(sql, {"t": want})).mappings().first()
+            if not row and want == "advance":
+                row = (await conn.execute(
+                    sql, {"t": "premium"}
+                )).mappings().first()
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"/sentez DB hatası user={user_id}: {e}")
+        send_telegram_message(
+            chat_id,
+            "⚠️ Kurumsal sentez şu an alınamadı, lütfen daha sonra tekrar deneyin."
+        )
+        return
+
+    if not row:
+        send_telegram_message(
+            chat_id,
+            "🏛️ <b>Haftalık Kurumsal Sentez</b> henüz üretilmedi.\n"
+            "Her Pazartesi 08:30'da yayınlanır."
+        )
+        return
+
+    dashboard_url = os.getenv(
+        "DASHBOARD_URL", "https://axiom-dashboard-sigma.vercel.app"
+    ).rstrip("/")
+    md = row.get("synthesis_md") or ""
+    week_s = html.escape(str(row.get("week_start")))
+
+    if tier == "free":
+        teaser = md[:400].rstrip()
+        if len(md) > 400:
+            teaser += "…"
+        send_telegram_message(
+            chat_id,
+            f"🏛️ <b>AXIOM Kurumsal Sentez</b> · <i>Hafta {week_s}</i>\n\n"
+            f"{html.escape(teaser)}\n\n"
+            f"🔒 Tam karşılaştırmalı sentez Premium/Advance üyelere açıktır.\n"
+            f"💎 /upgrade ile yükseltin · {dashboard_url}/pricing?ref=telegram"
+        )
+        return
+
+    badge = "🚀 ADVANCE" if tier == "advance" else "💎 PREMIUM"
+    body = md
+    if len(body) > 3600:
+        body = body[:3600].rstrip() + "\n…(devamı dashboard'da)"
+    send_telegram_message(
+        chat_id,
+        f"🏛️ <b>AXIOM Kurumsal Sentez</b> · {badge}\n"
+        f"<i>Hafta {week_s}</i>\n\n{html.escape(body)}\n\n"
+        f"📊 {dashboard_url}/dashboard?ref=tg_sentez"
+    )
 
 
 # ── /onchain hikâye anlatıcı katmanı ──────────────────────────────────────────
@@ -1442,6 +1510,8 @@ async def start_telegram_bot():
                                 await process_onchain_command(chat_id, user_id, arg or "BTC")
                             elif text.lower().startswith("/login"):
                                 await process_login_command(chat_id, user_id, username)
+                            elif text.lower().startswith("/sentez"):
+                                await process_sentez_command(chat_id, user_id)
 
                         # Inline keyboard callback'leri
                         elif "callback_query" in update:
