@@ -366,6 +366,41 @@ _POSTGRES_GUARDS = [
         "ix_stripe_webhook_events_processed_at",
         "CREATE INDEX IF NOT EXISTS ix_stripe_webhook_events_processed_at ON stripe_webhook_events(processed_at)",
     ),
+    # Kurumsal Sentez Faz 1 — alembic 025 ile aynı şema (Railway alembic
+    # auto-run yok; bu runtime garanti).
+    (
+        "corporate_syntheses table",
+        """CREATE TABLE IF NOT EXISTS corporate_syntheses (
+            id BIGSERIAL PRIMARY KEY,
+            event_id TEXT NOT NULL,
+            tier TEXT NOT NULL,
+            week_start DATE NOT NULL,
+            synthesis_md TEXT,
+            source_count INT NOT NULL DEFAULT 0,
+            meta JSONB,
+            generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            broadcasted_premium_at TIMESTAMPTZ,
+            broadcasted_advance_at TIMESTAMPTZ,
+            CONSTRAINT uq_corp_synth_eid_tier UNIQUE (event_id, tier)
+        )""",
+    ),
+    (
+        "ix_corp_synth_week",
+        "CREATE INDEX IF NOT EXISTS ix_corp_synth_week ON corporate_syntheses(week_start DESC)",
+    ),
+    (
+        "ix_corp_synth_eid",
+        "CREATE INDEX IF NOT EXISTS ix_corp_synth_eid ON corporate_syntheses(event_id)",
+    ),
+    (
+        "corporate_source_state table",
+        """CREATE TABLE IF NOT EXISTS corporate_source_state (
+            source TEXT PRIMARY KEY,
+            etag TEXT,
+            last_modified TEXT,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )""",
+    ),
 ]
 
 
