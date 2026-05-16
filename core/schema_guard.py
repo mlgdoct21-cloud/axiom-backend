@@ -401,6 +401,51 @@ _POSTGRES_GUARDS = [
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )""",
     ),
+    # Kurumsal Sentez S1c — accumulation store (alembic 026 ile aynı şema).
+    (
+        "corporate_posts table",
+        """CREATE TABLE IF NOT EXISTS corporate_posts (
+            id BIGSERIAL PRIMARY KEY,
+            source TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            kind TEXT,
+            title TEXT NOT NULL,
+            link TEXT,
+            published TIMESTAMPTZ NOT NULL,
+            body_text TEXT,
+            truncated BOOLEAN NOT NULL DEFAULT FALSE,
+            author TEXT,
+            meta JSONB,
+            first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT uq_corp_posts_src_eid UNIQUE (source, external_id)
+        )""",
+    ),
+    (
+        "ix_corp_posts_src_pub",
+        "CREATE INDEX IF NOT EXISTS ix_corp_posts_src_pub ON corporate_posts(source, published DESC)",
+    ),
+    (
+        "ix_corp_posts_pub",
+        "CREATE INDEX IF NOT EXISTS ix_corp_posts_pub ON corporate_posts(published DESC)",
+    ),
+    (
+        "corporate_holdings_snapshots table",
+        """CREATE TABLE IF NOT EXISTS corporate_holdings_snapshots (
+            id BIGSERIAL PRIMARY KEY,
+            source TEXT NOT NULL DEFAULT 'ark',
+            fund TEXT NOT NULL,
+            as_of DATE NOT NULL,
+            payload JSONB NOT NULL,
+            holding_count INT NOT NULL DEFAULT 0,
+            fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT uq_corp_hold_fund_asof UNIQUE (fund, as_of)
+        )""",
+    ),
+    (
+        "ix_corp_hold_fund_asof",
+        "CREATE INDEX IF NOT EXISTS ix_corp_hold_fund_asof ON corporate_holdings_snapshots(fund, as_of DESC)",
+    ),
 ]
 
 
