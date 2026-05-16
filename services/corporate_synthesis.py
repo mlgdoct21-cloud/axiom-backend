@@ -64,43 +64,14 @@ _WORD_BOUNDS: dict[str, tuple[int, int]] = {
     "advance": (300, 1150),
 }
 
-# Kaynak kayıt defteri → sondaki Kaynaklar listesi (ad+URL; kod ekler,
-# model URL yazmaz). Atıf metinde doğal AD ile yapılır (chip değil).
-_SOURCE_REGISTRY: dict[str, dict] = {
-    "MAHFI": {"name": "Mahfi Eğilmez", "url": "https://www.mahfiegilmez.com/"},
-    "ISYATIRIM": {"name": "İş Yatırım Araştırma",
-                  "url": "https://arastirma.isyatirim.com.tr/"},
-    "ARK": {"name": "ARK Invest (kamuya açık fon bildirimi)",
-            "url": "https://ark-funds.com/"},
-    "GUNDEM": {"name": "Piyasa gündemi (tema-radar)", "url": ""},
-}
+# Arka-plan sinyali bloklarında kullanılan iç etiket (prompt girdisi;
+# çıktıda kaynak adı/atıf YOK — data-first atıfsız AXIOM sesi).
 _LABEL_FOR_SOURCE = {"mahfi": "MAHFI", "isyatirim": "ISYATIRIM"}
 
-# Doğal (cümle-içi) atıf tespiti — köşeli-parantez chip yerine kaynak
-# adının metinde geçmesi yeterli (telif: atıf zorunlu, formu serbest).
-_NAME_ALIASES: dict[str, tuple[str, ...]] = {
-    "MAHFI": ("Mahfi",),
-    "ISYATIRIM": ("İş Yatırım", "Is Yatirim"),
-    "ARK": ("ARK",),
-    "GUNDEM": ("piyasa gündemi", "gündem"),
-}
-
-
-def _names_present(md: str, labels: set[str]) -> set[str]:
-    """labels içinden adı md'de (case-insensitive) geçenler."""
-    low = md.casefold()
-    out = set()
-    for lb in labels:
-        for a in _NAME_ALIASES.get(lb, ()):
-            if a in md or a.casefold() in low:
-                out.add(lb)
-                break
-    return out
-
 _FOOTER = (
-    "Bu içerik AXIOM'un bağımsız makro değerlendirmesidir; adı geçen kişi "
-    "ve kurumlar yatırım tavsiyesi vermez. Kaynaklar: özgün içeriğe "
-    "bağlantılar yukarıdadır."
+    "Bu içerik AXIOM'un bağımsız makro değerlendirmesidir; yatırım "
+    "tavsiyesi değildir. Kamuya açık veri ve piyasa gelişmeleri "
+    "AXIOM tarafından sentezlenmiştir."
 )
 
 _BANNED = ("kesin al", "kesin sat", "garanti", "tavsiye ederim",
@@ -231,6 +202,93 @@ async def _ark_delta(fund: str, start: datetime, end: datetime) -> Optional[dict
     }
 
 
+async def _build_live_block() -> str:
+    """AXIOM'un kendi verisinden kompakt 'canlı veri bağlamı': son makro
+    açıklamalar (US+TR), piyasa anlık görünüm, global gündem başlıkları.
+    Her blok bağımsız fail-soft (biri patlarsa diğerleri kalır)."""
+    lines: list[str] = []
+
+    # 1) Makro açıklamalar — gösterge başına en güncel (US+TR, son 14 gün)
+    try:
+        async with engine.connect() as conn:
+            rows = (await conn.execute(text(
+                "SELECT DISTINCT ON (event_type) event_type, country, "
+                "released_at, actual_value, expected_value, prior_value, "
+                "surprise_pct FROM macro_releases "
+                "WHERE country IN ('US','TR') AND actual_value IS NOT NULL "
+                "AND released_at >= NOW() - INTERVAL '14 days' "
+                "ORDER BY event_type, released_at DESC"
+            ))).mappings().all()
+        if rows:
+            lines.append("MAKRO (son 14g, gösterge başına en güncel):")
+            for r in rows[:16]:
+                exp = r["expected_value"]
+                sp = r["surprise_pct"]
+                seg = (f"  {r['country']} {r['event_type']}: "
+                       f"actual={r['actual_value']}")
+                if exp is not None:
+                    seg += f" beklenti={exp}"
+                if r["prior_value"] is not None:
+                    seg += f" önceki={r['prior_value']}"
+                if sp is not None:
+                    seg += f" sürpriz%={sp}"
+                seg += f" ({str(r['released_at'])[:10]})"
+                lines.append(seg)
+    except Exception as e:  # noqa: BLE001
+        logger.info(f"live_block macro skip: {e}")
+
+    # 2) Piyasa anlık görünüm (FMP — fail-soft; 402/boş olabilir)
+    try:
+        from services.market_summary_service import (
+            get_overnight_markets, get_sector_performance, get_vix_quote_fmp,
+        )
+        mkt: list[str] = []
+        try:
+            ov = await get_overnight_markets()
+            for reg in ("us_futures", "europe", "asia"):
+                for x in (ov.get(reg) or [])[:3]:
+                    cp = x.get("change_pct")
+                    if x.get("label") and cp is not None:
+                        mkt.append(f"{x['label']} {cp:+.2f}%")
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            vx = await get_vix_quote_fmp()
+            if vx and vx.get("current") is not None:
+                mkt.append(f"VIX {vx['current']:.1f} ({vx.get('status','')})")
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            sec = await get_sector_performance()
+            top = [f"{s['sector']} {s['change_pct']:+.2f}%"
+                   for s in (sec or [])[:3] if s.get("sector")]
+            if top:
+                mkt.append("Sektör lider: " + ", ".join(top))
+        except Exception:  # noqa: BLE001
+            pass
+        if mkt:
+            lines.append("PİYASA: " + " | ".join(mkt))
+    except Exception as e:  # noqa: BLE001
+        logger.info(f"live_block market skip: {e}")
+
+    # 3) Global gündem — son 3 gün başlıklar (alakasızları model eler)
+    try:
+        async with engine.connect() as conn:
+            nrows = (await conn.execute(text(
+                "SELECT source, original_title, created_at FROM news_items "
+                "WHERE created_at >= NOW() - INTERVAL '3 days' "
+                "ORDER BY created_at DESC LIMIT 8"
+            ))).mappings().all()
+        if nrows:
+            lines.append("GÜNDEM (son 3g başlık):")
+            for n in nrows:
+                lines.append(f"  [{n['source']}] {(n['original_title'] or '')[:90]}")
+    except Exception as e:  # noqa: BLE001
+        logger.info(f"live_block news skip: {e}")
+
+    return "\n".join(lines)
+
+
 async def build_payload(ref: Optional[date] = None) -> SynthPayload:
     start, end, week_start = _week_bounds(ref)
     prose: list[dict] = []
@@ -249,7 +307,7 @@ async def build_payload(ref: Optional[date] = None) -> SynthPayload:
         this_iso=end.date().isoformat(),
         prose=prose,
         ark=ark,
-        live_block="",  # Commit 3+ zengin grounding; şimdilik boş (prompt tolere eder)
+        live_block=await _build_live_block(),
         source_count=len(prose) + (1 if ark else 0),
     )
     return pl
@@ -315,57 +373,59 @@ def _build_prompt(tier: Tier, pl: SynthPayload) -> str:
         )
         tgt = "analiz ~500-1000 kelime + kısa ark/senaryo bölümleri hedef"
     return f"""# ROL VE MİSYON
-Sen AXIOM'un bağımsız makro/piyasa sentez editörüsün. Görevin: sana sağlanan
-TÜM kaynakları oku ve TEK, harmanlanmış, hikâyeleştirilmiş bir "AXIOM makro
-analizi" üret. Bu kaynak-kaynak özet DEĞİL; hepsini tek bir akıcı anlatıda
-eritip o haftaya dair bağımsız AXIOM görüşü veren bir sentez katmanıdır.
-Trading sinyali değil, makro bağlam sağlar.
+Sen AXIOM'sun: bağımsız bir makro/piyasa analiz sesi. Görevin, CANLI VERİ
+ve global gelişmeleri temel alıp, sağlanan arka-plan sinyallerini de
+düşünceni beslemek için kullanarak, o haftaya dair TEK, harmanlanmış,
+hikâyeleştirilmiş ve TAMAMEN KENDİNE AİT bir makro değerlendirme üretmek.
+Bu bir kaynak özeti/aktarımı DEĞİL; verilerden ve kendi muhakemenden
+türeyen, hiçbir kişi/kurum adı geçmeyen özgün AXIOM görüşüdür. Trading
+sinyali değil, makro bağlam.
 
 # GİRDİ
 [HAFTA] {pl.prev_iso} - {pl.this_iso}
-[KAYNAKLAR] (her biri: etiket | tarih | tip | başlık | gövde/veri)
+[CANLI VERİ — BİRİNCİL TEMEL] (makro açıklamalar, piyasa, global gündem)
+{pl.live_block or "(canlı veri bu sürümde sınırlı — eldeki veriyle yetin, veri UYDURMA, eksikse bunu doğal cümleyle belirt)"}
+[ARKA PLAN SİNYALİ] (yalnız düşünceni besleyen ham girdi — yeniden ÜRETME,
+ALINTILAMA, İSİM/kaynak VERME; fikri dönüştürüp kendi muhakemene kat)
 {_source_blocks(pl)}
-[CANLI VERİ BAĞLAMI]
-{pl.live_block or "(bu sürümde canlı veri bloğu boş — yoksa çapraz okumada bunu belirt, veri uydurma)"}
 
 # KESİN VE DEĞİŞMEZ KURALLAR
-1. YALNIZCA GİRDİDEKİ SAYILARI KULLAN. Context'te yoksa sayı yazma; geçmiş
-   bilgini/faiz/fiyat ekleme. İhlal → o cümleyi düşür.
-2. ARDIŞIK ALINTI YASAĞI (TELİF): hiçbir kaynaktan 12+ kelimelik ardışık
-   alıntı/örtüşme YAPMA. Harmanlı anlatıda kaynağın cümle yapısını/sözcük
-   dizilişini TAKİP ETME; her fikri tamamen KENDİ kelimelerinle, farklı
-   cümle kurgusuyla yeniden ifade et. Uzun sembol/hisse/veri listelerini
-   (ör. 4+ ardışık ticker veya rakam dizisi) BİREBİR DÖKME; bunları
-   niteliksel özetle ("çok sayıda banka ve sanayi hissesi", "geniş bir
-   hisse grubu" gibi), en çok 2-3 örnek ver.
-3. DOĞAL ATIF ZORUNLULUĞU (TELİF): her iddiayı kaynağına AD ile, cümle
-   içinde doğal şekilde atfet — "Mahfi Eğilmez'e göre…", "İş Yatırım
-   raporları işaret ediyor ki…", "ARK fonlarının açıklanan pozisyonlarına
-   göre…". KÖŞELİ PARANTEZ / [ETİKET] / kod-işareti KULLANMA; akıcı düz
-   metin yaz. ARK = yalnız olgusal pozisyon (pay/ağırlık), niyet/yorum
-   atfetme. URL/bağlantı YAZMA — kod ekleyecek. Atıfsız iddia YASAK.
-4. HARMANLAMA: kaynakları tek anlatıda ört; nerede hemfikir/ayrışıyorlarsa
-   akış içinde göster. "çelişki" yalnız birden çok kaynak varken yazılır;
-   tek kaynak varsa çelişki UYDURMA, kaynak azlığını doğal cümleyle belirt.
-5. YÖN ETİKETİ ZORLAMA YOK: bir kaynak boğa/ayı/temkinli yön belirtmiyorsa
-   ona yön etiketi ATAMA; görüşünü olduğu gibi aktar.
-6. BAYAT VERİ DAMGASI: bir kaynağın tarihi eskiyse "{{tarih}} tarihli veriye
+1. YALNIZCA GİRDİDEKİ SAYILARI KULLAN (öncelik CANLI VERİ). Context'te
+   yoksa sayı yazma; ezbere faiz/fiyat/oran ekleme. İhlal → o cümleyi düşür.
+2. KOPYA/TÜREV YASAĞI (TELİF — KRİTİK): arka-plan sinyalinden 12+ kelime
+   ardışık örtüşme YAPMA; cümle yapısını/sözcük dizilişini/argüman
+   kurgusunu TAKİP ETME. Her fikri tamamen kendi muhakemenle, sıfırdan,
+   farklı çerçeveyle yeniden üret — bir kaynağın özgün analizini "kendi
+   görüşün" gibi yakın-parafrazla aktarmak YASAK. Uzun sembol/veri
+   listelerini birebir dökme; niteliksel özetle, en çok 2-3 örnek.
+3. ATIFSIZ TEK SES (TELİF): metinde HİÇBİR kişi/kurum/kaynak ADI geçmesin
+   ("Mahfi", "Eğilmez", "İş Yatırım", "rapora göre", "analist", "uzmanlara
+   göre" vb. YASAK). Köşeli parantez/etiket/URL YOK. Her şeyi AXIOM'un
+   kendi bağımsız değerlendirmesi olarak, birinci-el ses ile yaz. Arka-plan
+   sinyali yalnız fikir kaynağıdır; aktarılmaz, AXIOM'un muhakemesine erir.
+4. TEK AXIOM SESİ: çıktı verilerden + global gelişmelerden + dönüştürülmüş
+   sinyalden türeyen tek, harmanlı, akıcı bir AXIOM anlatısıdır. "Kaynaklar
+   ne diyor" bölümü/ayrımı YOK; doğrudan AXIOM'un okuması.
+5. YÖN ETİKETİ ZORLAMA YOK: veri/gelişme net bir yön vermiyorsa zorla yön
+   atama; belirsizliği dürüst belirt.
+6. BAYAT VERİ DAMGASI: bir veri tarihi eskiyse "{{tarih}} tarihli veriye
    göre" damgası koy ya da hariç tut.
 7. YATIRIM TAVSİYESİ YASAĞI: "al/sat" deme, yönlendirme yapma. Makro
    değerlendirme + rasyonel olasılık dili.
-8. AXIOM GÖRÜŞÜ TÜREMELİ: analiz kaynakların kesişim/ayrışımı + canlı veri
-   çapraz okumasından türemeli; dışarıdan yeni iddia ekleme. Anlatının
-   sonunda AXIOM'un bağımsız değerlendirmesi + risk perspektifi olsun.
+8. AXIOM GÖRÜŞÜ TÜREMELİ: analiz canlı veri + global gelişmeler + sinyalin
+   dönüştürülmüş sentezinden türemeli; dışarıdan ezbere iddia ekleme.
+   Anlatının sonunda AXIOM'un net bağımsız değerlendirmesi + risk
+   perspektifi olsun.
 9. YALNIZ ham geçerli JSON döndür. Markdown başlık/madde, kod fence,
    açıklama, ön-söz YOK. "analiz" akıcı paragraf(lar) olsun (alt-başlık
    yazma). Kelime sınırı rehberdir; uyamasan bile geçerli JSON ver.
 10. JSON'un "footer" alanına AYNEN şu metni koy: "{_FOOTER}"
 
 # SENTEZ METODOLOJİSİ
-Tüm kaynakları tek bir hikâyede birleştir: haftanın resmi → kaynakların ne
-dediği (ada doğal atıfla, harmanlı) → canlı veriyle çapraz okuma (veri yoksa
-veri yok de, uydurma) → AXIOM'un bağımsız görüşü ve riskler. Bunları AYRI
-bölümler değil, tek akış olarak yaz.
+Tek bir AXIOM hikâyesi yaz: haftanın makro resmi (canlı veri + global
+gündem) → bunların birbiriyle çapraz okunması (veri yoksa "veri yok" de,
+UYDURMA) → AXIOM'un bağımsız görüşü ve riskler. Ayrı bölümler/atıflar
+değil, tek akış. Hiçbir yerde kaynak adı/ "rapora göre" ifadesi olmasın.
 
 # ÇIKTI (JSON; tier={tier}; {tgt})
 {out_schema}
@@ -457,7 +517,6 @@ class GuardReport:
     ok: bool = False
     word_count: int = 0
     unknown_numbers: list[str] = field(default_factory=list)
-    missing_attribution: bool = False
     displaced_ngram: Optional[str] = None
     missing_footer: bool = False
     out_of_bounds: bool = False
@@ -500,7 +559,7 @@ def _assemble_md(tier: Tier, obj: dict) -> str:
 
 def _run_guards(
     tier: Tier, obj: dict, allowed: set[Decimal],
-    prose_bodies: list[str], allowed_labels: set[str],
+    prose_bodies: list[str],
 ) -> tuple[str, GuardReport]:
     rep = GuardReport()
     md = _assemble_md(tier, obj)
@@ -524,10 +583,8 @@ def _run_guards(
         rep.unknown_numbers = unk[:10]
         rep.reasons.append(f"unknown_numbers {unk[:5]}")
 
-    # L4 attribution — kaynak adı doğal cümlede geçmeli (chip değil)
-    if not _names_present(md, allowed_labels):
-        rep.missing_attribution = True
-        rep.reasons.append("kaynak adı atfı yok")
+    # L4 KALDIRILDI: atıfsız tek AXIOM sesi (data-first). Telif güvenliği
+    # artık L_DISPLACE 12-gram + Kural 2/3 (özgünlük) + L1 (sayı) üstünde.
 
     # banned phrases
     low = md.lower()
@@ -545,7 +602,7 @@ def _run_guards(
 
     rep.ok = not (
         rep.missing_footer or rep.out_of_bounds or rep.unknown_numbers
-        or rep.missing_attribution or rep.displaced_ngram or rep.banned
+        or rep.displaced_ngram or rep.banned
     )
     return md, rep
 
@@ -634,13 +691,6 @@ async def synthesize_week(
 
     allowed = _allowed_numbers(pl)
     prose_bodies = [r.get("body_text") or "" for r in pl.prose]
-    allowed_labels = {
-        _LABEL_FOR_SOURCE.get(r.get("source", ""), "")
-        for r in pl.prose
-    }
-    allowed_labels.discard("")
-    if pl.ark:
-        allowed_labels.add("ARK")
 
     for tier in tiers:
         res = SynthResult(eid, tier, pl.week_start)
@@ -673,7 +723,7 @@ async def synthesize_week(
             results.append(res)
             continue
 
-        md, rep = _run_guards(tier, out, allowed, prose_bodies, allowed_labels)
+        md, rep = _run_guards(tier, out, allowed, prose_bodies)
         # Gemini non-determinist (özellikle doğal atıf) → 2 retry,
         # attribution eksikse hedefli ipucu ekle.
         attempt = 1
@@ -686,12 +736,6 @@ async def synthesize_week(
                 + "; ".join(rep.reasons)
                 + "\nSadece bunları düzelt, geçerli JSON döndür."
             )
-            if rep.missing_attribution:
-                hint += (
-                    "\nİddiaları kaynağına AD ile doğal cümlede atfet "
-                    "(ör. 'Mahfi Eğilmez'e göre…', 'İş Yatırım raporları…'); "
-                    "köşeli parantez/etiket KULLANMA."
-                )
             if rep.displaced_ngram:
                 hint += (
                     "\nTELİF: şu ardışık ifade kaynağa fazla yakın — "
@@ -702,8 +746,7 @@ async def synthesize_week(
             if not out:
                 res.reason = f"guard fail + retry empty ({rep.reasons[:2]})"
                 break
-            md, rep = _run_guards(tier, out, allowed, prose_bodies,
-                                  allowed_labels)
+            md, rep = _run_guards(tier, out, allowed, prose_bodies)
             attempt += 1
         if not rep.ok:
             if not res.reason:
@@ -712,21 +755,14 @@ async def synthesize_week(
             results.append(res)
             continue
 
-        cited = sorted(
-            _names_present(md, set(_SOURCE_REGISTRY)) or allowed_labels
-        )
-        kaynaklar = "\n".join(
-            f"- {_SOURCE_REGISTRY[c]['name']}"
-            + (f" — {_SOURCE_REGISTRY[c]['url']}" if _SOURCE_REGISTRY[c]['url'] else "")
-            for c in cited
-        )
-        final_md = md + "\n\n## Kaynaklar\n" + kaynaklar + "\n\n---\n" + _FOOTER
+        # Atıfsız tek AXIOM sesi → Kaynaklar bölümü YOK, yalnız footer.
+        final_md = md + "\n\n---\n" + _FOOTER
         meta = {
             "tier": tier,
             "model": GEMINI_MODEL,
             "week_start": pl.week_start.isoformat(),
             "source_count": pl.source_count,
-            "sources_cited": cited,
+            "sources_cited": [],
             "word_count": rep.word_count,
             "structured": out,
         }
@@ -740,11 +776,11 @@ async def synthesize_week(
             continue
         res.written = written
         res.word_count = rep.word_count
-        res.sources = cited
+        res.sources = []
         results.append(res)
         logger.info(
             f"corporate_synthesis OK {eid}/{tier} wc={rep.word_count} "
-            f"sources={cited} (broadcast Commit 3'te)"
+            f"(atıfsız data-first; broadcast Commit 3'te)"
         )
 
     return results
