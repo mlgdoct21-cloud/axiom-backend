@@ -1,14 +1,15 @@
-"""Adam Tooze (adamtooze.com) WordPress RSS adaptörü — arka-plan sinyali.
+"""Adam Tooze — Chartbook (Substack) RSS adaptörü — arka-plan sinyali.
 
 `isyatirim_rss.py` forkudur: saf parser (`parse_feed`) network fetch'ten
 (`fetch_feed`) ayrı; ETag/If-Modified-Since persist'i
 `corporate_source_state` tablosunda (source='tooze').
 
-Tooze adamtooze.com WordPress feed'i `content:encoded` ile TAM METİN
-taşır (probe: medyan ~8.5k karakter/yazı, truncated=False beklenir).
-Tek feed — kategori/fallback yok. Çıktıda İSİM/ATIF YOK: bu kaynak
-yalnız AXIOM'un kendi görüşünü besleyen "arka-plan sinyali"dir
-(data-first atıfsız model; telif güvenliği L_DISPLACE + özgünlük).
+KAYNAK: adamtooze.substack.com/feed (GÜNCEL). Not: adamtooze.com/feed
+2023'te donmuş (DROP); chartbook.substack.com yanlış/terk yayın.
+Substack RSS `content:encoded` → "Chartbook NNN" esaslı yazılar
+TAM METİN (~16k char); "Top Links" digest'leri kısa (~420). Tek feed.
+Çıktıda İSİM/ATIF YOK: yalnız AXIOM görüşünü besleyen "arka-plan
+sinyali" (data-first atıfsız model; telif güvenliği L_DISPLACE+özgünlük).
 
 Fail policy: sessiz skip + log; exception ile pipeline kırılmaz.
 """
@@ -30,7 +31,7 @@ from core.logger import get_logger
 
 logger = get_logger("corporate.tooze_rss")
 
-FEED_URL = "https://adamtooze.com/feed/"
+FEED_URL = "https://adamtooze.substack.com/feed"
 
 SOURCE_KEY = "tooze"
 
