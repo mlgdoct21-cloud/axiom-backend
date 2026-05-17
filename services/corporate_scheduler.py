@@ -24,6 +24,7 @@ from services.corporate_sources import (
     isyatirim_rss,
     jpm_eotm_html,
     mahfi_rss,
+    ms_totm_rss,
     overshoot_rss,
     radar_rss,
 )
@@ -117,6 +118,7 @@ async def _poll_once() -> list[dict]:
     out.append(await _poll_rss(overshoot_rss, "overshoot", "essay"))
     out.append(await _poll_rss(blackrock_html, "blackrock", "commentary"))
     out.append(await _poll_rss(jpm_eotm_html, "jpm", "eotm"))
+    out.append(await _poll_rss(ms_totm_rss, "ms", "transcript"))
     out.append(await _poll_ark())
     out.append(await _poll_radar())
     logger.info(f"corp poll: {out}")

@@ -52,7 +52,7 @@ _HTTP_TIMEOUT = httpx.Timeout(40.0, connect=8.0)
 _TR_TZ = timezone(timedelta(hours=3))
 _PUBLISH_TIME = time(8, 30)
 
-_PROSE_SOURCES = ["mahfi", "isyatirim", "overshoot", "blackrock", "jpm"]
+_PROSE_SOURCES = ["mahfi", "isyatirim", "overshoot", "blackrock", "jpm", "ms"]
 # Arka-plan sinyali gövde kırpma — prompt şişmesini/maliyeti/L_DISPLACE
 # yüzeyini sınırla (tez/sinyal yeterli; tam-metin gerekmez).
 _SIGNAL_BODY_CAP = 2800
@@ -71,7 +71,7 @@ _WORD_BOUNDS: dict[str, tuple[int, int]] = {
 # çıktıda kaynak adı/atıf YOK — data-first atıfsız AXIOM sesi).
 _LABEL_FOR_SOURCE = {
     "mahfi": "MAHFI", "isyatirim": "ISYATIRIM", "overshoot": "OVERSHOOT",
-    "blackrock": "BLACKROCK", "jpm": "JPM",
+    "blackrock": "BLACKROCK", "jpm": "JPM", "ms": "MS",
 }
 
 _FOOTER = (
