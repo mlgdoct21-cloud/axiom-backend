@@ -143,6 +143,13 @@ KURALLAR:
 3. **Çıktı:** SADECE geçerli JSON DİZİSİ döndür. Markdown kod bloğu, açıklama,
    başlık YOK. İlk karakter '[', son karakter ']'.
 4. **Sıra:** Her haber için bir obje, girdideki "id" ile birebir aynı sırayla.
+5. **Fiyat/seviye disiplini:** Güncel piyasa fiyatı/seviyesi (petrol, altın,
+   endeks, BTC, VIX, kur vb.) iddiası YALNIZCA "CANLI PİYASA SEVİYELERİ"
+   bloğundan ya da haberin kendi gövdesinden alınır. Eğitim verisinden /
+   ezbere GÜNCEL fiyat UYDURMA. Canlı blokta ve haberde olmayan güncel bir
+   seviyeyi sayıyla verme — gerekiyorsa niteliksel konuş ("mevcut
+   seviyelerin üzerinde"). Haberde/canlı blokta olan rakamı kullanırken
+   kaynağını ima et ("habere göre ...", "güncel ~X seviyesinden").
 
 ÇIKTI ALANLARI (her obje):
   • "telegram_hook" (120-180 kelime) — Aşağıdaki ÜÇ bölümden oluşsun:
@@ -202,6 +209,72 @@ def _build_batch_payload(items: list) -> str:
             f"{ctx_str}"
         )
     return "\n\n---\n\n".join(lines)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CANLI PİYASA SEVİYELERİ — fiyat halüsinasyon çapası
+# ─────────────────────────────────────────────────────────────────────────────
+# Batch prompt somut rakam/seviye dayatıyor ama eskiden hiç canlı fiyat
+# verilmiyordu → model petrol/altın/endeks seviyelerini eğitim verisinden
+# (bayat) uyduruyordu (ör. Brent ~85-90$ yazarken spot ~112$). Kurumsal
+# Sentez'in kanıtlanmış FMP /stable/quote çapasıyla birebir aynı sembol seti
+# (corporate_synthesis._build_live_block). Tamamen fail-soft: hata/eksik veri
+# → eski cache veya "" döner, haber hattını ASLA bozmaz.
+_MKT_SYMBOLS = [
+    ("^GSPC", "S&P500", 0), ("^IXIC", "Nasdaq", 0),
+    ("^VIX", "VIX", 1), ("XAUUSD", "Altın(ons$)", 0),
+    ("XAGUSD", "Gümüş(ons$)", 2), ("BZUSD", "Brent($)", 2),
+    ("BTCUSD", "Bitcoin($)", 0), ("EURUSD", "EUR/USD", 4),
+]
+_MKT_CACHE: dict = {"block": "", "ts": 0.0}
+_MKT_CACHE_TTL = 90  # sn — batch_analyze_loop her cycle'da FMP'yi dövmesin
+
+
+def _fetch_live_market_block() -> str:
+    """FMP /stable/quote per-sembol → kompakt tek satır canlı seviye bloğu.
+    Sembol bağımsız fail-soft; herhangi bir sorunda eski cache veya ""."""
+    now = time.time()
+    if _MKT_CACHE["block"] and (now - _MKT_CACHE["ts"]) < _MKT_CACHE_TTL:
+        return _MKT_CACHE["block"]
+
+    fmp_key = os.getenv("FMP_API_KEY", "").strip()
+    if not fmp_key:
+        return _MKT_CACHE["block"]
+
+    seg: list = []
+    for sym, name, dp in _MKT_SYMBOLS:
+        try:
+            r = requests.get(
+                "https://financialmodelingprep.com/stable/quote",
+                params={"symbol": sym, "apikey": fmp_key},
+                timeout=6,
+            )
+            if r.status_code != 200:
+                continue
+            d = r.json()
+            q = d[0] if isinstance(d, list) and d else None
+            if not q or q.get("price") is None:
+                continue
+            px = q["price"]
+            cp = q.get("changePercentage")
+            seg.append(
+                f"{name} {px:,.{dp}f}"
+                + (f" ({cp:+.2f}%)" if cp is not None else "")
+            )
+        except Exception:  # noqa: BLE001 — sembol bağımsız fail-soft
+            continue
+
+    if not seg:
+        return _MKT_CACHE["block"]
+
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    block = (
+        f"GÜNCEL PİYASA SEVİYELERİ ({today} — otoriter fiyat çapası; "
+        f"güncel seviye iddiası YALNIZ buradan): " + " | ".join(seg)
+    )
+    _MKT_CACHE["block"] = block
+    _MKT_CACHE["ts"] = now
+    return block
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -546,7 +619,16 @@ def generate_batch_summaries_sync(items: list) -> dict:
         return {}
 
     news_block = _build_batch_payload(items)
-    prompt_text = f"{AXIOM_BATCH_PROMPT}\n\n=== ANALİZ EDİLECEK HABERLER ===\n\n{news_block}"
+    live_block = _fetch_live_market_block()
+    live_section = (
+        f"\n\n=== CANLI PİYASA SEVİYELERİ ===\n{live_block}\n"
+        if live_block
+        else ""
+    )
+    prompt_text = (
+        f"{AXIOM_BATCH_PROMPT}{live_section}"
+        f"\n\n=== ANALİZ EDİLECEK HABERLER ===\n\n{news_block}"
+    )
 
     # 1) Primary model
     result = _call_gemini_batch(_PRIMARY_MODEL, prompt_text, max_tokens=8192, timeout_sec=45)
