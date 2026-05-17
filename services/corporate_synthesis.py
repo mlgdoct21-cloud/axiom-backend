@@ -59,7 +59,11 @@ _PUBLISH_TIME = time(8, 30)
 _PROSE_SOURCES = ["mahfi", "isyatirim", "overshoot", "blackrock", "jpm", "ms"]
 # Arka-plan sinyali gövde kırpma — prompt şişmesini/maliyeti/L_DISPLACE
 # yüzeyini sınırla (tez/sinyal yeterli; tam-metin gerekmez).
-_SIGNAL_BODY_CAP = 2800
+# Prose kaynak gövde tavanı. 2800 MS transkriptini (~4.5K) kesip
+# özgün tezini (ör. "AI-funding fiyat-duyarsız; bakır+%40, bellek
+# +%150-300") yutuyordu → 3800 (cluster digest kısıldığı için toplam
+# prompt yine kontrollü; RECITATION riski digest tarafında çözüldü).
+_SIGNAL_BODY_CAP = 3800
 _ARK_FUNDS = ["ARKK", "ARKW", "ARKG", "ARKQ", "ARKF"]
 
 # Prompt Kural 9 kelime sınırını "rehber" ilan ediyor; bu yüzden guard
@@ -456,6 +460,91 @@ async def _build_live_block() -> str:
     except Exception as e:  # noqa: BLE001
         logger.info(f"live_block radar skip: {e}")
 
+    # 5) YAKLAŞAN KATALİZÖRLER — gelecek ~10g makro takvim + mega-cap
+    #    bilanço (FMP economic/earnings-calendar; ikisi de 200/probe).
+    #    İLERİYE DÖNÜK bölümün somut beslemesi (ör. NVDA bilanço Çrş,
+    #    FOMC tutanakları). Fail-soft.
+    try:
+        fmp_key = os.getenv("FMP_API_KEY", "").strip()
+        if fmp_key:
+            _t = datetime.now(timezone.utc).date()
+            _to = (_t + timedelta(days=10)).isoformat()
+            _ev_kw = re.compile(
+                r"fomc|fed|powell|rate decision|cpi|inflation|ppi|"
+                r"nonfarm|payroll|unemployment|jobless|\bgdp\b|\bpce\b|"
+                r"retail sales|consumer confidence|ism |pmi|housing|"
+                r"durable|enflasyon|faiz|tcmb|işsizlik", re.IGNORECASE)
+            _BIG = {
+                "NVDA", "MSFT", "AAPL", "GOOGL", "GOOG", "AMZN", "META",
+                "TSLA", "AVGO", "AMD", "JPM", "NFLX", "CRM", "ORCL",
+                "ADBE", "QCOM", "MU", "PLTR", "COIN", "SMCI", "LLY",
+                "WMT", "TSM", "ASML", "BABA", "HD", "MA", "V",
+            }
+
+            async def _fmp_cal(path: str) -> list:
+                try:
+                    async with httpx.AsyncClient(
+                        timeout=httpx.Timeout(10.0, connect=4.0)
+                    ) as c:
+                        r = await c.get(
+                            f"https://financialmodelingprep.com/stable/"
+                            f"{path}?from={_t}&to={_to}&apikey={fmp_key}"
+                        )
+                    if r.status_code != 200:
+                        return []
+                    d = r.json()
+                    return d if isinstance(d, list) else []
+                except Exception:  # noqa: BLE001
+                    return []
+
+            econ, earn = await asyncio.gather(
+                _fmp_cal("economic-calendar"), _fmp_cal("earnings-calendar")
+            )
+            cats: list[str] = []
+            seen_ev: set[str] = set()
+            for e in econ:
+                if e.get("country") not in ("US", "TR", "EU"):
+                    continue
+                ev = (e.get("event") or "").strip()
+                if not ev or not _ev_kw.search(ev):
+                    continue
+                k = ev.lower()[:30]
+                if k in seen_ev:
+                    continue
+                seen_ev.add(k)
+                d = str(e.get("date") or "")[:10]
+                extra = ""
+                if e.get("previous") is not None:
+                    extra = f" (önc {e['previous']}"
+                    if e.get("estimate") is not None:
+                        extra += f" bek {e['estimate']}"
+                    extra += ")"
+                cats.append(f"  {d} {e.get('country')} {ev}{extra}")
+                if len(cats) >= 12:
+                    break
+            ecount = 0
+            for e in earn:
+                sym = (e.get("symbol") or "").upper()
+                if sym not in _BIG:
+                    continue
+                d = str(e.get("date") or "")[:10]
+                eps = e.get("epsEstimated")
+                cats.append(
+                    f"  {d} {sym} bilanço"
+                    + (f" (epsBek {eps})" if eps is not None else "")
+                )
+                ecount += 1
+                if ecount >= 8:
+                    break
+            if cats:
+                lines.append(
+                    "YAKLAŞAN KATALİZÖRLER (gelecek ~10g — İLERİYE DÖNÜK "
+                    "bölümün SOMUT beslemesi; tarih+olay):"
+                )
+                lines.extend(cats)
+    except Exception as e:  # noqa: BLE001
+        logger.info(f"live_block catalysts skip: {e}")
+
     return "\n".join(lines)
 
 
@@ -533,7 +622,18 @@ def _build_prompt(tier: Tier, pl: SynthPayload) -> str:
             '{"analiz":"...(TEK harmanlanmış, akıcı, hikâyeleştirilmiş '
             'AXIOM makro anlatısı; alt-başlık YOK)","footer":"...(SABIT METIN)"}'
         )
-        tgt = "analiz ~450-900 kelime hedef (kapsamlı çok-tema)"
+        tgt = "analiz ~500-850 kelime hedef (DERİNLİK > kapsam)"
+        depth_directive = (
+            "# PREMIUM ODAĞI: DERİNLİK > KAPSAM\n"
+            "Tüm temaları yüzeysel saymak YOK. Bu haftanın EN piyasa-"
+            "hareket-ettiren ~5 temasını SEÇ (girdiye göre, ör. ABD-Çin "
+            "zirvesi, Orta Doğu/enerji, Fed/işgücü, AI-yatırım/kredi, "
+            "kıymetli maden/kripto). Her seçilen tema için ZORUNLU: "
+            "(a) SPESİFİK ne oldu (olayı/sayıyı adıyla), (b) GÜNCEL "
+            "seviye/veri (CANLI VERİ'den), (c) AXIOM neden-zinciri "
+            "çıkarımı, (d) yön/etki. İkincil temalar en çok tek cümle. "
+            "Az tema, çok derinlik — okuyan yön tayin edebilmeli.\n"
+        )
     else:
         out_schema = (
             '{"analiz":"...(TEK harmanlanmış, akıcı, hikâyeleştirilmiş '
@@ -543,8 +643,14 @@ def _build_prompt(tier: Tier, pl: SynthPayload) -> str:
             '"senaryolar_ve_takip":"ileriye dönük izlenecekler",'
             '"footer":"...(SABIT METIN)"}'
         )
-        tgt = ("analiz ~900-1700 kelime (kapsamlı çok-tema) + kısa "
-               "ark/senaryo bölümleri hedef")
+        tgt = ("analiz ~900-1700 kelime (kapsamlı çok-tema + DERİNLİK) "
+               "+ kısa ark/senaryo bölümleri hedef")
+        depth_directive = (
+            "# ADVANCE ODAĞI: KAPSAM + DERİNLİK\n"
+            "Haftanın TÜM büyük temalarını işle AMA her birini somut "
+            "olay + güncel sayı + AXIOM neden-zinciri + yön ile derinleştir; "
+            "tema sayma değil, her tema gerçek analiz.\n"
+        )
     return f"""# ROL VE MİSYON
 Sen AXIOM'sun: bağımsız bir makro/piyasa analiz sesi. Görevin, CANLI VERİ
 ve global gelişmeleri temel alıp, sağlanan arka-plan sinyallerini de
@@ -633,7 +739,13 @@ ALINTILAMA, İSİM/kaynak VERME; fikri dönüştürüp kendi muhakemene kat)
    izlenmeli / dengeli seyir / karmaşık bir görünüm" — bunları somut
    olay + güncel sayı + AXIOM çıkarımıyla DOLDUR. Her büyük tema en az
    bir SPESİFİK gelişme (ne oldu, hangi sayı) içermeli; girdide o tema
-   için somut bir şey yoksa o temayı kısa geç, uydurma.
+   için somut bir şey yoksa o temayı kısa geç, uydurma. AYRICA: arka-
+   plan sinyalindeki ÖZGÜN, AYIRT EDİCİ tezleri (jenerik makro-klişe
+   değil; ör. "AI yatırımı fiyat-duyarsız: bakır +%40, bellek +%150-300
+   ama harcama hız kesmiyor" gibi spesifik, sayısal, sıra-dışı argüman)
+   kendi muhakemenle DÖNÜŞTÜREREK (Kural 2/3 — atıfsız, parafraz değil)
+   anlatıya KAT; bu tezler raporun derinliğidir, jenerik cümleyle
+   geçiştirme.
 13. YÖNLÜ KONVİKSİYON ZORUNLU (ürün amacı): okuyucu bunu okuyunca
    piyasa hakkında NET bir fikir edinip yön tayin edebilmeli. Anlatı
    ve özellikle yön bölümü; (a) net bir AXIOM duruşu (risk-iştahı
@@ -667,6 +779,7 @@ bölümler/atıflar değil tek akış; hiçbir yerde kaynak adı/"rapora
 göre" ifadesi olmasın. Kapsamı genişletmek özgünlüğü/atıfsızlığı
 (Kural 2/3) ve sayı kuralını (Kural 1) ASLA gevşetmez.
 
+{depth_directive}
 # ÇIKTI (JSON; tier={tier}; {tgt})
 {out_schema}
 
@@ -675,6 +788,25 @@ sansasyon yok, tamamen veri odaklı."""
 
 
 # ---------- Gemini (macro_storyteller forku) ----------
+
+_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
+
+
+def _parse_json_lenient(s: str) -> Optional[dict]:
+    """Gemini bazen STOP (tam çıktı) ama parse-edilemez JSON dönüyor —
+    en sık neden: string DEĞERİ İÇİNDE literal \\n/\\t (çok-paragraflı
+    'analiz'). strict=False bunları kabul eder → boşa retry'ı keser.
+    Sıra: strict → strict=False → trailing-comma temizle + strict=False.
+    Başarısızsa None (çağıran retry/empty sayar)."""
+    for attempt in (0, 1, 2):
+        txt = s if attempt < 2 else _TRAILING_COMMA_RE.sub(r"\1", s)
+        try:
+            obj = json.loads(txt, strict=(attempt == 0))
+            return obj if isinstance(obj, dict) else None
+        except (json.JSONDecodeError, ValueError):
+            continue
+    return None
+
 
 async def _call_gemini(prompt: str, *, max_tokens: int = 24000) -> Optional[dict]:
     try:
@@ -729,10 +861,10 @@ async def _call_gemini(prompt: str, *, max_tokens: int = 24000) -> Optional[dict
                     if raw:
                         fence = re.search(r"\{[\s\S]*\}", raw)
                         if fence:
-                            try:
-                                return json.loads(fence.group(0))
-                            except json.JSONDecodeError:
-                                last_reason = f"json_decode (fin={fin})"
+                            parsed = _parse_json_lenient(fence.group(0))
+                            if parsed is not None:
+                                return parsed
+                            last_reason = f"json_decode (fin={fin})"
                         else:
                             last_reason = f"no_json_brace (fin={fin})"
                     else:
