@@ -265,37 +265,59 @@ async def _build_live_block() -> str:
     except Exception as e:  # noqa: BLE001
         logger.info(f"live_block macro skip: {e}")
 
-    # 2) Piyasa anlık görünüm (FMP — fail-soft; 402/boş olabilir)
+    # 2) GÜNCEL PİYASA SEVİYELERİ — otoriter fiyat çapası (hallüsinasyon
+    #    kökü: eski kod market_summary FMP batch-quote 402'leşiyordu →
+    #    canlı seviye yok → model bir HABERDEKİ "10Y<4.40" sayısını
+    #    güncelmiş gibi yazıyordu). FMP /stable/quote per-sembol ÇALIŞIR
+    #    (probe). UST faizi/DXY/WTI plan-dışı (402) → KASTEN dahil edilmez;
+    #    prompt onları niteliksel konuşur (sayı UYDURMAZ). Her sembol
+    #    bağımsız fail-soft.
     try:
-        from services.market_summary_service import (
-            get_overnight_markets, get_sector_performance, get_vix_quote_fmp,
-        )
-        mkt: list[str] = []
-        try:
-            ov = await get_overnight_markets()
-            for reg in ("us_futures", "europe", "asia"):
-                for x in (ov.get(reg) or [])[:3]:
-                    cp = x.get("change_pct")
-                    if x.get("label") and cp is not None:
-                        mkt.append(f"{x['label']} {cp:+.2f}%")
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            vx = await get_vix_quote_fmp()
-            if vx and vx.get("current") is not None:
-                mkt.append(f"VIX {vx['current']:.1f} ({vx.get('status','')})")
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            sec = await get_sector_performance()
-            top = [f"{s['sector']} {s['change_pct']:+.2f}%"
-                   for s in (sec or [])[:3] if s.get("sector")]
-            if top:
-                mkt.append("Sektör lider: " + ", ".join(top))
-        except Exception:  # noqa: BLE001
-            pass
-        if mkt:
-            lines.append("PİYASA: " + " | ".join(mkt))
+        fmp_key = os.getenv("FMP_API_KEY", "").strip()
+        if fmp_key:
+            # (FMP sembol, görünen ad, ondalık)
+            _MKT = [
+                ("^GSPC", "S&P500", 0), ("^IXIC", "Nasdaq", 0),
+                ("^VIX", "VIX", 1), ("XAUUSD", "Altın(ons$)", 0),
+                ("XAGUSD", "Gümüş(ons$)", 2), ("BZUSD", "Brent($)", 2),
+                ("BTCUSD", "Bitcoin($)", 0), ("EURUSD", "EUR/USD", 4),
+            ]
+
+            async def _q(sym: str) -> Optional[dict]:
+                try:
+                    async with httpx.AsyncClient(
+                        timeout=httpx.Timeout(8.0, connect=4.0)
+                    ) as c:
+                        r = await c.get(
+                            "https://financialmodelingprep.com/stable/"
+                            f"quote?symbol={sym}&apikey={fmp_key}"
+                        )
+                    if r.status_code != 200:
+                        return None
+                    d = r.json()
+                    return d[0] if isinstance(d, list) and d else None
+                except Exception:  # noqa: BLE001
+                    return None
+
+            quotes = await asyncio.gather(*[_q(s) for s, _, _ in _MKT])
+            seg: list[str] = []
+            for (sym, name, dp), q in zip(_MKT, quotes):
+                if not q or q.get("price") is None:
+                    continue
+                px = q["price"]
+                cp = q.get("changePercentage")
+                pxs = f"{px:,.{dp}f}"
+                seg.append(
+                    f"{name} {pxs}"
+                    + (f" ({cp:+.2f}%)" if cp is not None else "")
+                )
+            if seg:
+                today = datetime.now(timezone.utc).date().isoformat()
+                lines.append(
+                    f"GÜNCEL PİYASA SEVİYELERİ ({today} — otoriter fiyat "
+                    f"çapası; güncel seviye iddiası YALNIZ buradan): "
+                    + " | ".join(seg)
+                )
     except Exception as e:  # noqa: BLE001
         logger.info(f"live_block market skip: {e}")
 
@@ -553,6 +575,15 @@ ALINTILAMA, İSİM/kaynak VERME; fikri dönüştürüp kendi muhakemene kat)
    girdi "211000" ise "211000" yaz; "211.000", "211,000", "211 bin"
    YAZMA. Ondalık da girdideki gibi kalsın (3.50 → 3.50). Bu, doğrulama
    için kritiktir; biçim değiştirmek sayıyı geçersiz kılar.
+   GÜNCEL SEVİYE KAYNAĞI (KRİTİK — hallüsinasyon önleme): bir varlığın
+   GÜNCEL fiyat/seviye/oranını YALNIZ [CANLI VERİ]'deki "GÜNCEL PİYASA
+   SEVİYELERİ" ve "MAKRO" bloklarından al. [ARKA PLAN SİNYALİ] ve
+   gündem/haber içindeki sayılar BAĞLAMDIR (o kaynağın o günkü yorumu)
+   — bunları GÜNCEL gerçek seviye gibi SUNMA. Ör. bir haber metninde
+   "10 yıllık faiz 4.40 altında" geçse bile, CANLI VERİ'de tahvil
+   faizi YOKSA güncel faiz oranı sayısı YAZMA; "tahvil faizleri
+   yüksek/baskı altında" gibi NİTELİKSEL konuş. Elinde güncel sayı
+   yoksa sayı UYDURMA — yön/eğilim cümlesi kur.
 2. KOPYA/TÜREV YASAĞI (TELİF — KRİTİK): arka-plan sinyalinden 12+ kelime
    ardışık örtüşme YAPMA; cümle yapısını/sözcük dizilişini/argüman
    kurgusunu TAKİP ETME. Her fikri tamamen kendi muhakemenle, sıfırdan,
@@ -591,6 +622,28 @@ ALINTILAMA, İSİM/kaynak VERME; fikri dönüştürüp kendi muhakemene kat)
    açıklama, ön-söz YOK. "analiz" akıcı paragraf(lar) olsun (alt-başlık
    yazma). Kelime sınırı rehberdir; uyamasan bile geçerli JSON ver.
 11. JSON'un "footer" alanına AYNEN şu metni koy: "{_FOOTER}"
+12. SOMUT OLAY ZORUNLU — JENERİK DOLGU YASAK (KRİTİK kalite kuralı):
+   Olaylar, veriler ve gelişmeler OLGUDUR, telifli DEĞİLDİR — onları
+   SOMUT ve SPESİFİK yaz (örn. "Trump-Xi Pekin zirvesi ve gümrük
+   tarifelerini düşürmeye yönelik geçici mutabakat", "NVDA bilançosu",
+   "altın ons fiyatındaki sert düşüş" gibi GERÇEK olayı/sayıyı adıyla).
+   Telif kuralı (Kural 2/3) yalnız bir kaynağın ÖZGÜN ANALİZ-İFADESİNE
+   uygulanır — OLGUYU bulanıklaştırmak için DEĞİL. Şu kalıplar YASAK
+   (içi boş): "gerilimler devam etti / belirsizlik sürdü / yakından
+   izlenmeli / dengeli seyir / karmaşık bir görünüm" — bunları somut
+   olay + güncel sayı + AXIOM çıkarımıyla DOLDUR. Her büyük tema en az
+   bir SPESİFİK gelişme (ne oldu, hangi sayı) içermeli; girdide o tema
+   için somut bir şey yoksa o temayı kısa geç, uydurma.
+13. YÖNLÜ KONVİKSİYON ZORUNLU (ürün amacı): okuyucu bunu okuyunca
+   piyasa hakkında NET bir fikir edinip yön tayin edebilmeli. Anlatı
+   ve özellikle yön bölümü; (a) net bir AXIOM duruşu (risk-iştahı
+   risk-on mu risk-off mu, NEDEN), (b) hangi varlık sınıfı/temanın
+   LEHTE, hangisinin BASKI altında olduğu, (c) izlenecek somut
+   seviye/tetikleyici ve "hangi gelişmede yön nasıl değişir"
+   vermeli. Gerekçeli ve iddialı ol; "her iki senaryo da mümkün,
+   izlenmeli" tarzı kaçamak hedge YASAK. Bu yatırım tavsiyesi DEĞİL
+   (Kural 7 geçerli: al/sat deme) ama NET, gerekçeli makro duruş —
+   yuvarlak/nötr cümle değil.
 
 # SENTEZ METODOLOJİSİ
 Tek bir AXIOM hikâyesi yaz: (1) KAPSAM ZORUNLU — "HAFTANIN ANA
