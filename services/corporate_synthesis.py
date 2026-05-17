@@ -21,7 +21,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Literal, Optional
 
 import httpx
@@ -208,6 +208,20 @@ async def _ark_delta(fund: str, start: datetime, end: datetime) -> Optional[dict
     }
 
 
+def _fmt_num(v):
+    """numeric kolon kozmetiği: Decimal('3.500000')→'3.5', '199000'→'199000'
+    (bilimsel-notasyon değil), '5.0'→'5'. None/parse-edilemez aynen döner."""
+    if v is None:
+        return v
+    try:
+        d = Decimal(str(v)).normalize()
+    except (InvalidOperation, ValueError, TypeError):
+        return v
+    if d == d.to_integral_value():
+        d = d.quantize(Decimal(1))  # 1E+5 → 100000
+    return format(d, "f")
+
+
 async def _build_live_block() -> str:
     """AXIOM'un kendi verisinden kompakt 'canlı veri bağlamı': son makro
     açıklamalar (US+TR), piyasa anlık görünüm, global gündem başlıkları.
@@ -231,13 +245,13 @@ async def _build_live_block() -> str:
                 exp = r["expected_value"]
                 sp = r["surprise_pct"]
                 seg = (f"  {r['country']} {r['event_type']}: "
-                       f"actual={r['actual_value']}")
+                       f"actual={_fmt_num(r['actual_value'])}")
                 if exp is not None:
-                    seg += f" beklenti={exp}"
+                    seg += f" beklenti={_fmt_num(exp)}"
                 if r["prior_value"] is not None:
-                    seg += f" önceki={r['prior_value']}"
+                    seg += f" önceki={_fmt_num(r['prior_value'])}"
                 if sp is not None:
-                    seg += f" sürpriz%={sp}"
+                    seg += f" sürpriz%={_fmt_num(sp)}"
                 seg += f" ({str(r['released_at'])[:10]})"
                 lines.append(seg)
     except Exception as e:  # noqa: BLE001
