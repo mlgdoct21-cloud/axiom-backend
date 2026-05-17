@@ -25,6 +25,7 @@ from services.corporate_sources import (
     jpm_eotm_html,
     mahfi_rss,
     overshoot_rss,
+    radar_rss,
 )
 from services.corporate_sources.store import (
     ingest_holdings_snapshot,
@@ -81,6 +82,32 @@ async def _poll_ark() -> dict:
     return {"source": "ark", "funds_ingested": ok}
 
 
+async def _poll_radar() -> dict:
+    """Tema-radar kaynakları (yalnız başlık; gövde yok; kind='radar').
+    Her kaynak bağımsız fail-soft. Sentez üretmez — live_block besler."""
+    detail: dict = {}
+    for key in radar_rss.RADAR_FEEDS:
+        try:
+            etag, lm = await radar_rss.read_source_state(key)
+            body, meta = await radar_rss.fetch_feed(
+                key, etag=etag, last_modified=lm
+            )
+            if body is None:
+                detail[key] = {"status": meta.get("status"), "ingested": 0}
+                continue
+            posts = radar_rss.parse_feed(body, key)
+            rows = [normalize_post(f"radar_{key}", "radar", p) for p in posts]
+            res = await ingest_posts(rows)
+            await radar_rss.write_source_state(
+                meta.get("etag"), meta.get("last_modified"), key
+            )
+            detail[key] = {"parsed": len(posts), **res}
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"poll radar {key} failed: {e}")
+            detail[key] = {"error": str(e)}
+    return {"source": "radar", **detail}
+
+
 async def _poll_once() -> list[dict]:
     out = []
     out.append(await _poll_rss(mahfi_rss, "mahfi", "article"))
@@ -91,6 +118,7 @@ async def _poll_once() -> list[dict]:
     out.append(await _poll_rss(blackrock_html, "blackrock", "commentary"))
     out.append(await _poll_rss(jpm_eotm_html, "jpm", "eotm"))
     out.append(await _poll_ark())
+    out.append(await _poll_radar())
     logger.info(f"corp poll: {out}")
     return out
 

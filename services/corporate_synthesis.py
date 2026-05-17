@@ -330,6 +330,28 @@ async def _build_live_block() -> str:
     except Exception as e:  # noqa: BLE001
         logger.info(f"live_block news skip: {e}")
 
+    # 4) Tema radarı — analist/yorumcu BAŞLIK-düzeyi sinyal (gövde YOK;
+    #    telif-güvenli; düşünceyi besler, ASLA aktarılmaz — prompt Kural
+    #    2/3 dönüştürme+atıfsızlık zaten kapsar).
+    try:
+        async with engine.connect() as conn:
+            rrows = (await conn.execute(text(
+                "SELECT title, published FROM corporate_posts "
+                "WHERE kind = 'radar' "
+                "AND published >= NOW() - INTERVAL '8 days' "
+                "ORDER BY published DESC LIMIT 30"
+            ))).mappings().all()
+        if rrows:
+            lines.append("TEMA RADARI (yorumcu/gündem başlık-düzeyi sinyal — "
+                         "gövde/atıf YOK, yalnız tema; dönüştür):")
+            for r in rrows:
+                lines.append(
+                    f"  {(r['title'] or '')[:120]} "
+                    f"({str(r['published'])[:10]})"
+                )
+    except Exception as e:  # noqa: BLE001
+        logger.info(f"live_block radar skip: {e}")
+
     return "\n".join(lines)
 
 
