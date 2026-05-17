@@ -46,7 +46,11 @@ GEMINI_URL_TEMPLATE = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "{model}:generateContent?key={key}"
 )
-_HTTP_TIMEOUT = httpx.Timeout(40.0, connect=8.0)
+# Gemini çağrı timeout'u. Kapsamlı çok-tema prompt (~20K+ token girdi)
+# yanıt gecikmesini artırır; 40s sınırı ReadTimeout→None→"gemini empty"
+# veriyordu (önceki aralıklı premium-empty'nin de kök nedeni). Tanılama:
+# 20.4K-token prompt STOP+geçerli JSON ~<120s. 8s connect korunur.
+_HTTP_TIMEOUT = httpx.Timeout(120.0, connect=8.0)
 
 # Türkiye kalıcı UTC+3 (DST yok, 2016+) — sabit offset, tzdata yok.
 _TR_TZ = timezone(timedelta(hours=3))
@@ -62,9 +66,13 @@ _ARK_FUNDS = ["ARKK", "ARKW", "ARKG", "ARKQ", "ARKF"]
 # sert hedef değil runaway-çıktıyı yakalayan sanity-tavan olmalı (gözlem:
 # premium ~440-480, advance ~750-990 — eski (400/700) tavan normal çıktıyı
 # reddediyordu).
+# Tavan = uzunluk sanity (telif backstop'u L_DISPLACE 12-gram'dır, O'NA
+# DOKUNULMADI). Kapsamlı çok-tema kapsam kararı (kullanıcı onaylı) daha
+# uzun anlatı gerektirir → tavan yükseltildi (premium 700→1100,
+# advance 1150→2000); taban korundu.
 _WORD_BOUNDS: dict[str, tuple[int, int]] = {
-    "premium": (120, 700),
-    "advance": (300, 1150),
+    "premium": (120, 1100),
+    "advance": (300, 2000),
 }
 
 # Arka-plan sinyali bloklarında kullanılan iç etiket (prompt girdisi;
@@ -291,42 +299,116 @@ async def _build_live_block() -> str:
     except Exception as e:  # noqa: BLE001
         logger.info(f"live_block market skip: {e}")
 
-    # 3) Global gündem — son 5g macro-ilgili haber + ai_summary (retail
-    #    hisse-pick spam'i elenir; özet zincir-detayını besler).
+    # 3) HAFTANIN ANA GELİŞMELERİ — tema-kümeli ana-olay özeti.
+    #    Eskiden: son 5g'den rastgele 25 başlık + ai_summary[:200] (10K+
+    #    ilgili haber varken). Şimdi: ~11 makro tema kümesi, küme başına
+    #    en güncel ayrık haberlerin `axiom_analysis`'i (kısa+yön-odaklı
+    #    AXIOM ön-analizi; ai_summary'den daha sinyal-yoğun). Global
+    #    dedup + per-küme/global cap → kapsamlı ama token-kontrollü.
+    #    Retail hisse-pick spam'i elenir. Telif: prompt Kural 2/3
+    #    dönüştürme+atıfsızlık kapsar.
     try:
-        _MACRO_KW = (
-            r"hormuz|petrol|oil|opec|enflasyon|inflation|fed|faiz|rate|cpi|"
-            r"ppi|tarife|tariff|jeopolit|geopolit|merkez bank|central bank|"
-            r"resesyon|recession|büyüme|gdp|istihdam|jobs|payroll|"
-            r"enerji|energy|gübre|fertiliz|navlun|freight|sigorta|"
-            r"insurance|tahvil|yield|dolar|kur|emtia|commodit|altın|gold|"
-            r"çip|chip|tedarik|supply chain|stablecoin|bitcoin|ecb|tcmb"
-        )
         _NOISE = (
             r"stocks? to buy|better buy| vs\.|overlooked|before they soar|"
             r"should you buy|motley|best stock|top \d+ stock|price target|"
             r"buy now|to own|dividend stock"
         )
+        # (etiket, başlık|özet eşleşme regex'i) — sıra = sunum sırası
+        _CLUSTERS: list[tuple[str, str]] = [
+            ("ABD-Çin & Ticaret",
+             r"trump.*chin|chin.*trump|xi jinping|trump.*xi|u\.?s\.?-china|"
+             r"sino-?american|beijing summit|tarife|tariff|trade war|"
+             r"ticaret savaş|ticaret görüşme"),
+            ("İran / Orta Doğu / Barış Görüşmeleri",
+             r"iran|hormuz|hürmüz|strait of hormuz|orta do[ğg]u|middle east|"
+             r"israel|israil|gaza|gazze|hizbullah|peace term|barış görüşme|"
+             r"barış şart|ateşkes|cease.?fire|truce|müzakere|negotiat"),
+            ("Fed & Faiz Politikası",
+             r"\bfed\b|federal reserve|\bfomc\b|powell|warsh|fed chair|"
+             r"fed başkan|faiz karar|interest rate|rate (hike|cut|decision|"
+             r"path)|faiz artır|faiz indir|şahin|dovish|hawkish"),
+            ("Diğer Merkez Bankaları (ECB/BoJ/TCMB)",
+             r"\becb\b|european central|\bboj\b|bank of japan|bank of england|"
+             r"\bpboc\b|tcmb|türkiye cumhuriyet merkez|merkez bankası|"
+             r"central bank(?!.*\bfed\b)"),
+            ("Enflasyon & Fiyatlar",
+             r"enflasyon|inflation|\bcpi\b|\bppi\b|\bpce\b|deflation|"
+             r"fiyat artış|cost of living|price pressure|disinflation"),
+            ("İşgücü & İstihdam",
+             r"istihdam|jobless|unemploy|nonfarm|payroll|\bnfp\b|"
+             r"labor market|işsizlik|jobs report|işgücü|layoff|işten çıkar"),
+            ("Enerji & Petrol",
+             r"petrol|oil price|\bopec\b|crude|brent|\bwti\b|natural gas|"
+             r"doğalgaz|enerji fiyat|energy price|refinery|lng"),
+            ("Büyüme & Resesyon",
+             r"resesyon|recession|\bgdp\b|gayri safi|büyüme|growth forecast|"
+             r"economic outlook|slowdown|daralma|contraction|durgunluk"),
+            ("Tahvil / Kur / Likidite",
+             r"tahvil|treasury yield|bond yield|\byield|dolar|\bdollar\b|"
+             r"\bfx\b|exchange rate|döviz kur|liquidity|para arzı|"
+             r"money supply|\bm2\b|borçlanma|debt issuance"),
+            ("Kripto & Dijital Varlık",
+             r"bitcoin|\bbtc\b|ethereum|\beth\b|kripto|crypto|stablecoin|"
+             r"\bxrp\b|solana|spot etf|kripto etf|digital asset"),
+            ("Yapay Zeka & Teknoloji Yatırımı",
+             r"yapay zeka|artificial intelligence|\bai\b|agentic|çip|chip|"
+             r"semiconductor|data center|veri merkezi|nvidia|capex|"
+             r"sermaye harcama|tech invest|hyperscaler"),
+        ]
+        # Kapsamı korurken prompt'u küçült: büyük near-verbatim haber
+        # yığını Gemini RECITATION/empty riskini artırıyordu (~22K
+        # live_block). ~10 tema × 4 madde hâlâ kapsamlı ama daha güvenli.
+        _PER = 4            # küme başına en fazla madde
+        _GLOBAL = 28        # toplam madde tavanı (token + RECITATION)
+        _AA_CAP = 320       # axiom_analysis kırpma (medyan≈362)
+        seen: set[str] = set()
+        emitted = 0
+        block: list[str] = []
         async with engine.connect() as conn:
-            nrows = (await conn.execute(text(
-                "SELECT source, original_title, ai_summary, created_at "
-                "FROM news_items "
-                "WHERE created_at >= NOW() - INTERVAL '5 days' "
-                "AND (lower(original_title) ~ :kw "
-                "     OR lower(coalesce(ai_summary,'')) ~ :kw) "
-                "AND lower(coalesce(source,'')) !~ "
-                "    'fool\\.com|247wallst|seekingalpha' "
-                "AND lower(original_title) !~ :noise "
-                "ORDER BY created_at DESC LIMIT 25"
-            ), {"kw": _MACRO_KW, "noise": _NOISE})).mappings().all()
-        if nrows:
-            lines.append("GÜNDEM (son 5g, macro-ilgili — özet zincir için):")
-            for n in nrows:
-                s = (n["ai_summary"] or "").strip().replace("\n", " ")
-                lines.append(
-                    f"  [{n['source']}] {(n['original_title'] or '')[:80]}"
-                    + (f" — {s[:200]}" if s else "")
-                )
+            for label, rgx in _CLUSTERS:
+                if emitted >= _GLOBAL:
+                    break
+                rows = (await conn.execute(text(
+                    "SELECT original_title, axiom_analysis, ai_summary, "
+                    "created_at FROM news_items "
+                    "WHERE created_at >= NOW() - INTERVAL '8 days' "
+                    "AND (lower(original_title) ~ :rx "
+                    "     OR lower(coalesce(ai_summary,'')) ~ :rx) "
+                    "AND lower(coalesce(source,'')) !~ "
+                    "    'fool\\.com|247wallst|seekingalpha' "
+                    "AND lower(original_title) !~ :noise "
+                    "ORDER BY created_at DESC LIMIT 14"
+                ), {"rx": rgx, "noise": _NOISE})).mappings().all()
+                picked: list[str] = []
+                for r in rows:
+                    if len(picked) >= _PER or emitted >= _GLOBAL:
+                        break
+                    title = (r["original_title"] or "").strip()
+                    key = title.lower()[:45]
+                    if not title or key in seen:
+                        continue
+                    seen.add(key)
+                    body = (r["axiom_analysis"] or "").strip()
+                    if not body:
+                        body = (r["ai_summary"] or "").strip()[:300]
+                    body = body.replace("\n", " ")[:_AA_CAP]
+                    if not body:
+                        continue
+                    picked.append(
+                        f"  - {title[:110]} → {body} "
+                        f"({str(r['created_at'])[:10]})"
+                    )
+                    emitted += 1
+                if picked:
+                    block.append(f"▸ {label}:")
+                    block.extend(picked)
+        if block:
+            lines.append(
+                "HAFTANIN ANA GELİŞMELERİ (son 8g, tema bazlı; her madde "
+                "AXIOM ön-analizidir — yeniden ÜRETME/ALINTILAMA, kendi "
+                "muhakemene DÖNÜŞTÜR, isim/kaynak verme):"
+            )
+            lines.extend(block)
     except Exception as e:  # noqa: BLE001
         logger.info(f"live_block news skip: {e}")
 
@@ -429,7 +511,7 @@ def _build_prompt(tier: Tier, pl: SynthPayload) -> str:
             '{"analiz":"...(TEK harmanlanmış, akıcı, hikâyeleştirilmiş '
             'AXIOM makro anlatısı; alt-başlık YOK)","footer":"...(SABIT METIN)"}'
         )
-        tgt = "analiz ~250-550 kelime hedef"
+        tgt = "analiz ~450-900 kelime hedef (kapsamlı çok-tema)"
     else:
         out_schema = (
             '{"analiz":"...(TEK harmanlanmış, akıcı, hikâyeleştirilmiş '
@@ -439,7 +521,8 @@ def _build_prompt(tier: Tier, pl: SynthPayload) -> str:
             '"senaryolar_ve_takip":"ileriye dönük izlenecekler",'
             '"footer":"...(SABIT METIN)"}'
         )
-        tgt = "analiz ~500-1000 kelime + kısa ark/senaryo bölümleri hedef"
+        tgt = ("analiz ~900-1700 kelime (kapsamlı çok-tema) + kısa "
+               "ark/senaryo bölümleri hedef")
     return f"""# ROL VE MİSYON
 Sen AXIOM'sun: bağımsız bir makro/piyasa analiz sesi. Görevin, CANLI VERİ
 ve global gelişmeleri temel alıp, sağlanan arka-plan sinyallerini de
@@ -447,7 +530,12 @@ düşünceni beslemek için kullanarak, o haftaya dair TEK, harmanlanmış,
 hikâyeleştirilmiş ve TAMAMEN KENDİNE AİT bir makro değerlendirme üretmek.
 Bu bir kaynak özeti/aktarımı DEĞİL; verilerden ve kendi muhakemenden
 türeyen, hiçbir kişi/kurum adı geçmeyen özgün AXIOM görüşüdür. Trading
-sinyali değil, makro bağlam.
+sinyali değil, makro bağlam. AMACIN: okuyucuyu haftanın TÜM büyük makro
+gelişmelerinden (jeopolitik — ör. ABD-Çin zirvesi/ticaret, İran-Orta
+Doğu/barış görüşmeleri; merkez bankaları — Fed faiz patikası/olasılığı
+ve başkan değişimi; enerji; kilit veri) hikâye akışı içinde haberdar
+etmek VE piyasanın yönü hakkında net bir okuma vermek — yüzeysel değil,
+eksiksiz ve bağlantılı.
 
 # GİRDİ
 [HAFTA] {pl.prev_iso} - {pl.this_iso}
@@ -460,6 +548,11 @@ ALINTILAMA, İSİM/kaynak VERME; fikri dönüştürüp kendi muhakemene kat)
 # KESİN VE DEĞİŞMEZ KURALLAR
 1. YALNIZCA GİRDİDEKİ SAYILARI KULLAN (öncelik CANLI VERİ). Context'te
    yoksa sayı yazma; ezbere faiz/fiyat/oran ekleme. İhlal → o cümleyi düşür.
+   SAYI BİÇİMİ ZORUNLU: her sayıyı GİRDİDE GEÇTİĞİ BİÇİMDE, BİREBİR yaz —
+   binlik ayraç (nokta/virgül) veya "bin/milyon" sözcüğü EKLEME. Örn.
+   girdi "211000" ise "211000" yaz; "211.000", "211,000", "211 bin"
+   YAZMA. Ondalık da girdideki gibi kalsın (3.50 → 3.50). Bu, doğrulama
+   için kritiktir; biçim değiştirmek sayıyı geçersiz kılar.
 2. KOPYA/TÜREV YASAĞI (TELİF — KRİTİK): arka-plan sinyalinden 12+ kelime
    ardışık örtüşme YAPMA; cümle yapısını/sözcük dizilişini/argüman
    kurgusunu TAKİP ETME. Her fikri tamamen kendi muhakemenle, sıfırdan,
@@ -500,15 +593,26 @@ ALINTILAMA, İSİM/kaynak VERME; fikri dönüştürüp kendi muhakemene kat)
 11. JSON'un "footer" alanına AYNEN şu metni koy: "{_FOOTER}"
 
 # SENTEZ METODOLOJİSİ
-Tek bir AXIOM hikâyesi yaz: (1) haftanın makro resmi (canlı veri +
-global gündem); (2) NEDEN-ZİNCİRLERİ — gelişmeleri aktarım
-mekanizmasıyla bağla, ikincil/üçüncül etkileri aç (ör. boğaz kapanışı →
-navlun+sigorta primi+girdi maliyeti → gıda/çekirdek enflasyon kanalı);
-(3) verilerin birbiriyle çapraz okunması (veri yoksa "veri yok" de,
-UYDURMA); (4) AXIOM'un bağımsız görüşü + riskler; (5) İLERİYE DÖNÜK:
-yaklaşan veri/gelişmeler için baz + alternatif senaryo, tetikleyiciler
-(olasılık dili; uydurma rakam/tavsiye YOK). Ayrı bölümler/atıflar değil
-tek akış; hiçbir yerde kaynak adı/"rapora göre" ifadesi olmasın.
+Tek bir AXIOM hikâyesi yaz: (1) KAPSAM ZORUNLU — "HAFTANIN ANA
+GELİŞMELERİ" bloğundaki TÜM büyük temaları işle: ABD-Çin/ticaret,
+İran-Orta Doğu/barış görüşmeleri, Fed (faiz patikası + piyasanın
+fiyatladığı artış/indirim olasılığı + başkan değişimi varsa), diğer
+merkez bankaları, enflasyon, işgücü, enerji, büyüme/resesyon, tahvil/
+kur/likidite, kripto, yapay zeka/teknoloji yatırımı. Girdide belirgin
+olan hiçbir BÜYÜK gelişmeyi atlama; her birini bir-iki cümleyle de
+olsa anlatıya ÖR (yoksa "veri yok" de, UYDURMA); (2) NEDEN-ZİNCİRLERİ
+— gelişmeleri aktarım mekanizmasıyla bağla, ikincil/üçüncül etkileri
+aç (ör. boğaz kapanışı → navlun+sigorta primi+girdi maliyeti → gıda/
+çekirdek enflasyon kanalı); (3) verilerin birbiriyle çapraz okunması;
+(4) AXIOM'un bağımsız görüşü + riskler; (5) PİYASA YÖN-GÖRÜŞÜ — net
+bir "piyasa nereye" okuması ver: genel risk iştahı (risk-on/off
+eğilimi), hangi varlık sınıfı/temanın öne çıkıp hangisinin baskı
+göreceği; olasılık dili, tavsiye/al-sat DEĞİL (Kural 5/7); (6)
+İLERİYE DÖNÜK: yaklaşan veri/gelişmeler için baz + alternatif senaryo,
+tetikleyiciler (olasılık dili; uydurma rakam/tavsiye YOK). Ayrı
+bölümler/atıflar değil tek akış; hiçbir yerde kaynak adı/"rapora
+göre" ifadesi olmasın. Kapsamı genişletmek özgünlüğü/atıfsızlığı
+(Kural 2/3) ve sayı kuralını (Kural 1) ASLA gevşetmez.
 
 # ÇIKTI (JSON; tier={tier}; {tgt})
 {out_schema}
@@ -542,31 +646,53 @@ async def _call_gemini(prompt: str, *, max_tokens: int = 24000) -> Optional[dict
             "thinkingConfig": {"thinkingBudget": 0},
         },
     }
-    try:
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            resp = await client.post(url, json=body)
-        if resp.status_code != 200:
-            logger.warning(f"corp gemini {resp.status_code}: {resp.text[:200]}")
-            return None
-        data = resp.json()
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"corp gemini call failed: {e}")
-        return None
-    candidates = data.get("candidates") or []
-    if not candidates:
-        return None
-    raw = (
-        candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
-    )
-    if not raw:
-        return None
-    fence = re.search(r"\{[\s\S]*\}", raw)
-    if not fence:
-        return None
-    try:
-        return json.loads(fence.group(0))
-    except json.JSONDecodeError:
-        return None
+    # Büyük haber-yoğun prompt'ta Gemini ARA SIRA boş/RECITATION/OTHER
+    # candidate dönüyor (non-determinist). Tek deneme + sessiz None
+    # "gemini empty" veriyordu → finishReason logla + üstel backoff'lu
+    # 4 deneme. Çoğu transient empty 2. denemede düzeliyor; kalıcı
+    # RECITATION ise log ile teşhis edilir (çözüm: prompt'u daha da kıs).
+    last_reason = "?"
+    for attempt in range(1, 5):
+        try:
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+                resp = await client.post(url, json=body)
+            if resp.status_code != 200:
+                last_reason = f"http{resp.status_code}"
+                logger.warning(
+                    f"corp gemini {resp.status_code} (try{attempt}): "
+                    f"{resp.text[:160]}"
+                )
+            else:
+                data = resp.json()
+                cands = data.get("candidates") or []
+                if not cands:
+                    pf = data.get("promptFeedback", {})
+                    last_reason = f"no_candidates pf={str(pf)[:120]}"
+                else:
+                    c0 = cands[0]
+                    fin = c0.get("finishReason", "?")
+                    parts = c0.get("content", {}).get("parts", [{}])
+                    raw = (parts[0].get("text", "") if parts else "").strip()
+                    if raw:
+                        fence = re.search(r"\{[\s\S]*\}", raw)
+                        if fence:
+                            try:
+                                return json.loads(fence.group(0))
+                            except json.JSONDecodeError:
+                                last_reason = f"json_decode (fin={fin})"
+                        else:
+                            last_reason = f"no_json_brace (fin={fin})"
+                    else:
+                        last_reason = f"empty_text fin={fin}"
+        except Exception as e:  # noqa: BLE001
+            last_reason = f"exc {type(e).__name__}: {str(e)[:120]}"
+        logger.warning(
+            f"corp gemini empty (try{attempt}/4) reason={last_reason}"
+        )
+        if attempt < 4:
+            await asyncio.sleep(2 ** attempt)  # 2,4,8s backoff
+    logger.error(f"corp gemini GAVE UP after 4 tries: {last_reason}")
+    return None
 
 
 # ---------- Guards ----------
@@ -640,6 +766,48 @@ def _assemble_md(tier: Tier, obj: dict) -> str:
     return "\n\n".join(parts)
 
 
+_SCALE_FACTORS = (
+    Decimal(1), Decimal(1000), Decimal("0.001"),
+    Decimal(100), Decimal("0.01"),
+    Decimal(1_000_000), Decimal("0.000001"),
+)
+
+
+def _reconcile_scale(
+    unk: list[str], allowed: set[Decimal],
+    tol: Decimal = Decimal("0.02"),
+) -> list[str]:
+    """validate_numbers'ın 'bilinmeyen' listesini ölçek/biçim farkından
+    doğan yanlış-pozitiflerden arındır. Bir token, izinli bir değerin
+    ×10^k katıysa (binlik ayraç/ "78K"/"bin" → 78000/78/0.078 vb.)
+    gerçek-bilinmeyen DEĞİLDİR. Sadece ELER; asla yeni unknown EKLEMEZ.
+    shared validators.py'ye dokunulmaz (macro etkilenmez); telif
+    backstop L_DISPLACE 12-gram ayrı ve değişmedi."""
+    if not unk or not allowed:
+        return unk
+    nz = [a for a in allowed if a != 0]
+    out: list[str] = []
+    for tok in unk:
+        try:
+            d = Decimal(str(tok))
+        except (InvalidOperation, ValueError):
+            out.append(tok)
+            continue
+        matched = False
+        for f in _SCALE_FACTORS:
+            v = abs(d * f)
+            for a in nz:
+                aa = abs(a)
+                if abs(v - aa) <= aa * tol + Decimal("0.5"):
+                    matched = True
+                    break
+            if matched:
+                break
+        if not matched:
+            out.append(tok)
+    return out
+
+
 def _run_guards(
     tier: Tier, obj: dict, allowed: set[Decimal],
     prose_bodies: list[str],
@@ -660,8 +828,11 @@ def _run_guards(
         rep.out_of_bounds = True
         rep.reasons.append(f"word_count {rep.word_count} ∉ [{lo},{hi}]")
 
-    # L1 numbers
-    unk = validate_numbers(md, allowed)
+    # L1 numbers — shared validate_numbers + corporate-local ölçek/ayraç
+    # mutabakatı (shared validators.py DEĞİŞMEZ; yalnız yanlış-pozitif
+    # eler: binlik ayraç/ölçek "78000≡78≡78.000", "211000≡211.000",
+    # "1.16≡1.16000" gibi biçim farkları gerçek-bilinmeyen DEĞİL).
+    unk = _reconcile_scale(validate_numbers(md, allowed), allowed)
     if unk:
         rep.unknown_numbers = unk[:10]
         rep.reasons.append(f"unknown_numbers {unk[:5]}")
