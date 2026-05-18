@@ -629,7 +629,13 @@ def _build_prompt(tier: Tier, pl: SynthPayload) -> str:
             "hareket-ettiren ~5 temasını SEÇ (girdiye göre, ör. ABD-Çin "
             "zirvesi, Orta Doğu/enerji, Fed/işgücü, AI-yatırım/kredi, "
             "kıymetli maden/kripto). Her seçilen tema için ZORUNLU: "
-            "(a) SPESİFİK ne oldu (olayı/sayıyı adıyla), (b) GÜNCEL "
+            "(a) SPESİFİK ne oldu — olayı ADIYLA, TARİHİYLE ve SOMUT "
+            "SONUCUYLA yaz (kim/ne/ne zaman/hangi çıktı); girdide adı "
+            "geçen bir zirve/toplantı/mutabakat/karar varsa onu "
+            '"ABD-Çin gerilimi" / "belirsizlik sürdü" gibi JENERİK '
+            "temaya İNDİRGEME — gerçek olayı ve sonucunu ver (ör. "
+            '"Trump-Xi Pekin zirvesinde gümrük tarifelerinde geçici '
+            'indirim mutabakatı"), (b) GÜNCEL '
             "seviye/veri (CANLI VERİ'den), (c) AXIOM neden-zinciri "
             "çıkarımı, (d) yön/etki. İkincil temalar en çok tek cümle. "
             "Az tema, çok derinlik — okuyan yön tayin edebilmeli.\n"
