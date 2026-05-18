@@ -35,6 +35,13 @@ _FREE_WATERMARK = (
     "🔒 <i>Bu AXIOM Kurumsal Sentez özetidir. Premium/Advance üyeler "
     "Pazartesi sabahı erken ve tam sürüm alır.</i>\n\n"
 )
+# Free tier yalnız kısa teaser görür (tam premium gövdesi DEĞİL).
+# Dashboard corporate_public._TEASER_CHARS ile tutarlı.
+_FREE_TEASER_CHARS = 280
+_FREE_UPGRADE_CTA = (
+    "\n\n💎 <i>Tam haftalık kurumsal sentez Premium/Advance "
+    "üyelere açıktır.</i>"
+)
 
 # Strong-ref set — gecikmeli free fanout task'i GC silmesin (memory feedback).
 _CORP_INFLIGHT: set = set()
@@ -105,6 +112,18 @@ def _format_message(tier: str, week_start, synthesis_md: str) -> str:
     if len(body) > budget:
         body = body[:budget - 20].rstrip() + "\n…(devamı dashboard'da)"
     return head + html.escape(body)
+
+
+def _format_free_teaser(week_start, synthesis_md: str) -> str:
+    """Free tier: marka başlığı + ilk ~280 char alıntı + watermark + CTA.
+    Tam premium gövdesi GÖNDERİLMEZ (dashboard teaser deseniyle aynı)."""
+    head = (f"🏛️ <b>AXIOM Kurumsal Sentez</b>\n"
+            f"<i>Hafta: {html.escape(str(week_start))}</i>\n\n")
+    full = (synthesis_md or "").strip()
+    excerpt = full[:_FREE_TEASER_CHARS].rstrip()
+    if len(full) > _FREE_TEASER_CHARS:
+        excerpt += "…"
+    return _FREE_WATERMARK + head + html.escape(excerpt) + _FREE_UPGRADE_CTA
 
 
 async def _fanout(message: str, users: list) -> tuple[int, int]:
@@ -186,8 +205,11 @@ async def broadcast_synthesis(
     # göndermeyiz — çift mesaj engeli).
     if tier == "premium" and free_users:
         try:
+            free_msg = _format_free_teaser(
+                row.get("week_start"), row.get("synthesis_md") or ""
+            )
             task = asyncio.create_task(
-                _delayed_free_fanout(_FREE_WATERMARK + msg, free_users)
+                _delayed_free_fanout(free_msg, free_users)
             )
             _CORP_INFLIGHT.add(task)
             task.add_done_callback(_CORP_INFLIGHT.discard)
