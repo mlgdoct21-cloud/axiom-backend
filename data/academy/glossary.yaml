@@ -1,0 +1,286 @@
+# AXIOM Opsiyon Akademisi — Sözlük (Türkçe sezgi sözlüğü)
+#
+# Bu dosya AXIOM Opsiyon Akademisi'nin terminoloji çapasıdır.
+# İnsan-onaylı, dondurulmuş içerik — runtime'da AI üretmez (services/academy_service.py
+# bu dosyayı YAML olarak yükler).
+#
+# İlke:
+# 1) Greek renaming: İngilizce isim yerine Türkçe sezgi terimi BİRİNCİL.
+#    İngilizce parantez içinde referans olarak kalır.
+# 2) Horology vokabüleri (mainspring, escapement, balance-wheel) AXIOM Opsiyon'un
+#    marka sesidir — kavram bir saat parçasına benziyorsa o bağı kur.
+# 3) Tanım kısa + sezgi cümlesi + (varsa) tipik yanılgı uyarısı.
+# 4) Eğitim amaçlı. "Şunu al" dili YASAK; "şöyle işler" dili kullan.
+
+metadata:
+  version: 1
+  language: tr
+  source_of_truth: "Statik insan-onaylı içerik"
+  disclaimer: "Bu içerik EĞİTİM amaçlıdır. Yatırım tavsiyesi değildir (SPK)."
+
+# ============================================================================
+# 1. ANATOMİ — Opsiyon parçaları
+# ============================================================================
+anatomi:
+  - slug: call
+    tr: "Alım Opsiyonu (Call)"
+    intuition: "Belirli bir fiyattan ALMA hakkı — yükümlülük değil, hak."
+    one_liner: "Yükselişe inanan veya yükselişe karşı pozisyonunu koruyan kişi alır."
+    pitfall: "Call ALAN ödeme yapar (prim); call SATAN primi tahsil eder ama yükümlülüğü üstlenir."
+
+  - slug: put
+    tr: "Satım Opsiyonu (Put)"
+    intuition: "Belirli bir fiyattan SATMA hakkı — portföyün sigortası."
+    one_liner: "Düşüş korkusu olan veya tuttuğu varlığı koruyan kişi alır."
+    pitfall: "Put ALMAK sigorta primidir; put SATMAK 'piyasa düşerse satın alırım' yükümlülüğüdür."
+
+  - slug: strike
+    tr: "Kullanım Fiyatı (Strike)"
+    intuition: "Opsiyonun sözleşme fiyatı — vade sonunda bu seviye referans alınır."
+    one_liner: "Spot bu seviyeyi geçerse call ITM olur; altında kalırsa put ITM olur."
+
+  - slug: vade
+    tr: "Vade (Expiry)"
+    intuition: "Opsiyonun ömrünün bittiği gün — mainspring tamamen boşaldığı an."
+    one_liner: "Vade yaklaştıkça zaman değeri eridiği için Theta hızlanır."
+
+  - slug: prim
+    tr: "Prim (Premium)"
+    intuition: "Opsiyon almak için ödenen bedel; iki bileşeni var: içsel değer + zaman değeri."
+    one_liner: "Prim, kontratın o anki piyasa fiyatıdır — alıcının riski, satıcının kazancı."
+
+  - slug: icsel-deger
+    tr: "İçsel Değer (Intrinsic Value)"
+    intuition: "Opsiyonu şu an kullansaydık ne kadar para kazanırdık — sözleşmenin 'gerçek' kısmı."
+    one_liner: "Call için max(spot - strike, 0); put için max(strike - spot, 0). Sıfırın altına inmez."
+
+  - slug: zaman-degeri
+    tr: "Zaman Değeri (Time Value)"
+    intuition: "Mainspring'in henüz boşalmamış kısmı — gelecekte fiyat lehine hareket etme şansı."
+    one_liner: "Prim eksi içsel değer. Vadeye giderken sıfıra koşar."
+
+  - slug: exercise
+    tr: "Kullanma (Exercise)"
+    intuition: "Hakkı kullanmak — call ile strike'tan almak veya put ile strike'tan satmak."
+    one_liner: "Çoğu retail opsiyon kullanılmadan kapatılır; pozisyon ters yönde kapanır."
+
+  - slug: kontrat-buyuklugu
+    tr: "Kontrat Büyüklüğü"
+    intuition: "Bir opsiyonun temsil ettiği varlık miktarı."
+    one_liner: "ABD endeks/hisse: 1 kontrat = 100 hisse. Deribit BTC: 1 kontrat = 1 BTC. Dikkat: ölçek farklı."
+
+# ============================================================================
+# 2. POZİSYON — Spot'a göre opsiyonun yeri
+# ============================================================================
+pozisyon:
+  - slug: itm
+    tr: "İçeride (ITM — In The Money)"
+    intuition: "Şu an kullanılsaydı para kazandırır — içsel değer pozitif."
+    one_liner: "Call: spot > strike. Put: spot < strike."
+
+  - slug: atm
+    tr: "Yanında (ATM — At The Money)"
+    intuition: "Spot tam strike'ta — zaman değeri en yüksek, Gamma en yüksek (en hassas an)."
+    one_liner: "ATM opsiyonlar piyasa yapıcı için en zor hedge edilen bölgedir."
+
+  - slug: otm
+    tr: "Dışarıda (OTM — Out of The Money)"
+    intuition: "Şu an kullanılsaydı sıfır değerli — sadece zaman değeri taşır."
+    one_liner: "Ucuz görünür ama vadeye giderken theta ile erir; lottery-ticket etkisi."
+
+  - slug: breakeven
+    tr: "Başabaş Noktası"
+    intuition: "Vade sonunda zarar etmediğin spot seviyesi."
+    one_liner: "Long call breakeven: strike + prim. Long put breakeven: strike - prim."
+
+  - slug: max-zarar
+    tr: "Maksimum Zarar"
+    intuition: "En kötü senaryoda kaybedebileceğin tutar."
+    one_liner: "Long opsiyon alıcısı için: ödenen prim. Satıcı için: teorik olarak sınırsız (naked call)."
+
+  - slug: max-kar
+    tr: "Maksimum Kâr"
+    intuition: "En iyi senaryoda kazanabileceğin tutar."
+    one_liner: "Long call: sınırsız. Long put: strike - prim (spot sıfıra gitse). Spread'lerde tavanlı."
+
+# ============================================================================
+# 3. YUNANLILAR (Greeks) — Türkçe sezgi adlandırması (AXIOM standardı)
+# ============================================================================
+yunanlilar:
+  - slug: delta
+    tr: "Fiyat Duyarlılığı (Delta)"
+    intuition: "Spot 1 birim oynarsa opsiyon primi ne kadar oynar. Aynı zamanda 'hedge oranı'."
+    one_liner: "0.30 delta call ≈ 0.30 hisseye eşdeğer pozisyon. 100 delta tam hisse gibi davranır."
+    horology: "Saatin kadran ibresi — şu anki hız göstergesi."
+
+  - slug: gamma
+    tr: "Risk İvmesi (Gamma)"
+    intuition: "Delta'nın değişme hızı. Yüksek gamma = küçük hareket bile pozisyonu hızla değiştirir."
+    one_liner: "ATM ve kısa vadeli opsiyonlarda en yüksek; piyasa yapıcılar için en tehlikeli bölge."
+    horology: "Escapement'in mandalı — küçük bir tetikte büyük zıplama."
+
+  - slug: theta
+    tr: "Zaman Kaybı Hızı (Theta)"
+    intuition: "Her gün opsiyondan ne kadar değer eridiği. Mainspring'in boşalma hızı."
+    one_liner: "Long opsiyon alıcısının düşmanı, opsiyon satıcısının dostudur. Vadeye yaklaşınca hızlanır."
+    horology: "Mainspring — sarılı yay her tıkırtıda biraz daha boşalır."
+
+  - slug: vega
+    tr: "Volatilite Hassasiyeti (Vega)"
+    intuition: "Implied volatility 1 puan değişirse prim ne kadar değişir."
+    one_liner: "Uzun vadeli opsiyonlar yüksek vega taşır; VIX/DVOL zıplayınca prim uçar."
+    horology: "Balance wheel'in sıkılığı — havayı ne kadar yakaladığını ayarlar."
+
+  - slug: rho
+    tr: "Faiz Hassasiyeti (Rho)"
+    intuition: "Risk-free faiz değişirse prim ne kadar değişir."
+    one_liner: "Kısa vadeli opsiyonlarda ihmal edilebilir; uzun vadeli (LEAPS) için önemli."
+
+# ============================================================================
+# 4. VOLATİLİTE — Piyasanın 'ne kadar oynar' beklentisi
+# ============================================================================
+volatilite:
+  - slug: implied-vol
+    tr: "Implied Volatility (IV — Zımni Oynaklık)"
+    intuition: "Opsiyon fiyatının ima ettiği gelecek volatilite beklentisi."
+    one_liner: "IV yüksekse prim pahalı (alıcı zor); düşükse ucuz (satıcı zor)."
+
+  - slug: realized-vol
+    tr: "Realized Volatility (RV — Gerçekleşen Oynaklık)"
+    intuition: "Geçmişte fiilen yaşanan oynaklık."
+    one_liner: "IV > RV ise opsiyonlar 'pahalı' (satıcı avantajlı). VRP analizinin temeli."
+
+  - slug: dvol
+    tr: "DVOL — Deribit BTC/ETH IV Endeksi"
+    intuition: "Kriptonun VIX'i — Deribit opsiyonlarından türetilen 30 günlük IV."
+    one_liner: "BTC DVOL yüksekse kripto opsiyon primleri pahalı; düşükse satıcı için çekici."
+
+  - slug: vix
+    tr: "VIX — S&P 500 Korku Endeksi"
+    intuition: "SPX opsiyonlarından türetilen 30 günlük IV; ABD piyasa korku göstergesi."
+    one_liner: "VIX < 14 sakin, 14-20 normal, 20-30 endişe, 30+ panik. Mutlak değil rejim göstergesi."
+
+  - slug: iv-rank
+    tr: "IV Rank (IV Yüzdelik Dilim)"
+    intuition: "Mevcut IV son 1 yılda hangi seviyede — pahalı mı ucuz mu?"
+    one_liner: "IVR %80 = son 1 yılın en pahalı %20'sinde (satıcı için fırsat); IVR %20 = en ucuz %20 (alıcı için fırsat)."
+
+  - slug: vol-skew
+    tr: "Volatilite Eğikliği (Skew)"
+    intuition: "Aynı vadenin farklı strike'larında IV neden farklı — piyasa hangi tarafa korku fiyatlıyor."
+    one_liner: "Hisse opsiyonlarında genelde 'OTM put IV > OTM call IV' — düşüş sigortası daha pahalı."
+
+  - slug: vrp
+    tr: "Volatilite Risk Primi (VRP)"
+    intuition: "IV - RV — opsiyon satıcısının yapısal olarak topladığı pirim."
+    one_liner: "Pozitif VRP rejiminde 'opsiyon satışı' stratejik anlam taşır (covered call, cash-secured put)."
+
+# ============================================================================
+# 5. STRATEJİLER — Tek bacak ve çok bacaklı yapılar
+# ============================================================================
+stratejiler:
+  - slug: protective-put
+    tr: "Koruyucu Satım (Protective Put)"
+    intuition: "Elinde varlık varken put alarak alttan sigorta — 'yangın sigortası'."
+    one_liner: "Maks zarar = strike - spot + prim. Maks kâr = sınırsız (spot - prim)."
+    use_case: "BTC tutuyorsun, hard fork öncesi veya FOMC haftası, alttan tabela."
+
+  - slug: covered-call
+    tr: "Karşılıklı Alım (Covered Call)"
+    intuition: "Elinde varlık varken call satarak prim toplama — 'yatay piyasada kira geliri'."
+    one_liner: "Maks kâr = (strike - spot) + alınan prim. Risk: yukarı kaçırırsa fırsat maliyeti."
+    use_case: "ETH tutuyorsun, kısa vadede patlama beklemiyorsun, OTM call satarak kira topla."
+
+  - slug: collar
+    tr: "Yaka (Collar)"
+    intuition: "Aynı anda protective put AL + OTM covered call SAT — sigorta + primi kira ile öde."
+    one_liner: "Yukarı tavan, aşağı tabela. 'Düşük maliyetli sigorta' veya 'sıfır maliyetli sigorta'."
+    use_case: "Portföyünü FOMC veya OPEX haftası boyunca dondurmak istiyorsun."
+
+  - slug: bull-call-spread
+    tr: "Yükselen Yaylım (Bull Call Spread)"
+    intuition: "Düşük strike call AL + yüksek strike call SAT — sınırlı yukarı, ucuza."
+    one_liner: "Maks kâr ve maks zarar tavanlı. Yön doğru ama hareket sınırlı beklentisi."
+    use_case: "BTC'nin $70K → $80K aralığına gideceğine inanıyorsun ama daha öteye değil."
+
+  - slug: straddle
+    tr: "Çift Bacak (Straddle)"
+    intuition: "Aynı strike'tan call + put AL — yönsüz ama sert hareket beklentisi."
+    one_liner: "Maks zarar = toplam prim. Maks kâr = sınırsız. Theta düşmanın."
+    use_case: "FOMC veya kripto borsa haberi öncesi, yönü bilmiyorsun ama sert hareket bekliyorsun."
+
+  - slug: strangle
+    tr: "Geniş Çift Bacak (Strangle)"
+    intuition: "Straddle'ın daha ucuz hali — OTM call + OTM put AL."
+    one_liner: "Straddle'dan ucuz ama harekete daha sert ihtiyaç var. Theta yine düşman."
+
+# ============================================================================
+# 6. HOROLOGY SÖZLÜĞÜ — AXIOM marka vokabüleri
+# ============================================================================
+# Bu terimler ürün boyunca tutarlı kullanılır — push bildirim, modül başlığı,
+# kurumsal-akış anlatısı. Diğer storyteller'lara (macro/corporate/crypto-intel)
+# zorlanmaz; sadece opsiyon/hedge bağlamında.
+horology:
+  - slug: mainspring
+    tr: "Mainspring (Yay Kurumu)"
+    metaphor: "Opsiyonun kurulu zaman enerjisi — vadeye kalan ömrü."
+    in_finance: "Zaman değeri = mainspring'in henüz boşalmamış kısmı."
+
+  - slug: escapement
+    tr: "Escapement (Maşa)"
+    metaphor: "Saatin enerjisini sabit hızda salan parça — tıkırtıyı yapan."
+    in_finance: "Theta tıkırtısı: her gün mainspring biraz daha boşalır."
+
+  - slug: balance-wheel
+    tr: "Balance Wheel (Denge Çarkı)"
+    metaphor: "Hassasiyeti ayarlayan salınım çarkı."
+    in_finance: "Vega + Gamma birlikte balance wheel'i kurar — volatilite ve fiyat hassasiyetinin dengesi."
+
+  - slug: beat-rate
+    tr: "Beat Rate (Tıkırtı Hızı)"
+    metaphor: "Saatin saniyede kaç titreşim yaptığı."
+    in_finance: "Vadeye giderken Theta'nın hızlanması = beat rate artışı."
+
+  - slug: complications
+    tr: "Complications (Karmaşıklıklar)"
+    metaphor: "Saatte ana fonksiyonun üstüne eklenen ek fonksiyonlar."
+    in_finance: "Çok bacaklı stratejiler (spread, condor) = opsiyon complication'ları."
+
+# ============================================================================
+# 7. KURUMSAL AKIŞ TERİMLERİ (Faz 4'e hazırlık — Akademi'de tanıtım seviyesi)
+# ============================================================================
+kurumsal_akis:
+  - slug: gex
+    tr: "Gamma Exposure (GEX)"
+    intuition: "Piyasa yapıcıların net gamma pozisyonu — pozitifse fiyatı bastırırlar, negatifse hızlandırırlar."
+    one_liner: "Pozitif GEX rejimi = düşük volatilite, mean-reversion. Negatif GEX = trend, momentum."
+
+  - slug: call-wall
+    tr: "Call Duvarı (Call Wall)"
+    intuition: "Yoğun OI biriken call strike — fiyat oraya yaklaşırsa piyasa yapıcı hisseyi satmak zorunda kalır."
+    one_liner: "Direnç seviyesi gibi davranır; fiyat oradan döner."
+
+  - slug: put-wall
+    tr: "Put Duvarı (Put Wall)"
+    intuition: "Yoğun OI biriken put strike — fiyat altına inerse hızlı satış tetiklenir."
+    one_liner: "Destek seviyesi gibi davranır ama kırılırsa hızlanır."
+
+  - slug: gamma-flip
+    tr: "Gamma Flip (Gama Dönüşü)"
+    intuition: "Dealer pozisyonunun pozitiften negatife geçtiği seviye — 'fırtına başlıyor' uyarısı."
+    one_liner: "Fiyat bu seviyenin altına inerse volatilite patlar."
+
+  - slug: max-pain
+    tr: "Maksimum Acı (Max Pain)"
+    intuition: "Vade sonunda opsiyon alıcılarının toplamda en çok kaybedeceği strike — satıcıların 'çektiği' nokta."
+    one_liner: "Fiyat vadeye giderken bu seviyeye yaklaşma eğilimi gösterir (teori)."
+
+  - slug: cta-positioning
+    tr: "CTA Pozisyonlanma"
+    intuition: "Algoritmik trend-takipçi fonların net pozisyon doygunluğu."
+    one_liner: "%90+ long doygunluk = yeni alıcı kalmadı, tersine dönüş riski yüksek."
+
+  - slug: opex
+    tr: "OPEX Haftası (Vade Sonu)"
+    intuition: "Aylık veya haftalık opsiyon vade haftası — mainspring topluca boşalır."
+    one_liner: "Volatilite genelde önce baskılanır, vade sonrası açığa çıkar."

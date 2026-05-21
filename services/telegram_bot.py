@@ -1439,6 +1439,205 @@ async def process_tag_callback(callback_query_id, chat_id, message_id, user_id, 
         logger.error(f"DB hatası (tag_callback) user={user_id}: {e}")
         answer_callback_query(callback_query_id)
 
+
+# ── Opsiyon Akademisi (Faz 1) ─────────────────────────────────────────────────
+
+
+def _acad_dashboard_link() -> str:
+    """Dashboard'daki akademi sayfasına derin link — env'den alır, fallback Vercel URL.
+    /akademi top-level route (AuthGate dışında — free kullanıcı da görür)."""
+    import os
+    base = os.getenv("DASHBOARD_URL", "https://axiom-dashboard-sigma.vercel.app").rstrip("/")
+    return f"{base}/akademi"
+
+
+def _acad_module_menu_keyboard(user_tier: str) -> dict:
+    """4 modüllük menü. Kilitli olanlar 🔒 ile işaretlenir."""
+    from services.academy_service import get_curriculum_summary
+    data = get_curriculum_summary(user_tier)
+    rows = []
+    for m in data.get("modules", []):
+        lock = "🔒 " if m.get("locked") else ""
+        rows.append([{
+            "text": f"{lock}{m['id']} — {m['title'].split('—')[0].strip()}",
+            "callback_data": f"acad_mod:{m['id']}",
+        }])
+    rows.append([
+        {"text": "📖 Sözlük (/opsiyon)", "callback_data": "acad_help_glossary"},
+        {"text": "🌐 Dashboard'da aç", "url": _acad_dashboard_link()},
+    ])
+    if user_tier == "free":
+        rows.append([{"text": "💎 Premium ile tüm modüller", "callback_data": "acad_upgrade"}])
+    return {"inline_keyboard": rows}
+
+
+def _acad_module_detail_keyboard(module_id: str) -> dict:
+    """Modülün dersleri + geri dön butonu."""
+    from services.academy_service import get_module
+    mod = get_module(module_id, "advance")  # tier-agnostic list; lock kontrolü ders açılırken
+    rows = []
+    if mod:
+        for les in mod.get("lessons", []):
+            rows.append([{
+                "text": f"{les['id']} — {les['title']}",
+                "callback_data": f"acad_les:{les['id']}",
+            }])
+    rows.append([{"text": "⬅️ Modüllere dön", "callback_data": "acad_back"}])
+    return {"inline_keyboard": rows}
+
+
+def _acad_lesson_back_keyboard(module_id: str) -> dict:
+    return {"inline_keyboard": [[
+        {"text": f"⬅️ {module_id} dersleri", "callback_data": f"acad_mod:{module_id}"},
+        {"text": "🏠 Modüller", "callback_data": "acad_back"},
+    ]]}
+
+
+def _render_acad_welcome(user_tier: str) -> str:
+    return (
+        "🎓 <b>AXIOM Opsiyon Akademisi</b>\n\n"
+        "Opsiyon ve <b>hedge kültürünü</b> Türkçe sezgi diliyle öğren.\n"
+        "<i>Greek renaming</i>: Delta = Fiyat Duyarlılığı, Theta = Zaman Kaybı Hızı.\n"
+        "<i>Saat çarkı (horology)</i> metaforuyla opsiyonu anlat.\n\n"
+        f"<b>Tier:</b> {html.escape(user_tier)}\n"
+        "<i>Eğitim amaçlıdır, yatırım tavsiyesi değildir (SPK).</i>\n\n"
+        "Bir modül seç ↓"
+    )
+
+
+def _render_acad_module(mod: dict) -> str:
+    return (
+        f"<b>{html.escape(mod['title'])}</b>\n"
+        f"<i>{html.escape(mod.get('tagline',''))}</i>\n\n"
+        f"{html.escape(mod.get('summary',''))[:600]}\n\n"
+        f"<b>{len(mod.get('lessons', []))} ders</b> — birini seç ↓"
+    )
+
+
+def _render_acad_lesson(payload: dict) -> str:
+    """Ders gövdesini Telegram için kısalt — dashboard'da tam içerik var."""
+    les = payload["lesson"]
+    if les.get("locked"):
+        return (
+            f"<b>{html.escape(les['title'])}</b>\n"
+            f"🔒 Bu ders <b>Premium</b> erişim gerektiriyor.\n\n"
+            f"<i>{html.escape(les.get('learning_objective',''))}</i>\n\n"
+            f"Tüm modüller için: /upgrade"
+        )
+    body = les.get("body", "")
+    # Telegram limit 4096; tam gövde + worked example ozeti + glossary = ~2.5K hedef
+    body_trim = body if len(body) <= 1800 else (body[:1800].rsplit("\n", 1)[0] + "\n…")
+    out = [
+        f"<b>{html.escape(les['title'])}</b>",
+        f"<i>{html.escape(les.get('learning_objective',''))}</i>",
+        "",
+        html.escape(body_trim),
+    ]
+    ex = les.get("worked_examples") or []
+    if ex:
+        out.append("\n<b>Örnekler:</b>")
+        for e in ex[:2]:
+            sym = e.get("symbol", e.get("asset", ""))
+            scen = (e.get("scenario") or "").strip()
+            if scen:
+                scen_short = scen if len(scen) <= 300 else (scen[:280].rsplit(" ", 1)[0] + "…")
+                out.append(f"• <b>{html.escape(sym)}</b>: {html.escape(scen_short)}")
+    if les.get("horology_note"):
+        out.append(f"\n🕰️ <i>{html.escape(les['horology_note'])}</i>")
+    if les.get("quiz"):
+        out.append("\n📝 <i>Quiz dashboard'da</i> — cevapla ilerlemen kaydedilir.")
+    out.append(f'\n<a href="{_acad_dashboard_link()}">Dashboard\'da tam ders + quiz →</a>')
+    return "\n".join(out)
+
+
+async def process_akademi_command(chat_id, user_id):
+    """`/akademi` — Opsiyon Akademisi ana menüsü."""
+    tier = await _get_user_tier(user_id)
+    text = _render_acad_welcome(tier)
+    keyboard = _acad_module_menu_keyboard(tier)
+    send_message_with_keyboard(chat_id, text, keyboard)
+
+
+async def process_opsiyon_command(chat_id, user_id, arg: str):
+    """`/opsiyon <terim>` — sözlük araması. Arg boşsa kullanım ipucu."""
+    from services.academy_service import search_glossary
+    arg = (arg or "").strip()
+    if not arg:
+        send_telegram_message(
+            chat_id,
+            "📖 <b>Opsiyon Sözlüğü</b>\n\n"
+            "Kullanım: <code>/opsiyon &lt;terim&gt;</code>\n"
+            "Örnek: <code>/opsiyon theta</code>, <code>/opsiyon gamma flip</code>\n\n"
+            "Sözlük 45+ terim içerir (Greeks, stratejiler, kurumsal akış)."
+        )
+        return
+    hits = search_glossary(arg, limit=3)
+    if not hits:
+        send_telegram_message(
+            chat_id,
+            f"🔍 <b>'{html.escape(arg)}'</b> için sözlükte sonuç yok.\n\n"
+            "Tam sözlük dashboard'da: " + _acad_dashboard_link()
+        )
+        return
+    blocks = [f"📖 <b>'{html.escape(arg)}'</b> — {len(hits)} sonuç:\n"]
+    for h in hits:
+        blocks.append(
+            f"<b>{html.escape(h.get('tr', h['slug']))}</b>\n"
+            f"<i>{html.escape(h.get('intuition',''))}</i>\n"
+            f"{html.escape(h.get('one_liner','') or h.get('metaphor','') or '')}\n"
+        )
+    blocks.append(f'<a href="{_acad_dashboard_link()}">Tam sözlük + dersler →</a>')
+    send_telegram_message(chat_id, "\n".join(blocks))
+
+
+async def process_acad_callback(callback_query_id, chat_id, message_id, user_id, data: str):
+    """Inline callback dispatcher — acad_back / acad_mod:M1 / acad_les:M1L1 / acad_help_glossary / acad_upgrade."""
+    answer_callback_query(callback_query_id)
+    tier = await _get_user_tier(user_id)
+
+    if data == "acad_back":
+        text = _render_acad_welcome(tier)
+        edit_message_text_with_keyboard(chat_id, message_id, text, _acad_module_menu_keyboard(tier))
+        return
+
+    if data == "acad_help_glossary":
+        send_telegram_message(
+            chat_id,
+            "📖 <b>Sözlük araması</b>: <code>/opsiyon &lt;terim&gt;</code>\n"
+            "Örnek: <code>/opsiyon theta</code>"
+        )
+        return
+
+    if data == "acad_upgrade":
+        await process_upgrade_command(chat_id, user_id)
+        return
+
+    if data.startswith("acad_mod:"):
+        from services.academy_service import get_module
+        mid = data[len("acad_mod:"):].strip()
+        mod = get_module(mid, tier)
+        if not mod:
+            send_telegram_message(chat_id, "Modül bulunamadı.")
+            return
+        edit_message_text_with_keyboard(
+            chat_id, message_id, _render_acad_module(mod), _acad_module_detail_keyboard(mid),
+        )
+        return
+
+    if data.startswith("acad_les:"):
+        from services.academy_service import get_lesson
+        lid = data[len("acad_les:"):].strip()
+        payload = get_lesson(lid, tier)
+        if not payload:
+            send_telegram_message(chat_id, "Ders bulunamadı.")
+            return
+        text = _render_acad_lesson(payload)
+        edit_message_text_with_keyboard(
+            chat_id, message_id, text, _acad_lesson_back_keyboard(payload["module_id"])
+        )
+        return
+
+
 # ── Ana bot döngüsü ────────────────────────────────────────────────────────────
 
 async def start_telegram_bot():
@@ -1512,6 +1711,11 @@ async def start_telegram_bot():
                                 await process_login_command(chat_id, user_id, username)
                             elif text.lower().startswith("/sentez"):
                                 await process_sentez_command(chat_id, user_id)
+                            elif text.lower().startswith("/akademi"):
+                                await process_akademi_command(chat_id, user_id)
+                            elif text.lower().startswith("/opsiyon"):
+                                arg = text[len("/opsiyon"):].strip()
+                                await process_opsiyon_command(chat_id, user_id, arg)
 
                         # Inline keyboard callback'leri
                         elif "callback_query" in update:
@@ -1531,6 +1735,8 @@ async def start_telegram_bot():
                             elif cq_data.startswith("onchain_full:"):
                                 sym = cq_data[len("onchain_full:"):].strip() or "BTC"
                                 await process_onchain_full_callback(cq_id, cq_chat_id, cq_message_id, cq_user_id, sym)
+                            elif cq_data.startswith("acad_"):
+                                await process_acad_callback(cq_id, cq_chat_id, cq_message_id, cq_user_id, cq_data)
 
                     except Exception as cmd_err:
                         logger.error(f"Komut işleme hatası (update_id={update.get('update_id')}): {cmd_err}")

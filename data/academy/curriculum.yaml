@@ -1,0 +1,1055 @@
+# AXIOM Opsiyon Akademisi — Müfredat
+#
+# 4 modül, 16 ders. Türkçe sezgi dili + horology marka vokabüleri.
+# Worked example her derste: kripto (BTC/ETH — Deribit) + ABD endeks (SPX/VIX).
+#
+# Kullanım:
+# - services/academy_service.py bu dosyayı YAML olarak yükler.
+# - glossary.yaml ile birlikte çalışır (glossary_refs slug bağı).
+# - tier_required: free | premium | advance
+# - Free kullanıcı M1 + glossary tamamı + diğerleri için 'M2-M4 🔒 Premium' teaser görür.
+# - "Şunu al" dili YASAK; "şöyle işler" dili kullan (SPK eğitim çerçevesi).
+# - Sayı/fiyat veren cümle YOK — sayılar runtime'da academy_context.py
+#   (DVOL+VIX) ile "bugünkü canlı bağlam rozeti" olarak enjekte edilir;
+#   ders gövdesinde sabit fiyat olmaz (halüsinasyon ve zaman aşımı koruması).
+
+metadata:
+  version: 1
+  language: tr
+  source_of_truth: "Statik insan-onaylı içerik"
+  brand_voice: horology
+  disclaimer: "Bu içerik EĞİTİM amaçlıdır. Yatırım tavsiyesi değildir (SPK)."
+  greek_renaming:
+    delta: "Fiyat Duyarlılığı"
+    gamma: "Risk İvmesi"
+    theta: "Zaman Kaybı Hızı"
+    vega: "Volatilite Hassasiyeti"
+    rho: "Faiz Hassasiyeti"
+
+# ============================================================================
+# MODÜL 1 — Opsiyon Nedir?
+# Hak, yükümlülük ve sigorta sezgisi
+# ============================================================================
+modules:
+  - id: M1
+    slug: opsiyon-nedir
+    title: "Opsiyon Nedir? — Hak, Yükümlülük ve Sigorta Sezgisi"
+    tagline: "Mainspring kurulur — opsiyonun ömrü başlar."
+    tier_required: free
+    summary: |
+      Opsiyon, bir hisseyi veya kriptoyu belirli bir fiyattan, belirli bir tarihe
+      kadar ALMA veya SATMA HAKKI'dır. Hak — yükümlülük değil. Bu modül call/put
+      ayrımını, sözleşmenin anatomik parçalarını ve neden opsiyon kavramının
+      sigorta sezgisiyle anlaşılması gerektiğini kurar.
+    duration_min: 18
+    lessons:
+
+      - id: M1L1
+        slug: hak-vs-yukumluluk
+        title: "Hak Almak mı, Yükümlülük Üstlenmek mi?"
+        learning_objective: "Call/put ayrımını ve 'alıcı vs satıcı' rollerini sezgisel olarak ayırt etmek."
+        body: |
+          Opsiyon piyasasında iki taraf var: HAK alan ve HAK satan.
+
+          - Call ALAN: belirli bir fiyattan ALMA hakkını satın alır. Prim öder.
+            Yükselişe inanıyor veya yükselişe karşı kendini koruyor.
+          - Put ALAN: belirli bir fiyattan SATMA hakkını satın alır. Prim öder.
+            Düşüş korkusu var veya tuttuğu varlığı sigortalıyor.
+          - SATAN ise primi tahsil eder ama YÜKÜMLÜLÜK üstlenir — alıcı hakkını
+            kullanmak isterse onun karşı tarafıdır.
+
+          Sezgi: Yangın sigortası gibi düşün. Sigorta ALAN prim öder, evi yanarsa
+          tazminat alır. Sigorta SATAN (sigorta şirketi) primi cebine koyar ama
+          ev gerçekten yanarsa ödeme yapar.
+
+          Opsiyon ALICISI sigorta sahibidir; opsiyon SATICISI sigorta şirketidir.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC tutuyorsun ve "bir ay içinde sert düşüş riski var" diye düşünüyorsun.
+              Bir put alıyorsun — strike bugünkü spotun biraz altında. Prim ödüyorsun.
+              Düşerse, sigorta devreye girer ve kaybın tabandan durur. Düşmezse
+              prim erir — yangın çıkmadığında sigorta priminin yanması gibi.
+          - asset: us_index
+            symbol: SPX
+            scenario: |
+              Portföyün ağırlıklı S&P 500 ETF'i. FOMC haftası yaklaşıyor.
+              SPX üzerine put alıyorsun. Eğer Fed şahinleşir ve endeks sert
+              düşerse, put primin fırlar ve portföy kaybını telafi eder.
+              Eğer hiçbir şey olmazsa primi zaman içinde kaybedersin.
+        horology_link: mainspring
+        horology_note: "Mainspring kuruldu — opsiyon ömrü başladı. Vadeye kadar enerji boşalmaya başlar."
+        quiz:
+          question: "Bir trader 100 hisse Apple'ı korumak için protective put alıyor. Hangisi doğru?"
+          options:
+            - text: "Trader put SATTI, prim tahsil etti."
+              correct: false
+              feedback: "Hayır — koruma için put ALINIR, prim ÖDENİR. Satan tarafta yükümlülük olur."
+            - text: "Trader put ALDI, prim ödedi. Düşüşe karşı sigortalandı."
+              correct: true
+              feedback: "Doğru. Protective put portföyün sigortasıdır; alıcı prim öder, alttan tabela alır."
+            - text: "Trader call sattı."
+              correct: false
+              feedback: "Hayır — call satmak farklı bir strateji (covered call). Bu put alımıyla ilgili."
+        glossary_refs: [call, put, prim, exercise]
+
+      - id: M1L2
+        slug: strike-vade-prim
+        title: "Sözleşmenin Anatomisi: Strike, Vade, Prim"
+        learning_objective: "Bir opsiyon kontratının üç temel parametresini ve aralarındaki ilişkiyi tanımak."
+        body: |
+          Her opsiyonun üç anatomik parçası var:
+
+          1) STRIKE (Kullanım Fiyatı): kontratın referans fiyatı. Vade sonunda
+             spot bu seviyenin neresinde diye bakılır.
+          2) VADE: opsiyonun ömrünün bittiği tarih. Vadeye kadar olan süreye
+             mainspring'in sarımı diyebiliriz — her gün biraz daha boşalır.
+          3) PRİM: opsiyonu almak için ödenen bedel. Anlık piyasa fiyatıdır.
+
+          Bu üçünün ilişkisi: strike sabit, vade uzakta, IV yüksek → prim pahalı.
+          Vadeye yaklaştıkça veya IV düştükçe prim erir (Theta + Vega etkisi).
+
+          Önemli: kontrat büyüklüğü farkı! ABD hisse/endeks opsiyonu 1 kontrat =
+          100 hisse. Deribit BTC opsiyonu 1 kontrat = 1 BTC. Ölçek yanlışlığı
+          en yaygın retail hatasıdır.
+        worked_examples:
+          - asset: crypto
+            symbol: ETH
+            scenario: |
+              Deribit'te 30 günlük ETH call: strike biraz OTM, prim küçük bir
+              ETH miktarı. 1 kontrat = 1 ETH'lik pozisyon. Vade yaklaştıkça
+              prim her gün eriyecek (Theta çalışıyor).
+          - asset: us_index
+            symbol: SPX
+            scenario: |
+              SPX üzerinde 45 günlük bir put: strike spot'un %5 altında.
+              1 kontrat = 100 birim SPX. Prim bugünkü piyasa fiyatından
+              alınır; vade boyunca theta erimesine maruz kalır.
+        horology_link: mainspring
+        horology_note: "Vade = mainspring'in tam sarımı. Her gün biraz boşalır."
+        quiz:
+          question: "Aynı strike'ta iki call var: biri 7 günlük, diğeri 90 günlük. Hangisinin primi daha yüksektir?"
+          options:
+            - text: "7 günlük — kısa vade olduğu için daha pahalı."
+              correct: false
+              feedback: "Tersine — uzun vade daha yüksek zaman değeri taşır. Mainspring daha çok sarılı."
+            - text: "90 günlük — zaman değeri daha yüksek."
+              correct: true
+              feedback: "Doğru. Vade uzun ise mainspring'de daha çok enerji var, prim daha pahalı (varsayım: IV aynı)."
+            - text: "İkisi de aynı çünkü strike aynı."
+              correct: false
+              feedback: "Hayır — strike aynı olsa bile vade primi belirleyen kritik bir parametredir."
+        glossary_refs: [strike, vade, prim, kontrat-buyuklugu, zaman-degeri]
+
+      - id: M1L3
+        slug: itm-atm-otm
+        title: "İçeride, Yanında, Dışarıda: ITM / ATM / OTM"
+        learning_objective: "Opsiyonun spot'a göre konumunu ve bu konumun zaman değeri/içsel değer üzerindeki etkisini ayırt etmek."
+        body: |
+          Opsiyonun spot fiyata göre üç pozisyonu var:
+
+          - ITM (İçeride / In The Money): şu an kullanılsa para kazandırır.
+            Call için: spot > strike. Put için: spot < strike. İçsel değer pozitif.
+          - ATM (Yanında / At The Money): spot tam strike'ta. Zaman değeri ve
+            Gamma (Risk İvmesi) en yüksek burada. Hassasiyetin doruk noktası.
+          - OTM (Dışarıda / Out of The Money): şu an kullanılsa sıfır değerli.
+            Sadece zaman değeri taşır. Vadeye giderken theta ile erir.
+
+          Tipik yanılgı: "OTM ucuz, çok kazandırır." Doğru ama tehlikeli — OTM
+          opsiyonların büyük çoğunluğu sıfır değerli olarak biter. Lottery-ticket
+          etkisi: nadiren büyük, sık sık sıfır.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC spot belli bir seviyede. Aynı vadede üç call:
+              strike spot'un %5 altında (ITM — pahalı, içsel değer var),
+              strike spot'a eşit (ATM — Risk İvmesi yüksek),
+              strike spot'un %10 üstünde (OTM — ucuz ama 'patlamadan' biter).
+              ATM'de bir BTC hareketi prim üzerinde en sert etkiyi yapar.
+          - asset: us_index
+            symbol: SPX
+            scenario: |
+              SPX put: OTM put (strike spot'un %10 altında) ucuzdur ve
+              normal piyasada genelde sıfır değerli biter. Ama VIX zıplarsa
+              ya da sert düşüş gelirse Vega ve Delta birlikte primi fırlatır.
+              Bu yüzden "ucuz portföy sigortası" olarak kullanılır.
+        horology_link: balance-wheel
+        horology_note: "ATM'de balance wheel en hassas; küçük titreşim büyük zıplama."
+        quiz:
+          question: "Spot 100. Bir call'ın strike'ı 105. Bu call hangi pozisyondadır?"
+          options:
+            - text: "ITM — şu an kullanılsa kâr ettirir."
+              correct: false
+              feedback: "Hayır — şu an kullanılırsa spot 100 < strike 105, kullanmaya değmez. OTM."
+            - text: "ATM — strike spot'a yakın."
+              correct: false
+              feedback: "Yakın ama tam değil. ATM 'tam strike = spot' anlamına gelir."
+            - text: "OTM — şu an kullanılsa sıfır değerli."
+              correct: true
+              feedback: "Doğru. Spot < strike olduğu için call OTM'dir; içsel değeri sıfır, sadece zaman değeri taşır."
+        glossary_refs: [itm, atm, otm, icsel-deger, zaman-degeri, gamma]
+
+      - id: M1L4
+        slug: sigorta-vs-spekulasyon
+        title: "Neden Var? Sigorta mı, Spekülasyon mu?"
+        learning_objective: "Opsiyonun iki temel kullanım amacını ayırt etmek ve hedge kültürünün neden 'sigorta' tarafında olduğunu anlamak."
+        body: |
+          Opsiyonlar iki amaçla kullanılır:
+
+          1) SİGORTA (Hedge): elindeki bir varlığı korumak. Yangın sigortası
+             gibi. Prim ödersin, beklenmedik felakette pozisyonun korunur.
+             Hedge kültürünün özü budur.
+          2) SPEKÜLASYON: küçük prim ile büyük yön bahsi yapmak. Doğru çıkarsa
+             çok kazandırır, çoğu zaman sıfırlanır. Lottery-ticket.
+
+          AXIOM Akademisi'nin felsefesi: opsiyonu önce SİGORTA olarak öğren.
+          Spekülasyon kazandığında öğretici değildir; kaybettiğinde yıkıcıdır.
+          Sigorta hep öğretici: ödediğin prim 'yangın çıkmadı' demektir, bu
+          başarısızlık değil, başarılı korunmadır.
+
+          Türk retail'de yaygın hata: opsiyonu sadece "kaldıraçlı bahis"
+          olarak görmek. Bu, opsiyonun tarihsel doğuş amacının (çiftçinin
+          hasat fiyatını sigortalama) tam tersidir.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              Hedge örneği: 1 BTC tutuyorsun, FOMC haftası yaklaşıyor.
+              %5 OTM put alıyorsun. Düşerse sigorta devrede; düşmezse
+              prim erir ama portföyünün geri kalanı zaten kazanmış olur.
+              Bu, primin 'eridiğinde başarılı' olduğu bir işlemdir.
+            spekulasyon_karsiti: |
+              Spekülasyon örneği: 1 BTC tutmuyorsun ama "1 hafta içinde
+              patlama olacak" diyerek %20 OTM call alıyorsun. Çoğu zaman
+              sıfırlanır; nadiren patlar. Bu sigorta değil, bahis.
+          - asset: us_index
+            symbol: SPX
+            scenario: |
+              Hedge örneği: portföyün ağırlıklı endeks ETF'i. Yıl sonu
+              tatil likidite düşüklüğünden önce 3 aylık SPX OTM put
+              alıyorsun. Sigortacı gibi davranıyorsun — başına bir şey
+              gelmezse mutlu, gelirse korunmuş.
+        horology_link: escapement
+        horology_note: "Sigortanın değeri 'tıkırtının' değerinde — küçük, düzenli, sessiz."
+        quiz:
+          question: "Hangisi hedge kültürünün TEMEL anlayışıdır?"
+          options:
+            - text: "Opsiyonla küçük parayla büyük kazanmak."
+              correct: false
+              feedback: "Bu spekülasyon. Hedge kültürü 'kazanmak' değil 'korunmak' üzerine kuruludur."
+            - text: "Prim 'kaybedildiğinde' aslında sigorta görevini yapmış demektir."
+              correct: true
+              feedback: "Doğru. Yangın çıkmadıysa sigorta primi 'kayıp' değil, başarılı korunmadır."
+            - text: "Opsiyon kesin kâr veren bir araçtır."
+              correct: false
+              feedback: "Kesin kâr veren bir finansal araç yoktur. Opsiyon, riski transfer eder."
+        glossary_refs: [protective-put, prim, theta]
+
+  # ==========================================================================
+  # MODÜL 2 — Fiyatı Ne Belirler?
+  # Zaman, volatilite ve mainspring'in boşalması
+  # ==========================================================================
+  - id: M2
+    slug: fiyati-ne-belirler
+    title: "Fiyatı Ne Belirler? — Zaman ve Volatilite"
+    tagline: "Mainspring boşalır, escapement tıkırdar — Theta çalışır."
+    tier_required: premium
+    summary: |
+      Opsiyonun primi tek bir şeyden gelmez. İki ana güç var: zaman değeri
+      (mainspring'in henüz boşalmamış enerjisi) ve volatilite (piyasanın 'ne
+      kadar oynar' beklentisi). Bu modül Theta ve Vega'nın sezgisini, IV'nin
+      ne anlama geldiğini ve kripto için DVOL, ABD için VIX'in nasıl okunduğunu
+      kurar.
+    duration_min: 22
+    lessons:
+
+      - id: M2L1
+        slug: icsel-zaman-degeri
+        title: "Primin İki Bileşeni: İçsel Değer + Zaman Değeri"
+        learning_objective: "Bir opsiyon primini içsel değer ve zaman değerine ayırmak."
+        body: |
+          Her prim iki parçadan oluşur:
+
+          PRİM = İÇSEL DEĞER + ZAMAN DEĞERİ
+
+          - İçsel değer: opsiyonu ŞU AN kullansaydık ne kazanırdık. Call için
+            max(spot - strike, 0). Put için max(strike - spot, 0). Sıfırın
+            altına inmez.
+          - Zaman değeri: prim eksi içsel değer. Mainspring'in henüz
+            boşalmamış kısmı. Vadeye giderken sıfıra koşar.
+
+          OTM opsiyonlar tamamen zaman değerinden oluşur. ITM opsiyonlarda
+          ise prim hem içsel hem zaman değeri içerir.
+
+          Tipik gözlem: ATM opsiyonun zaman değeri en yüksektir — burada
+          mainspring tam yüklüdür, hangi yöne boşalacağı en belirsizdir.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              Spot belli bir seviyede. Aynı vadede üç call:
+              ITM call: prim = içsel değer + küçük zaman değeri.
+              ATM call: prim = sıfır içsel + en yüksek zaman değeri.
+              OTM call: prim = sıfır içsel + azalan zaman değeri.
+              Vadeye yaklaşınca zaman değeri komponentinin nasıl eridiğini izle.
+          - asset: us_index
+            symbol: SPX
+            scenario: |
+              SPX put: vadeye 60 gün, strike %5 OTM. Primin tamamı zaman
+              değeri. Vade 30 güne indiğinde, hiçbir şey değişmese bile
+              prim ciddi şekilde erimiş olur — bu Theta'nın işidir.
+        horology_link: mainspring
+        horology_note: "İçsel değer = 'şu an' parası. Zaman değeri = mainspring'in geleceği."
+        quiz:
+          question: "Spot 100, call strike 90, prim 12. İçsel değer ve zaman değeri sırasıyla?"
+          options:
+            - text: "İçsel 10, zaman 2."
+              correct: true
+              feedback: "Doğru. Spot 100 - strike 90 = 10 içsel; prim 12 - içsel 10 = 2 zaman değeri."
+            - text: "İçsel 12, zaman 0."
+              correct: false
+              feedback: "Hayır — içsel değer max(spot-strike,0) = 10, prim 12 olduğu için kalan 2 zaman değeridir."
+            - text: "İçsel 0, zaman 12 (çünkü ITM)."
+              correct: false
+              feedback: "Tersine — ITM olduğu için içsel değer SIFIRDAN BÜYÜK olmalı."
+        glossary_refs: [icsel-deger, zaman-degeri, prim, atm, theta]
+
+      - id: M2L2
+        slug: theta-zaman-kaybi
+        title: "Theta — Zaman Kaybı Hızı (Saat Çarkı)"
+        learning_objective: "Theta'nın ne olduğunu, vadeye giderken neden hızlandığını ve hangi pozisyonun düşmanı/dostu olduğunu kavramak."
+        body: |
+          Theta — AXIOM dilinde "Zaman Kaybı Hızı". Her gün opsiyonun değerinden
+          ne kadar erir. Mainspring'in boşalma hızı.
+
+          Önemli özellikler:
+          - Long opsiyon ALICISININ düşmanıdır (her gün kaybeder).
+          - Opsiyon SATICISININ dostudur (her gün kazanır — primi kira gibi
+            toplar).
+          - Doğrusal değildir. Vadeye yaklaştıkça hızlanır — son hafta en
+            sert. Buna 'theta acceleration' denir.
+          - ATM opsiyonların theta'sı en yüksektir.
+
+          AXIOM metaforu: opsiyon bir cep saatidir. Mainspring kuruluyken
+          escapement yavaşça tıkırdar; mainspring boşaldıkça tıkırtı hızlanır.
+          Vade gününde mainspring sıfırlanır — opsiyon sadece içsel değerine
+          eşit kalır.
+
+          Bu yüzden short-dated OTM call/put almak çoğu zaman kaybeden bir
+          stratejidir: theta hem yüksek hem de günden güne hızlanıyor.
+        worked_examples:
+          - asset: crypto
+            symbol: ETH
+            scenario: |
+              Deribit'te 7 günlük ATM ETH call. Hiçbir şey olmasa bile her
+              gün primin ~%10-15'i theta yüzünden buharlaşır. 7. günün
+              sonunda tüm zaman değeri sıfırlanmış olur. Bu, mainspring'in
+              tam boşalmasıdır.
+          - asset: us_index
+            symbol: SPX
+            scenario: |
+              SPX vade haftası (OPEX): aynı strike'ta vadeye 30 gün kalan
+              put ile 3 gün kalan putun theta'sı dağlar kadar farklıdır.
+              3 günlük put 'lottery ticket' gibidir — kazanırsa büyük,
+              kaybederse hızlı sıfır.
+        horology_link: escapement
+        horology_note: "Escapement tıkırtısı = theta erimesi. Vadeye yaklaştıkça beat rate hızlanır."
+        quiz:
+          question: "Aynı strike, aynı IV. Vade 60 gün vs vade 7 gün. Theta'nın gün başı kaybı hangisinde daha yüksektir?"
+          options:
+            - text: "60 günlük — daha çok zaman değeri olduğu için daha çok kayıp."
+              correct: false
+              feedback: "Mantıklı görünür ama yanlış. Theta vadeye yaklaştıkça hızlanır; 7 günlüğün günlük kaybı oransal olarak çok daha yüksek."
+            - text: "7 günlük — vadeye yakın olduğu için günlük erime hızlanır."
+              correct: true
+              feedback: "Doğru. Theta non-linear — son haftada keskin ivmelenir."
+            - text: "İkisi aynı çünkü strike aynı."
+              correct: false
+              feedback: "Strike aynı olsa bile vade theta'yı dramatik şekilde etkiler."
+        glossary_refs: [theta, mainspring, escapement, beat-rate, zaman-degeri]
+
+      - id: M2L3
+        slug: implied-volatility
+        title: "Implied Volatility — Piyasanın Beklentisi (DVOL ve VIX)"
+        learning_objective: "IV kavramını ve kripto için DVOL, ABD için VIX'in nasıl okunduğunu kavramak."
+        body: |
+          Implied Volatility (IV) — opsiyon FİYATININ ima ettiği, piyasanın
+          gelecek için beklediği volatilite. Gerçek değil — beklenti.
+
+          Sezgi: aynı strike, aynı vade, ama IV %30 vs %80 → ikinci durumda
+          prim çok daha pahalı. Piyasa daha sert oynayacak diye düşünüyor,
+          fiyatlıyor.
+
+          İki anahtar endeks:
+          - VIX (ABD): SPX opsiyonlarından türetilen 30 günlük IV. Piyasa
+            korkusunun göstergesi. Rejim okumak için kullanılır:
+            * VIX düşük (~14 altı): sakin piyasa, opsiyonlar genelde ucuz.
+            * VIX orta (~14-20): normal.
+            * VIX yüksek (~20-30): endişe.
+            * VIX panik (~30+): kriz fiyatlaması.
+          - DVOL (Kripto): Deribit'in BTC/ETH IV endeksi. Kriptonun VIX'i.
+            BTC için tipik aralık VIX'tinden iki-üç kat geniş çünkü
+            kripto yapısal olarak daha oynak.
+
+          IV YÜKSEK iken opsiyon ALMAK pahalı; SATMAK görece avantajlı.
+          IV DÜŞÜK iken opsiyon ALMAK ucuz; SATMAK kira primi düşük.
+          Bu, IV Rank kavramının temelidir (Faz 3'te araç olarak gelir).
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC DVOL yüksek bir rejimde: BTC opsiyon primleri tarihsel
+              ortalamanın üstünde. Sigorta (put) pahalı; ama sigorta SATMAK
+              (covered call yazmak) cazip prim toplar. DVOL düştüğünde tersi:
+              put almak ucuz, satmak az kazandırır.
+          - asset: us_index
+            symbol: SPX
+            scenario: |
+              VIX 12'ye yakın bir dönem (sakin) → SPX put primleri çok
+              ucuz, "portföy sigortası" almak için iyi pencere. VIX 30
+              üstünde (panik) → opsiyonlar pahalı, sigorta sonradan
+              alınması mantıksız (yangın başladıktan sonra sigorta).
+        horology_link: balance-wheel
+        horology_note: "IV = balance wheel'in salınım genişliği. Geniş salınım = pahalı saat (pahalı opsiyon)."
+        quiz:
+          question: "VIX 14'ten 28'e fırlıyor. Mevcut SPX put primlerine ne olur (diğer her şey sabit)?"
+          options:
+            - text: "Düşer — fiyat hareket etmediği sürece prim değişmez."
+              correct: false
+              feedback: "Hayır — IV değiştiğinde Vega yoluyla prim doğrudan değişir, fiyat hareket etmese bile."
+            - text: "Fırlar — IV artışı Vega yoluyla primi şişirir."
+              correct: true
+              feedback: "Doğru. VIX'in iki katına çıkması Vega kanalıyla put primlerini ciddi şekilde yükseltir."
+            - text: "Değişmez — IV sadece teorik bir endekstir, fiyatı etkilemez."
+              correct: false
+              feedback: "Tersine — IV opsiyon fiyatının ana girdilerinden biridir."
+        glossary_refs: [implied-vol, dvol, vix, vega, iv-rank]
+
+      - id: M2L4
+        slug: vega-volatilite-hassasiyeti
+        title: "Vega — Volatilite Hassasiyeti"
+        learning_objective: "Vega'nın ne olduğunu, hangi vadede daha güçlü olduğunu ve neden uzun vadeli opsiyonların 'volatilite oynamak' için kullanıldığını kavramak."
+        body: |
+          Vega — AXIOM dilinde "Volatilite Hassasiyeti". IV 1 puan değişirse
+          opsiyon primi ne kadar değişir.
+
+          Sezgi: Spot hareket etmese bile, VIX/DVOL fırlarsa prim Vega
+          kanalıyla yükselir. Bu yüzden 'volatilite trade etmek' bir
+          stratejidir — kimi traderlar yön bahsi yapmaz, sadece IV'nin
+          değişeceğini tahmin ederek pozisyon alır.
+
+          Vega'nın özellikleri:
+          - Uzun vadeli opsiyonlarda yüksek (mainspring uzun, IV
+            değişimine maruz kalma süresi fazla).
+          - Kısa vadeli opsiyonlarda düşük.
+          - ATM opsiyonlarda en yüksek (Gamma gibi).
+
+          Pratik sonuç: 7 günlük opsiyon ile yön bahsi yaparsın (Gamma
+          baskın); 6 aylık opsiyon ile volatilite bahsi yaparsın
+          (Vega baskın).
+
+          'Vega long' pozisyonlar (long opsiyon) IV yükselirse kazanır.
+          'Vega short' pozisyonlar (kısa opsiyon, opsiyon satışı) IV
+          düşerse kazanır.
+        worked_examples:
+          - asset: crypto
+            symbol: ETH
+            scenario: |
+              Spot 1 ay sabit kalsa bile, DVOL 50'den 80'e çıkarsa long
+              ETH opsiyon pozisyonların Vega yoluyla değer kazanır. Bu,
+              "ETH fiyatı hareket etmedi ama ben kazandım" durumudur —
+              Vega çalıştı.
+          - asset: us_index
+            symbol: SPX
+            scenario: |
+              VIX 12'ye düşmüş, çok sakin piyasa. Bir trader 6 aylık SPX
+              ATM straddle alıyor — yön bahsi değil, "VIX bu seviyede
+              kalamaz, fırlayacak" Vega bahsi. VIX 25'e çıkarsa straddle
+              primi şişer, kazanır.
+        horology_link: balance-wheel
+        horology_note: "Vega = balance wheel'i sıkmak/gevşetmek. Saat hızını tamamen değiştirir."
+        quiz:
+          question: "Bir trader uzun vadeli ATM SPX call alıyor. Hangi senaryo onun için EN İYİ?"
+          options:
+            - text: "Spot biraz yükseliyor + VIX biraz düşüyor."
+              correct: false
+              feedback: "Delta kazanır ama Vega kaybeder — net belirsiz veya küçük."
+            - text: "Spot sabit + VIX sert yükseliyor."
+              correct: true
+              feedback: "Uzun vadeli ATM call yüksek Vega taşır; VIX fırlaması doğrudan primi şişirir."
+            - text: "Spot büyük düşüş + VIX düşüş."
+              correct: false
+              feedback: "Hem Delta hem Vega aleyhine — en kötü senaryo."
+        glossary_refs: [vega, implied-vol, vix, dvol, balance-wheel]
+
+  # ==========================================================================
+  # MODÜL 3 — Yunanlılar (Greeks) — Sezgi, formül yok
+  # ==========================================================================
+  - id: M3
+    slug: greeks-sezgi
+    title: "Yunanlılar (Greeks) — Sezgi, Formül Yok"
+    tagline: "Saatin parçalarını adlandır."
+    tier_required: premium
+    summary: |
+      Greeks, opsiyonun risk parmak izidir. Bu modülde Delta (Fiyat
+      Duyarlılığı), Gamma (Risk İvmesi) ve M2'den hatırladığımız Theta +
+      Vega'yı tek bir saatin parçaları olarak bağlıyoruz. Formül yok —
+      sadece "balance wheel nasıl çalışıyor" sezgisi.
+    duration_min: 20
+    lessons:
+
+      - id: M3L1
+        slug: delta-fiyat-duyarliligi
+        title: "Delta — Fiyat Duyarlılığı (ve Gizli Hedge Oranı)"
+        learning_objective: "Delta'nın iki anlamını anlamak: (1) primin spot hareketine duyarlılığı, (2) eşdeğer pozisyon büyüklüğü."
+        body: |
+          Delta — AXIOM dilinde "Fiyat Duyarlılığı".
+
+          İki anlamı var:
+          1) DUYARLILIK: spot 1 birim hareket ederse prim ne kadar değişir.
+          2) HEDGE ORANI: opsiyon kaç birim spot pozisyona eşdeğer.
+
+          Aralık:
+          - Call delta: 0 ile +1 arası.
+          - Put delta: -1 ile 0 arası.
+          - ATM call ≈ +0.50; ATM put ≈ -0.50.
+          - Deep ITM call ≈ +0.95 (neredeyse hisse gibi davranır).
+          - Far OTM call ≈ +0.05 (neredeyse parasız).
+
+          Pratik kullanım: portföyünde 100 hisse var. 0.30 delta put alırsan
+          her put 30 hisse eşdeğeri 'koruma' getirir. ~3-4 put portföyü
+          ciddi şekilde nötralleştirir. Delta hedging'in temeli budur.
+
+          Tipik yanılgı: "Delta = opsiyonun ITM bitme olasılığı." Yaklaşık
+          doğru ama kesin değil — Delta bir HİSSE-EŞDEĞER RİSK
+          ÖLÇÜSÜDÜR, kesin olasılık değil.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              1 BTC tutuyorsun. -0.30 delta'lı bir put alıyorsun. Bu, BTC
+              pozisyonun %30'unu nötralleştirir. -0.50 delta'lı (ATM) put
+              alırsan %50'sini. -1 delta'lı (derin ITM) put alırsan
+              tamamını — ama o noktada artık put değil, kısa BTC.
+          - asset: us_index
+            symbol: SPX
+            scenario: |
+              SPX portföyün var. -0.10 delta'lı OTM put = ucuz tail-risk
+              sigortası, 'felaket' karşı korur ama normal düşüşte az
+              etkilidir. -0.50 delta'lı ATM put = pahalı ama her düşüşte
+              hemen tepki verir.
+        horology_link: balance-wheel
+        horology_note: "Delta = kadran ibresi. Şu anki konum, şu anki yön."
+        quiz:
+          question: "100 hisse Apple tutuyorsun. Tam delta-nötr olmak için -1 delta put gerekir. Eldeki put'un delta'sı -0.40. Kaç put gerekir?"
+          options:
+            - text: "1 put yeter."
+              correct: false
+              feedback: "Hayır. 1 put = 100 hisse kontrat büyüklüğü × 0.40 delta = 40 hisse eşdeğeri. Yetmez."
+            - text: "2.5 put gerekir."
+              correct: true
+              feedback: "Doğru. -0.40 × 2.5 = -1.0 delta = 100 hisse nötr. (Pratikte 2 veya 3 put alınır.)"
+            - text: "10 put gerekir."
+              correct: false
+              feedback: "Çok fazla — bu pozisyonu over-hedge eder, net kısa yapar."
+        glossary_refs: [delta, atm, otm, itm, protective-put]
+
+      - id: M3L2
+        slug: gamma-risk-ivmesi
+        title: "Gamma — Risk İvmesi (Delta'nın Hızlanması)"
+        learning_objective: "Gamma'nın 'delta'nın değişim hızı' olduğunu ve neden ATM + kısa vadede en yüksek olduğunu kavramak."
+        body: |
+          Gamma — AXIOM dilinde "Risk İvmesi". Delta'nın değişim hızı.
+
+          Sezgi: Delta arabanın şu anki hızıysa, Gamma gaz pedalına basma
+          hızıdır. Yüksek Gamma = küçük bir spot hareketi delta'yı sert
+          şekilde değiştirir.
+
+          Özellikleri:
+          - ATM + kısa vadede EN YÜKSEK. Piyasa yapıcının kabusu burası.
+          - Deep ITM veya far OTM'de düşük (delta ya 1'e ya 0'a yapışmış).
+          - Uzun vadede daha düşük (mainspring uzun, anlık değişim seyrek).
+
+          Pratik etkiler:
+          - 'Gamma squeeze': dealer kısa gamma pozisyondaysa, fiyat yukarı
+            koştuğunda delta hızla artar, dealer daha çok hisse almak
+            zorunda kalır — fiyatı KENDİSİ yukarı iter. Self-fulfilling
+            volatilite. Kurumsal akış analitiğinin temeli (Faz 4).
+          - Long gamma pozisyon (long opsiyon): hareket ne yönde olursa
+            olsun kazanır. Ama theta öder. Klasik trade-off.
+
+          Bu yüzden 'short gamma + long theta' (opsiyon SATMAK) sakin
+          piyasada para basar — ama sert hareket bir gecede haftaların
+          primini siler. 'Bir dolar al, on dolar kaybet' riski.
+        worked_examples:
+          - asset: crypto
+            symbol: ETH
+            scenario: |
+              Vade gününe 2 gün kalmış ATM ETH call: Delta ~0.50, Gamma
+              dağ gibi yüksek. ETH %2 yukarı oynarsa delta hızla 0.70'e
+              çıkar. Aynı opsiyona aylar var olsa, delta sadece 0.52'ye
+              çıkar — Gamma çok daha düşüktür.
+          - asset: us_index
+            symbol: SPX
+            scenario: |
+              SPX vade gününde (0DTE) ATM call: Gamma astronomik. 5 puanlık
+              SPX hareketi prim üzerinde inanılmaz etki yapar. Bu yüzden
+              0DTE 'kumar' gibi davranır — ya hep ya hiç.
+        horology_link: escapement
+        horology_note: "Gamma = escapement'in mandalı. Küçük itme büyük zıplama."
+        quiz:
+          question: "Hangi opsiyon en YÜKSEK gamma'ya sahiptir?"
+          options:
+            - text: "60 günlük deep ITM call."
+              correct: false
+              feedback: "ITM opsiyonların delta'sı 1'e yapışmış, gamma düşük."
+            - text: "3 günlük ATM call."
+              correct: true
+              feedback: "Doğru — ATM + çok kısa vade = maksimum gamma. Piyasa yapıcının en zor yönettiği bölge."
+            - text: "180 günlük far OTM put."
+              correct: false
+              feedback: "Far OTM ve uzun vade — gamma çok düşük."
+        glossary_refs: [gamma, delta, atm, escapement]
+
+      - id: M3L3
+        slug: theta-vega-tekrar
+        title: "Theta ve Vega — M2'nin Tekrarı, Greeks Çerçevesinde"
+        learning_objective: "Theta ve Vega'yı diğer Greeks ile birlikte bir 'risk parmak izi' olarak okumak."
+        body: |
+          Bu ders kısa bir köprü. Theta ve Vega'yı M2'de zaten kavradın;
+          burada Greeks çerçevesinde diğer iki Yunanlı ile birlikte
+          konumlandırıyoruz.
+
+          Bir opsiyon pozisyonunun TAM RİSK PARMAK İZİ dört rakamla okunur:
+
+          | Greek                  | Sezgi                                |
+          |------------------------|--------------------------------------|
+          | Delta (Fiyat Duy.)     | Şu anki yön ve hedge oranı          |
+          | Gamma (Risk İvmesi)    | Delta'nın değişim hızı              |
+          | Theta (Zaman Kaybı)    | Her gün eriyen değer                |
+          | Vega (Volatilite Has.) | IV değişimine duyarlılık            |
+
+          İki klasik karakter profili:
+
+          - 'Long Gamma' (long opsiyon): kullanım için: pozitif gamma
+            (hareketten kazanır), negatif theta (zaman düşman). Volatilite
+            artarsa keyifli.
+          - 'Short Gamma' (opsiyon satıcısı): negatif gamma (hareket
+            düşman), pozitif theta (zaman dost). Volatilite düşerse keyifli.
+
+          Hedge kültüründe protective put alıcısı 'long gamma' tarafıdır.
+          Covered call yazan 'short gamma' tarafıdır (kısmen).
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC protective put alıyorsun (long gamma profili): BTC sert
+              düşerse put primi hızla şişer (gamma çalışır), DVOL
+              fırlarsa Vega da yardım eder. Karşılığında theta her gün
+              biraz erir — sigortan ücretini öder.
+          - asset: us_index
+            symbol: SPX
+            scenario: |
+              SPX covered call yazıyorsun (short gamma profili): yatay
+              piyasada theta sana kira getirir. Sert yukarı hareket
+              fırsat maliyeti; sert aşağı hareket de zaten elindeki
+              hisseyi koruyamaz, sadece prim kadar tampon.
+        horology_link: balance-wheel
+        horology_note: "Greeks = saatin tüm parçaları. Hiçbiri tek başına saati anlatmaz."
+        quiz:
+          question: "Pozitif Theta + Negatif Gamma profili hangi pozisyona aittir?"
+          options:
+            - text: "Long call alıcısı."
+              correct: false
+              feedback: "Tersine — long opsiyon alıcısı negatif theta + pozitif gamma."
+            - text: "Opsiyon satıcısı (örn. covered call yazan)."
+              correct: true
+              feedback: "Doğru. Satıcı her gün theta kazanır ama gamma riski taşır (sert hareket onu vurur)."
+            - text: "Cash pozisyon (opsiyon yok)."
+              correct: false
+              feedback: "Cash pozisyonun Greek'i sıfırdır — Greek pozisyonu opsiyonla taşınır."
+        glossary_refs: [theta, vega, gamma, delta, covered-call, protective-put]
+
+      - id: M3L4
+        slug: greeks-balance-wheel
+        title: "Greeks Bir Arada — Saatin Balance Wheel'i"
+        learning_objective: "Greeks'i tek tek değil, birbiriyle bağlantılı bir sistem olarak okumak."
+        body: |
+          Greeks tek tek değil, BİRBİRİYLE BAĞLANTILI okunur. Bir saatte
+          mainspring, escapement ve balance wheel ayrı parçalar değildir —
+          birlikte saati yaparlar.
+
+          Bağlantılar:
+          - Gamma yüksekse Theta da yüksektir (kısa vade ATM bölgesi).
+          - Delta nötr (~0) pozisyonun bile yüksek Gamma'sı varsa,
+            küçük bir hareket sonrası delta'sı kayar — pozisyon
+            farkında olmadan kayar. Dinamik delta-hedging gerekir.
+          - Vega yüksek pozisyonlar VIX/DVOL şoklarında titreşir.
+
+          Pratik karar çerçevesi:
+          1) "Ne istiyorum?" sorusunu Greek diliyle çevir.
+             - Yön bahsi → Delta önemli.
+             - Hareket bahsi (yön bilmiyorum) → Gamma + Vega önemli.
+             - Yatay piyasa beklentisi → Theta önemli (satıcı tarafı).
+             - Volatilite rejim değişimi → Vega önemli.
+          2) Pozisyon kurmadan ÖNCE Greek profilini yaz.
+          3) Pozisyon süresince Greeks'in değiştiğini unutma (zamanla
+             gamma artar, theta hızlanır).
+
+          Bu, kurumsal trader masasının düşünme biçimidir. AXIOM
+          Akademisi'nin amacı bu çerçeveyi Türkçe sezgi sözlüğüyle retail
+          kullanıcının diline getirmektir.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              "Spot 1 ay yatay kalır + DVOL düşer" tezi. Greek profili:
+              negatif Gamma (yatay piyasa), pozitif Theta, negatif Vega.
+              Bu = OTM put SATMAK (cash-secured) veya iron condor.
+              Çıktı Greek diliyle netleşince hangi strateji uygun belli olur.
+          - asset: us_index
+            symbol: SPX
+            scenario: |
+              "VIX 14'te, çok düşük, fırlayacak" tezi. Greek profili:
+              Delta nötr (yön bilinmiyor), pozitif Vega, pozitif Gamma.
+              Bu = long straddle veya long volatilite ETF kombinasyonu.
+        horology_link: balance-wheel
+        horology_note: "Tüm parçalar uyumlu — bu, opsiyonun 'saat mühendisliği'."
+        quiz:
+          question: "Bir trader 'yön bilmiyorum ama sert hareket bekliyorum, VIX de fırlayacak' diyor. Hangi Greek profili?"
+          options:
+            - text: "Delta yüksek pozitif, Vega negatif."
+              correct: false
+              feedback: "Tersine — yön bilinmiyor (delta nötr) ve VIX yükselişi long Vega gerektirir."
+            - text: "Delta nötr, pozitif Gamma + pozitif Vega."
+              correct: true
+              feedback: "Doğru. Long straddle gibi bir yapı bu profili verir."
+            - text: "Theta pozitif (satıcı tarafı)."
+              correct: false
+              feedback: "Satıcı pozisyonu sert hareketten ZARAR ETER — bu trader'ın istediğinin tersi."
+        glossary_refs: [delta, gamma, theta, vega, straddle, balance-wheel, complications]
+
+  # ==========================================================================
+  # MODÜL 4 — Hedge Stratejileri (uygulama)
+  # ==========================================================================
+  - id: M4
+    slug: hedge-stratejileri
+    title: "Hedge Stratejileri — Sigortayı Pratiğe Dökmek"
+    tagline: "Mainspring kurulu, escapement ayarlı — şimdi koruma."
+    tier_required: premium
+    summary: |
+      Bu modül teoriyi pratiğe çevirir. Dört temel hedge yapısı: protective
+      put (sigorta), covered call (kira), collar (sigorta + kira hibrid) ve
+      spread/straddle giriş seviyesi. Her birinin payoff sezgisi, max
+      kâr/zarar ve kullanım senaryosu.
+    duration_min: 25
+    lessons:
+
+      - id: M4L1
+        slug: protective-put
+        title: "Protective Put — Portföy Sigortası"
+        learning_objective: "Protective put'un payoff yapısını, ne zaman ve neden kullanıldığını kavramak."
+        body: |
+          Protective put = elinde varlık varken AYNI varlık üzerine put almak.
+          'Yangın sigortası' yapısı.
+
+          Payoff sezgisi:
+          - Aşağı: kayıp strike seviyesinde DURUR (put devreye girer).
+            Toplam max zarar ≈ (spot başlangıç - strike) + ödenen prim.
+          - Yukarı: sınırsız kazanç (varlık yukarı gidiyor), prim kayboldu.
+
+          Yani: yukarıyı ÖDÜNCEKİ PRİM KADAR feda ettin, aşağıyı
+          bantladın. Risk profili artık 'spot - sigorta primi' eğrisinde
+          ama alt taraf bantlı.
+
+          Ne zaman:
+          - Belirsiz olay öncesi (FOMC, CPI, kripto borsa olayı, OPEX).
+          - Uzun süredir yüksek kazançlı pozisyonun var, kâr realize
+            etmek istemiyorsun (vergi vb.) ama düşüş korkun var.
+          - Tatil/likidite düşük dönem öncesi.
+
+          Maliyet kontrolü:
+          - %5 OTM put = ucuz ama 'küçük düşüş' korunmuyor.
+          - %10 OTM put = daha ucuz, sadece tail-risk.
+          - ATM put = pahalı ama hemen tepki verir.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              1 BTC tutuyorsun. 30 günlük %5 OTM put alıyorsun. DVOL
+              normalse prim genelde ucuz; rejim panikse pahalı.
+              FOMC haftası öncesinde alır, hafta sonu ihtiyaç biterse
+              ters kapatırsın (zaman değeri kalmışsa kısmi geri alırsın).
+          - asset: us_index
+            symbol: SPX
+            scenario: |
+              SPX ETF tutuyorsun. Yıl sonu likidite düşüklüğü dönemi
+              öncesi 60 günlük %7 OTM SPX put alıyorsun. Hiçbir şey
+              olmazsa prim erir. Sert düşüş gelirse Vega + Delta + Gamma
+              birlikte primi şişirir.
+        horology_link: mainspring
+        horology_note: "Sigortanın mainspring'i kuruldu; vade tamamlandığında ya kullanılır ya erir."
+        quiz:
+          question: "100 hisse hisse var, hisse 100. 90 strike put aldın, prim 3. Maks zararın nedir?"
+          options:
+            - text: "Maks zarar 0 — koruma tam."
+              correct: false
+              feedback: "Hayır — strike altı korunur, strike'a kadar olan düşüş + prim ödenir."
+            - text: "Maks zarar (100-90) + 3 = 13 hisse başı."
+              correct: true
+              feedback: "Doğru. Spot 90'a düşene kadar 10 birim kayıp + 3 prim = 13 toplam."
+            - text: "Maks zarar sınırsız."
+              correct: false
+              feedback: "Protective put'un anlamı tam olarak BUNU önler. Maks zarar tavanlıdır."
+        glossary_refs: [protective-put, put, prim, max-zarar, breakeven]
+
+      - id: M4L2
+        slug: covered-call
+        title: "Covered Call — Yatay Piyasada Kira"
+        learning_objective: "Covered call'un payoff'unu, kazancını ve gizli fırsat maliyetini kavramak."
+        body: |
+          Covered call = elinde varlık varken AYNI varlık üzerine call SATMAK.
+          'Kira geliri' yapısı.
+
+          Payoff sezgisi:
+          - Spot yatay veya hafif yukarı: hisse kazancı + tahsil edilen
+            prim. En iyi senaryo.
+          - Spot sert yukarı: hisse kazandı ama call exercise edilir —
+            strike'tan satarsın. Yukarı 'tavanlandı' — kazancın
+            (strike - başlangıç) + prim ile sınırlı.
+          - Spot aşağı: hisse kaybediyor, ama prim küçük tampon.
+            Aşağı korunmadın — covered call sigorta DEĞİL, kira.
+
+          Ne zaman:
+          - Yatay/hafif yükseliş beklentisi.
+          - Tuttuğun varlıkta yakın vadede patlama beklemiyorsun.
+          - Düzenli prim toplamak istiyorsun (kira modeli).
+
+          Tipik yanılgı: "Covered call güvenli." Aşağı KORUNMADIN — sadece
+          yukarıdan vazgeçtin. Düşüş geldiğinde portföyün hâlâ savunmasız.
+          Eğer aşağı korunmak istiyorsan COLLAR (sonraki ders) lazım.
+        worked_examples:
+          - asset: crypto
+            symbol: ETH
+            scenario: |
+              10 ETH tutuyorsun. 30 günlük %10 OTM call SATIYORSUN. Prim
+              cebine giriyor. ETH yatay veya hafif yukarı → prim senin,
+              ETH'in senin. ETH %20 patlarsa → strike'tan satarsın,
+              patlamayı kaçırdın ama %10 + prim kazandın.
+          - asset: us_index
+            symbol: SPX
+            scenario: |
+              SPX ETF tutuyorsun. Aylık %5 OTM SPX call yazıyorsun. Vade
+              haftaları boyunca theta sana kira getirir. Aylık küçük
+              ama düzenli prim akışı; uzun vadede portföy verimini artırır.
+              Riski: keskin yukarı atak fırsatını kaçırır.
+        horology_link: escapement
+        horology_note: "Covered call = sen escapement tarafındasın. Tıkırtı sana kazandırıyor."
+        quiz:
+          question: "Hisse 100. 110 call yazdın (sattın), prim 2. Hisse 130'a fırladı. Pozisyonun ne olur?"
+          options:
+            - text: "Kazancım 30 + 2 = 32."
+              correct: false
+              feedback: "Hayır — 110 strike'ta hisseyi vermek zorundasın. Kazancın 10 (110-100) + 2 (prim) = 12."
+            - text: "Kazancım 12 — yukarıdan vazgeçtim, prim aldım."
+              correct: true
+              feedback: "Doğru. Yukarı tavanlı; 130-110 = 20 'kaçırılan' fırsat maliyetidir."
+            - text: "Kayıp ettim çünkü call assignment oldu."
+              correct: false
+              feedback: "Kazanç var ama yukarı tavanlı. Kayıp değil, fırsat maliyeti."
+        glossary_refs: [covered-call, call, prim, theta, max-kar]
+
+      - id: M4L3
+        slug: collar
+        title: "Collar — Sigorta + Kira Hibrid"
+        learning_objective: "Collar yapısının payoff'unu ve neden 'düşük maliyetli sigorta' yapısı olduğunu kavramak."
+        body: |
+          Collar = aynı varlığa AYNI ANDA:
+          - Protective put AL (alttan sigorta)
+          - Covered call SAT (üstten kira)
+
+          Net: put primini call primiyle (kısmen veya tamamen) finanse
+          ediyorsun. Çoğu zaman 'zero-cost collar' kurulabilir — net prim
+          çıkışı yaklaşık sıfır.
+
+          Payoff sezgisi (kanal yapısı):
+          - Yukarı: covered call strike'ında tavanlandı.
+          - Aşağı: protective put strike'ında tabanlandı.
+          - Arada: hisse hareketi gibi.
+
+          Yani portföyünü put strike ile call strike arasında bir KANALA
+          hapsettin. Mainspring çoğunlukla yatay tıkırdar.
+
+          Ne zaman:
+          - Belirli bir dönemi (FOMC haftası, OPEX, tatil) düşük
+            volatilite ile geçirmek istiyorsun.
+          - Aşağı korunmak istiyorsun ama prim ödemek istemiyorsun.
+          - Yukarıyı feda etmeye razısın çünkü zaten beklemiyorsun.
+
+          Tipik yanılgı: "Sıfır maliyetli = bedava." Hayır — yukarıyı feda
+          ettin. Eğer patlama olursa potansiyeli kestin. Ücretsiz öğle
+          yemeği yok; sadece ödemenin biçimi değişti.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              1 BTC, FOMC haftası. -5% strike put AL + +10% strike call
+              SAT. Net prim ~0 (DVOL rejimine göre). FOMC haftası BTC
+              -5% ile +10% arasında kalırsa hiçbir şey olmaz. Aşırı
+              hareket olursa bantların biri devreye girer.
+          - asset: us_index
+            symbol: SPX
+            scenario: |
+              SPX ETF'i 90 günlüğüne 'koridorda' tutmak için collar.
+              %5 OTM put AL + %5 OTM call SAT. Yıl sonu likidite
+              dönemini düşük volatilite ile geçirmek için klasik
+              kurumsal tertip.
+        horology_link: balance-wheel
+        horology_note: "Collar = balance wheel'i tam ortaya kalibre etmek. Aşırı salınım yok."
+        quiz:
+          question: "Zero-cost collar kurdun. Hisse koridorda yatay kaldı. Pnl?"
+          options:
+            - text: "Büyük kazanç çünkü prim bedava."
+              correct: false
+              feedback: "Hayır — hisse hareket etmediği için PnL ≈ 0 + işlem maliyeti."
+            - text: "Yaklaşık sıfır — hareket olmadığı için ne sigortaya ne kiraya ihtiyaç oldu."
+              correct: true
+              feedback: "Doğru. Collar koridor stratejisidir; koridorda hisse hareketsizse PnL küçük."
+            - text: "Büyük kayıp çünkü iki opsiyon birden var."
+              correct: false
+              feedback: "Hayır — net prim ~0 olduğu için 'maliyet' yapısal olarak küçük."
+        glossary_refs: [collar, protective-put, covered-call, max-kar, max-zarar]
+
+      - id: M4L4
+        slug: spread-straddle-giris
+        title: "Spread ve Straddle — Çok Bacaklı Yapılara Giriş"
+        learning_objective: "Bull spread ve straddle yapılarını sezgisel olarak ayırt etmek; ne zaman yönlü ne zaman yönsüz strateji uygun olur."
+        body: |
+          M4L4 ileri seviye giriş. İki çok-bacaklı yapı:
+
+          1) BULL CALL SPREAD ('Yönlü ama tavanlı')
+             - Düşük strike call AL + yüksek strike call SAT.
+             - Yönlü (yukarı) ama hareketin sınırlı olacağını düşünüyorsun.
+             - Maks kâr ve maks zarar TAVANLI.
+             - Tek başına call almaktan ucuz.
+             - Vega açısından nötrümsü (iki bacak birbirini kısmen söndürür).
+
+          2) LONG STRADDLE ('Yönsüz ama sert hareket')
+             - Aynı strike call + aynı strike put AL.
+             - Yön bilmiyorsun ama büyük hareket bekliyorsun.
+             - FOMC, kripto regülasyon haberi, earnings öncesi klasik.
+             - Maks zarar = toplam prim. Maks kâr = teorik sınırsız.
+             - Theta düşmanın — hareket gelmezse iki bacak da erir.
+
+          Bu yapılarla giriş yaparken Greek profilini önceden yaz
+          (M3L4 dersini hatırla). 'Ne istiyorum' Greek diliyle netleşince
+          hangi yapı uygun belli olur.
+
+          Faz 2'de AXIOM Scenario Builder bu kararı sezgisel kartlarla
+          gösterecek: "Piyasa yön + sınır" → bull spread; "yönsüz +
+          patlama" → straddle.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              "BTC bir ay içinde yukarı gider ama sınırlı" tezi:
+              ATM call AL + %10 OTM call SAT (bull spread). Net prim
+              tek bacaklı call'dan ucuz. Eğer BTC patlarsa fırsat
+              maliyetin var (üst bacakta tavanlandın) ama riskin de
+              tavanlı.
+          - asset: us_index
+            symbol: SPX
+            scenario: |
+              FOMC öncesi: yön bilinmiyor ama hareket bekleniyor.
+              Long ATM straddle. Fed güvercin de olsa şahin de olsa
+              SPX sert hareket ederse straddle kazanır. Eğer Fed
+              beklendiği gibi davranır ve piyasa yatay kalırsa theta
+              iki bacakta birden ödenir.
+        horology_link: complications
+        horology_note: "Spread ve straddle = saatte complication. Ana fonksiyonun üstüne ek mekanizma."
+        quiz:
+          question: "FOMC kararı öncesi yönü bilmiyorsun ama sert hareket bekliyorsun. Hangi yapı?"
+          options:
+            - text: "Covered call yaz — prim topla."
+              correct: false
+              feedback: "Tam tersi — sert hareket covered call yazanı yakar. Bu yatay piyasa stratejisidir."
+            - text: "Long straddle — yön nötr, hareket bahsi."
+              correct: true
+              feedback: "Doğru. Straddle yönü olmayan ama hareket bekleyen pozisyon için klasiktir."
+            - text: "Bull call spread."
+              correct: false
+              feedback: "Bull spread yönlüdür (yukarı). 'Yön bilmiyorum' senaryosuna uymaz."
+        glossary_refs: [bull-call-spread, straddle, strangle, vega, gamma, complications]
+
+# ============================================================================
+# SCENARIO CARDS — Faz 1'in 'Senaryo Sihirbazı' modülü (eğitici versiyon)
+# ============================================================================
+# Bu kartlar M5'i (Faz 2 köprüsü) önceleyen eğitici özettir. Kullanıcı
+# "Piyasa beklentin ne?" sorusuna cevap verir, ona en uygun strateji
+# kartını gösteririz. Faz 2'de bu canlı portföye bağlanır.
+scenario_cards:
+  - id: SC1
+    market_view: "Yükselişe inanıyorum ama düşerse korunmak istiyorum"
+    suggested_strategy: bull-call-spread
+    why: "Yön yukarı + risk tavanlı. Tek bacaklı call'dan ucuz, koruma içsel."
+    max_gain: "Bacak farkı - net prim. Tavanlı."
+    max_loss: "Ödenen net prim. Tavanlı."
+    horology_note: "Yaylım kalibresi — yön doğru ama complication ile sınırlandı."
+
+  - id: SC2
+    market_view: "Sert hareket bekliyorum ama yönü bilmiyorum"
+    suggested_strategy: straddle
+    why: "Yönsüz + büyük hareket. İki bacak da kazanma şansı taşır."
+    max_gain: "Teorik sınırsız (özellikle yukarı bacakta)."
+    max_loss: "Toplam prim. Hareket gelmezse theta iki bacakta birden erir."
+    horology_note: "Balance wheel maksimum salınıma kurgulu."
+
+  - id: SC3
+    market_view: "Tuttuğum varlık var, alttan sigorta istiyorum"
+    suggested_strategy: protective-put
+    why: "Klasik sigorta yapısı — yangın sigortası."
+    max_gain: "Spot - prim. Yukarı sınırsız."
+    max_loss: "(Spot başlangıç - strike) + prim. Tavanlı."
+    horology_note: "Mainspring kuruldu; sigorta vadeye kadar tıkırdar."
+
+  - id: SC4
+    market_view: "Tuttuğum varlık var, yatay piyasa bekliyorum, prim toplamak istiyorum"
+    suggested_strategy: covered-call
+    why: "Kira geliri yapısı — yatay piyasada theta sana akar."
+    max_gain: "(Strike - başlangıç) + prim. Yukarı tavanlı."
+    max_loss: "Spot - prim. Aşağı KORUNMADIN."
+    horology_note: "Escapement'in tıkırtısı sana akıyor — ama mainspring yatay."
+
+  - id: SC5
+    market_view: "Bir dönemi (FOMC haftası vb.) düşük volatilite ile geçirmek istiyorum"
+    suggested_strategy: collar
+    why: "Sigorta + kira hibrid; net prim ~0 olabilir. Portföyü koridora hapseder."
+    max_gain: "Call strike - başlangıç. Yukarı tavanlı."
+    max_loss: "Başlangıç - put strike. Aşağı tavanlı."
+    horology_note: "Balance wheel sıkı kalibre; aşırı salınım yok."
+
+# ============================================================================
+# THETA WHEEL VISUAL SPEC — Faz 1.6 (Theta çarkı v1 için tasarım kontratı)
+# ============================================================================
+# UI bileşeni `src/components/academy/ThetaWheel.tsx` bu spec'i okur.
+# Bu sadece görsel metafor — gerçek opsiyon hesabı yok. v2 (Faz 3) Deribit
+# kontratına bağlanır.
+theta_wheel_v1:
+  description: |
+    Cep saatinin escapement'ı gibi tıkırdayan, vadeye yaklaştıkça beat
+    rate'i hızlanan SVG/CSS animasyon. M2L2 dersinin yanında embed.
+  parameters_displayed:
+    - label: "Mainspring sarımı (vadeye kalan gün)"
+      visual: "Çarkın doluluk oranı"
+    - label: "Beat rate (theta hızı)"
+      visual: "Tıkırtı frekansı — vadeye yaklaşınca hızlanır"
+    - label: "Toplam ömür (vade)"
+      visual: "Tam tur tamamlama süresi"
+  user_interaction:
+    - "Vade slider'ı (1g - 180g): çark dönme hızını ayarlar."
+    - "ATM/OTM/ITM toggle: zaman değeri farkını çark dolu/boş alanı ile gösterir."
+  brand_voice: |
+    Tooltip metinleri: "Mainspring boşalıyor", "Escapement tıkırtısı hızlandı",
+    "Vade gününde balance wheel duruyor". Horology vokabüleri AXIOM'un sesidir.

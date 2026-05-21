@@ -65,6 +65,13 @@ async def lifespan(app: FastAPI):
     global bot_task, crawler_task, etf_scraper_task, coinglass_task, macro_probe_task, cryptoquant_task
     logger.info("Application startup")
 
+    # AXIOM_LOCAL_DEV=1 → sadece HTTP API açılır; bot/crawler/scheduler
+    # background görevleri ATLANIR. Railway'deki canlı bot ile getUpdates
+    # çakışmasını ve lokalden yanlışlıkla canlı pipeline'a yazmayı önler.
+    local_dev = os.getenv("AXIOM_LOCAL_DEV", "").strip() == "1"
+    if local_dev:
+        logger.warning("AXIOM_LOCAL_DEV=1 — tüm background scheduler/bot/crawler görevleri atlandı.")
+
     # Schema guard — idempotent ALTER TABLE to ensure pipeline columns exist.
     # Must run BEFORE crawler/bot so they can write to new columns without errors.
     try:
@@ -73,18 +80,20 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Schema guard startup hatası (uygulama yine de başlıyor): {e}")
 
     # Start Telegram bot in background within a supervisor
-    try:
-        bot_task = asyncio.create_task(bot_supervisor())
-        logger.info("Telegram bot supervisor started")
-    except Exception as e:
-        logger.error(f"Failed to start bot supervisor: {e}")
+    if not local_dev:
+        try:
+            bot_task = asyncio.create_task(bot_supervisor())
+            logger.info("Telegram bot supervisor started")
+        except Exception as e:
+            logger.error(f"Failed to start bot supervisor: {e}")
 
     # Start RSS crawler + broadcaster in background
-    try:
-        crawler_task = asyncio.create_task(crawler_supervisor())
-        logger.info("Crawler supervisor started")
-    except Exception as e:
-        logger.error(f"Failed to start crawler supervisor: {e}")
+    if not local_dev:
+        try:
+            crawler_task = asyncio.create_task(crawler_supervisor())
+            logger.info("Crawler supervisor started")
+        except Exception as e:
+            logger.error(f"Failed to start crawler supervisor: {e}")
 
     # 2026-05-14: legacy `etf_scraper_supervisor` (24h fallback chain via
     # bitbo/btcetffundflow/fmp_approx) disabled. It was running in parallel
@@ -103,35 +112,39 @@ async def lifespan(app: FastAPI):
     # (default 04:00 UTC = TR 07:00, ~7h after NYSE close). Sole ETF flow
     # source; replaces both the legacy 24h fallback scheduler above and the
     # unreliable .github/workflows/coinglass-etf-cron.yml.
-    try:
-        coinglass_task = asyncio.create_task(coinglass_scraper_supervisor())
-        logger.info("CoinGlass scheduler started")
-    except Exception as e:
-        logger.error(f"Failed to start CoinGlass scheduler: {e}")
+    if not local_dev:
+        try:
+            coinglass_task = asyncio.create_task(coinglass_scraper_supervisor())
+            logger.info("CoinGlass scheduler started")
+        except Exception as e:
+            logger.error(f"Failed to start CoinGlass scheduler: {e}")
 
     # Start Macro source reliability probe (5-min cadence, Hafta 1 verification)
-    try:
-        macro_probe_task = asyncio.create_task(reliability_probe_supervisor())
-        logger.info("Macro reliability probe started")
-    except Exception as e:
-        logger.error(f"Failed to start macro probe: {e}")
+    if not local_dev:
+        try:
+            macro_probe_task = asyncio.create_task(reliability_probe_supervisor())
+            logger.info("Macro reliability probe started")
+        except Exception as e:
+            logger.error(f"Failed to start macro probe: {e}")
 
     # Start CryptoQuant on-chain data refresh (4-hour cadence)
-    try:
-        cryptoquant_task = asyncio.create_task(cryptoquant_supervisor())
-        logger.info("CryptoQuant scheduler started")
-    except Exception as e:
-        logger.error(f"Failed to start CryptoQuant scheduler: {e}")
+    if not local_dev:
+        try:
+            cryptoquant_task = asyncio.create_task(cryptoquant_supervisor())
+            logger.info("CryptoQuant scheduler started")
+        except Exception as e:
+            logger.error(f"Failed to start CryptoQuant scheduler: {e}")
 
     # Kurumsal Sentez: poll+accumulation (3h) + haftalık Pzt 08:30 TR
     # sentez. Broadcast kill-switch CORPORATE_SYNTH_BROADCAST_ENABLED
     # default OFF — açılana kadar yalnız DB'ye yazar (kullanıcıya spam yok).
     corporate_task = None
-    try:
-        corporate_task = asyncio.create_task(corporate_supervisor())
-        logger.info("Corporate synthesis scheduler started")
-    except Exception as e:
-        logger.error(f"Failed to start corporate scheduler: {e}")
+    if not local_dev:
+        try:
+            corporate_task = asyncio.create_task(corporate_supervisor())
+            logger.info("Corporate synthesis scheduler started")
+        except Exception as e:
+            logger.error(f"Failed to start corporate scheduler: {e}")
 
     yield
 

@@ -446,6 +446,25 @@ _POSTGRES_GUARDS = [
         "ix_corp_hold_fund_asof",
         "CREATE INDEX IF NOT EXISTS ix_corp_hold_fund_asof ON corporate_holdings_snapshots(fund, as_of DESC)",
     ),
+    # Opsiyon Akademisi Faz 1 (alembic 027) — kullanıcı ilerleme tablosu.
+    # Müfredat statik YAML; sadece progress DB'dedir.
+    (
+        "user_academy_progress table",
+        """CREATE TABLE IF NOT EXISTS user_academy_progress (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            lesson_id VARCHAR(16) NOT NULL,
+            quiz_score INTEGER,
+            attempts INTEGER NOT NULL DEFAULT 1,
+            completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT uq_acad_user_lesson UNIQUE (user_id, lesson_id)
+        )""",
+    ),
+    (
+        "ix_acad_user",
+        "CREATE INDEX IF NOT EXISTS ix_acad_user ON user_academy_progress(user_id)",
+    ),
 ]
 
 
