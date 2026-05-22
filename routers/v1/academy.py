@@ -148,6 +148,24 @@ async def get_live_context_endpoint(response: Response):
     return data
 
 
+@router.get("/live-example/{strategy}")
+async def get_live_example_endpoint(
+    strategy: str,
+    response: Response,
+    asset: str = Query("BTC", min_length=2, max_length=8),
+):
+    """'Gerçek Örnek' — bir strateji için bugünün canlı rakamlarıyla somut örnek.
+
+    Deribit (gerçek opsiyon zinciri) birincil; ulaşılamazsa CoinGecko spot +
+    Black-Scholes teorik prim (UI'da 'teorik' etiketli). Sayılar deterministik,
+    Gemini yok. Fail-soft: available=False döner.
+    """
+    from services import academy_live_example
+    data = await academy_live_example.get_live_example(strategy, asset)
+    response.headers["Cache-Control"] = "private, max-age=60"
+    return data
+
+
 # ---------------------------------------------------------------------------
 # Progress endpoints (auth required)
 # ---------------------------------------------------------------------------

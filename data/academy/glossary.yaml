@@ -64,6 +64,11 @@ anatomi:
     intuition: "Hakkı kullanmak — call ile strike'tan almak veya put ile strike'tan satmak."
     one_liner: "Çoğu retail opsiyon kullanılmadan kapatılır; pozisyon ters yönde kapanır."
 
+  - slug: assignment
+    tr: "Atama (Assignment)"
+    intuition: "Sattığın opsiyonun karşı tarafı hakkını kullanınca senin yükümlülüğünün devreye girmesi."
+    one_liner: "Kısa put atanırsa varlığı strike'tan alırsın; kısa call atanırsa strike'tan satarsın. ITM + temettü öncesi erken atama riski."
+
   - slug: kontrat-buyuklugu
     tr: "Kontrat Büyüklüğü"
     intuition: "Bir opsiyonun temsil ettiği varlık miktarı."
@@ -213,6 +218,107 @@ stratejiler:
     tr: "Geniş Çift Bacak (Strangle)"
     intuition: "Straddle'ın daha ucuz hali — OTM call + OTM put AL."
     one_liner: "Straddle'dan ucuz ama harekete daha sert ihtiyaç var. Theta yine düşman."
+
+  - slug: cash-secured-put
+    tr: "Nakit-Teminatlı Satım (Cash-Secured Put)"
+    intuition: "Nakit ayırıp OTM put satmak — almak istediğin varlığı, beklediğin fiyatta, sana prim ödenerek beklemek."
+    one_liner: "Spot strike üstünde kalırsa prim senin; altına inerse varlığı strike'tan (efektif indirimli) alırsın."
+    use_case: "Girmek istediğin varlık var, IV yüksek; beklerken prim topla, düşerse ucuza gir."
+
+  - slug: wheel
+    tr: "Çark (The Wheel)"
+    intuition: "Cash-secured put SAT → atanırsan covered call SAT → çağrılırsan nakde dön → tekrar. Sürekli prim hasadı döngüsü."
+    one_liner: "Yön tahmin etmeden, sahip olmak istediğin varlıkta her turda escapement tıkırtısı (prim) toplamak."
+    use_case: "Kaliteli varlıkta, IV yüksek rejimde, atanmayı göze alarak sistematik gelir."
+
+  - slug: iron-condor
+    tr: "Demir Kondor (Iron Condor)"
+    intuition: "OTM bull put spread SAT + OTM bear call spread SAT — fiyat bir kanalda kalırsa iki taraftan da prim."
+    one_liner: "Yatay piyasa + IV düşüşü kazandırır; uzun bacaklar riski tavanlar. Maks kâr = toplanan net prim."
+    use_case: "IV Rank yüksek, range-bound beklenti, takvimde sert olay yok."
+
+  - slug: bull-put-spread
+    tr: "Yükselen Satım Yaylımı (Bull Put Spread)"
+    intuition: "OTM put SAT + daha düşük put AL — fiyat üstte kalırsa prim senin, risk tavanlı."
+    one_liner: "Credit spread; 'şu desteğin altına inmez' bahsi. Hareket şart değil, theta dost."
+
+  - slug: bear-call-spread
+    tr: "Düşen Alım Yaylımı (Bear Call Spread)"
+    intuition: "OTM call SAT + daha yüksek call AL — fiyat altta kalırsa prim senin, risk tavanlı."
+    one_liner: "Credit spread; 'şu direnci geçmez' bahsi. Iron condor'un üst yarısı."
+
+  - slug: bear-put-spread
+    tr: "Düşen Satım Yaylımı (Bear Put Spread)"
+    intuition: "Yüksek strike put AL + düşük strike put SAT — tanımlı, ucuz aşağı yön bahsi."
+    one_liner: "Debit spread; aşağı yön + sınırlı hareket. Maks zarar = ödenen net prim."
+
+  - slug: calendar-spread
+    tr: "Takvim Yaylımı (Calendar Spread)"
+    intuition: "Aynı strike, farklı vade — yakın vade SAT (hızlı theta) + uzak vade AL (vega)."
+    one_liner: "Fiyat strike civarı kalır + IV yükselirse kazanır. İleri seviye theta+vega yapısı."
+
+  - slug: credit-spread
+    tr: "Kredi Yaylımı (Credit Spread)"
+    intuition: "Net prim TAHSİL ederek kurulan tanımlı-riskli yapı (bull put / bear call)."
+    one_liner: "Theta dost; 'belirli seviyenin ötesine gitmesin' yeter. IV yüksekken tercih edilir."
+
+  - slug: debit-spread
+    tr: "Borç Yaylımı (Debit Spread)"
+    intuition: "Net prim ÖDEYEREK kurulan tanımlı-riskli yönlü yapı (bull call / bear put)."
+    one_liner: "Hareket gerekir (theta düşman); tek bacaktan ucuz, risk ve kâr tavanlı. IV düşükken tercih."
+
+  - slug: naked-option
+    tr: "Çıplak Opsiyon (Naked / Uncovered)"
+    intuition: "Teminatsız/varlıksız opsiyon satışı — call tarafında teorik SINIRSIZ risk."
+    one_liner: "AXIOM çerçevesi çıplak satıştan kaçınır; tanımlı-riskli yapıları (spread, cash-secured) önceler."
+
+  - slug: butterfly
+    tr: "Kelebek (Butterfly)"
+    intuition: "Üç ayaklı yapı (1 al + 2 sat + 1 al, eşit aralıklı) — fiyatın bir noktaya 'çakılması' bahsi."
+    one_liner: "Düşük maliyet, tanımlı risk. En yüksek kâr fiyat tam ortadaki strike'ta biterse gelir."
+    use_case: "Fiyatın belirli bir seviyede pinleneceğini düşünüyorsun (örn. OPEX max-pain)."
+
+  - slug: iron-butterfly
+    tr: "Demir Kelebek (Iron Butterfly)"
+    intuition: "Iron condor'un dar kuzeni — iki kısa bacak ATM'de toplanır; dar pencere, dolgun prim."
+    one_liner: "Fiyat ATM civarında kalırsa bol prim; uzaklaşırsa zarar ama dış bacaklar tavanlar."
+    use_case: "IV Rank yüksek + fiyatın bir seviyeye demir atacağı beklentisi."
+
+  - slug: pmcc
+    tr: "Fakirin Covered Call'u (Poor Man's Covered Call)"
+    intuition: "Varlık yerine derin ITM LEAPS call tut + üstüne kısa vadeli OTM call sat — az sermayeli covered call."
+    one_liner: "Aynı kira fikri, çok daha az sermaye. Bedeli: LEAPS theta'sı + temettü yok + yönetim."
+    use_case: "Covered call mantığına inanıyorsun ama sermayeni verimli kullanmak istiyorsun."
+
+  - slug: leaps
+    tr: "LEAPS (Uzun Vadeli Opsiyon)"
+    intuition: "Vadesi çok uzun (genelde 1+ yıl) opsiyon. Derin ITM call neredeyse varlığın kendisi gibi davranır."
+    one_liner: "'Hisse yerine koyma' (stock replacement): varlığı almak yerine onun yerini tutan ucuz uzun call."
+
+  - slug: ratio-spread
+    tr: "Oranlı Yaylım (Ratio Spread)"
+    intuition: "Dengesiz bacak — örn. 1 al + 2 sat. Ucuza/bedavaya kurulur ama fazla satılan bacak çıplak kalır."
+    one_liner: "Ilımlı hareket + prim topla; ama aşırı sert harekette açık bacak yakar. İleri seviye."
+
+  - slug: backspread
+    tr: "Backspread (Ters Oranlı Yaylım)"
+    intuition: "Dengesiz bacak — az sat + çok al (örn. 1 sat, 2 al). Sert hareket bahsi (long gamma/vega)."
+    one_liner: "Fiyat beklenen yönde çok sert giderse fazladan bacaklar büyük kazandırır; durgunlukta küçük prim erir."
+
+  - slug: synthetic-position
+    tr: "Sentetik Pozisyon (Synthetic)"
+    intuition: "Opsiyonları birleştirerek varlığı taklit etmek. Call al + put sat (aynı strike) = sentetik uzun."
+    one_liner: "Put-call paritesinin sonucu; fiyatlama çarpıklıkları buradan yakalanır."
+
+  - slug: risk-reversal
+    tr: "Risk Reversal (Risk Dönüşü)"
+    intuition: "OTM put SAT + o primle OTM call AL — yukarı yönü ucuza/bedavaya finanse et."
+    one_liner: "Collar'ın varlık olmadan kurulan, yönlü versiyonu. 'Düşersem alırım' riskini üstlenirsin."
+
+  - slug: married-put
+    tr: "Evli Put (Married Put)"
+    intuition: "Varlığı ve koruyucu put'u AYNI ANDA, beraber almak — baştan sigortalı giriş."
+    one_liner: "Yapı protective put ile aynıdır; fark kuruluş anı ve niyettir (sigortalı taşıma)."
 
 # ============================================================================
 # 6. HOROLOGY SÖZLÜĞÜ — AXIOM marka vokabüleri
