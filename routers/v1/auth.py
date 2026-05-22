@@ -236,7 +236,20 @@ async def refresh_token(
                 detail="Invalid refresh token"
             )
 
-        user_id = payload.get("sub")
+        # sub claim'i string ("1") olarak saklanır; User.id integer kolon.
+        # asyncpg strict typing'de int-kolon == string param DataError fırlatır
+        # → get_user_by_id None döner → "User not found". get_current_user_id
+        # ile aynı dönüşümü uygula, yoksa refresh HER ZAMAN başarısız olur ve
+        # 24h access token dolunca kullanıcı oturumu kaybeder (sliding-window
+        # oturum hiç çalışmaz).
+        user_id_raw = payload.get("sub")
+        try:
+            user_id = int(user_id_raw)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid refresh token"
+            )
         user = await UserService.get_user_by_id(db, user_id)
         if not user or not user.is_active:
             raise HTTPException(
