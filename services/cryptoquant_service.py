@@ -535,66 +535,73 @@ async def _fetch_realized_price() -> Optional[dict]:
     return {"realized_price": float(val), "date": latest.get("date")}
 
 
-async def _fetch_sth_realized_price() -> Optional[dict]:
-    """
-    Short-Term Holder Realized Price (coin'leri ≤ 155 gün önce hareket etmiş
-    cüzdanların ortalama maliyeti). Kısa-vadeli yatırımcıların maliyet temeli;
-    fiyat bu seviyenin altına inerse STH'ler genelde kayıpta → satış baskısı.
+# UTXO yaş-bandı sınırları. 155 gün = STH/LTH ayrım çizgisi; "3ay-6ay"
+# bandının (90-180g) içine düşer → o bandı oransal böl (155g = ~%72).
+_STH_FRAC_3M6M = (155 - 90) / (180 - 90)  # ≈ 0.722
 
-    Faz D.1 — CryptoQuant endpoint /btc/market-indicator/sth-realized-price
-    veya /btc/market-data/sth-realized-price varyantları denenir. Mevcut
-    değilse None döner ve snapshot'ta sth_realized_price alanı eksik kalır
-    (frontend graceful fallback).
+_STH_BANDS = [
+    ("0d_1d", 1.0), ("1d_1w", 1.0), ("1w_1m", 1.0),
+    ("1m_3m", 1.0), ("3m_6m", _STH_FRAC_3M6M),
+]
+_LTH_BANDS = [
+    ("3m_6m", 1.0 - _STH_FRAC_3M6M), ("6m_12m", 1.0), ("12m_18m", 1.0),
+    ("18m_2y", 1.0), ("2y_3y", 1.0), ("3y_5y", 1.0),
+    ("5y_7y", 1.0), ("7y_10y", 1.0), ("10y_inf", 1.0),
+]
+
+
+async def _fetch_holder_realized_price(cohort: str) -> Optional[dict]:
+    """STH (≤155g) / LTH (>155g) realized price — arz-ağırlıklı hesaplama.
+
+    CryptoQuant'ta dedicated 'short-term-holder-realized-price' endpoint'i YOK
+    (404). Cohort realized price'ı UTXO yaş-bandı dağıtımından türetilir:
+        realized_price = Σ(realized_cap_band) / Σ(realized_cap_band / price_band)
+    İki endpoint birleştirilir:
+      - market-indicator/utxo-realized-price-age-distribution → band realized price
+      - network-indicator/utxo-realized-age-distribution      → band realized cap (USD)
     """
-    yesterday = _yesterday_str()
-    raw = await _cq_get(
-        "/btc/market-indicator/sth-realized-price",
-        {"window": "day", "from": yesterday, "limit": 3},
+    frm = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y%m%d")
+    price_raw = await _cq_get(
+        "/btc/market-indicator/utxo-realized-price-age-distribution",
+        {"window": "day", "from": frm, "limit": 5},
     )
-    if not raw:
-        return None
-    rows = raw.get("result", {}).get("data", [])
-    if not rows:
-        return None
-    latest = rows[-1]
-    # CryptoQuant naming varyantları
-    val = (
-        latest.get("sth_realized_price")
-        or latest.get("realized_price")
-        or latest.get("price")
-        or 0
+    cap_raw = await _cq_get(
+        "/btc/network-indicator/utxo-realized-age-distribution",
+        {"window": "day", "from": frm, "limit": 5},
     )
-    if not val:
+    if not price_raw or not cap_raw:
         return None
-    return {"realized_price": float(val), "date": latest.get("date")}
+    prows = price_raw.get("result", {}).get("data", [])
+    crows = cap_raw.get("result", {}).get("data", [])
+    if not prows or not crows:
+        return None
+    p, c = prows[-1], crows[-1]
+    bands = _STH_BANDS if cohort == "sth" else _LTH_BANDS
+    tot_cap = 0.0
+    tot_supply = 0.0
+    for band, weight in bands:
+        cap_v = c.get(f"range_{band}_usd")
+        price_v = p.get(f"range_{band}")
+        if not cap_v or not price_v:
+            continue
+        cap_w = float(cap_v) * weight
+        tot_cap += cap_w
+        tot_supply += cap_w / float(price_v)
+    if tot_supply <= 0:
+        return None
+    return {"realized_price": tot_cap / tot_supply, "date": p.get("date")}
+
+
+async def _fetch_sth_realized_price() -> Optional[dict]:
+    """Short-Term Holder Realized Price (≤155g): kısa-vade yatırımcı maliyet
+    temeli. Spot bunun altına inerse STH'ler ortalama zararda → satış baskısı."""
+    return await _fetch_holder_realized_price("sth")
 
 
 async def _fetch_lth_realized_price() -> Optional[dict]:
-    """
-    Long-Term Holder Realized Price (coin'leri > 155 gün önce hareket etmiş
-    cüzdanların ortalama maliyeti). Uzun-vadeli yatırımcıların maliyet temeli;
-    güçlü destek seviyesi, fiyat buna inerse "buy-the-dip" tetiklenir.
-    """
-    yesterday = _yesterday_str()
-    raw = await _cq_get(
-        "/btc/market-indicator/lth-realized-price",
-        {"window": "day", "from": yesterday, "limit": 3},
-    )
-    if not raw:
-        return None
-    rows = raw.get("result", {}).get("data", [])
-    if not rows:
-        return None
-    latest = rows[-1]
-    val = (
-        latest.get("lth_realized_price")
-        or latest.get("realized_price")
-        or latest.get("price")
-        or 0
-    )
-    if not val:
-        return None
-    return {"realized_price": float(val), "date": latest.get("date")}
+    """Long-Term Holder Realized Price (>155g): uzun-vade yatırımcı maliyet
+    temeli; güçlü destek, fiyat buna yaklaşınca 'buy-the-dip' tetiklenir."""
+    return await _fetch_holder_realized_price("lth")
 
 
 async def _fetch_spot_taker_ratio() -> Optional[dict]:
