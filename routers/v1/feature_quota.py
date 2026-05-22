@@ -21,11 +21,11 @@ router = APIRouter(prefix="/feature-quota", tags=["feature-quota"])
 
 # Allowed feature commands — keep this list explicit so callers can't
 # burn quota on arbitrary keys.
-_ALLOWED = {"crypto_overview", "crypto_onchain"}
+_ALLOWED = {"crypto_overview", "crypto_onchain", "news_read"}
 
 
 class ConsumeRequest(BaseModel):
-    command: Literal["crypto_overview", "crypto_onchain"]
+    command: Literal["crypto_overview", "crypto_onchain", "news_read"]
 
 
 @router.post("/consume")

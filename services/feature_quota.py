@@ -23,10 +23,13 @@ logger = get_logger("feature_quota")
 _LIMITS: dict[tuple[str, str], Optional[int]] = {
     ("free",    "crypto_overview"): 2,
     ("free",    "crypto_onchain"):  2,
+    ("free",    "news_read"):       5,
     ("premium", "crypto_overview"): None,
     ("premium", "crypto_onchain"):  None,
+    ("premium", "news_read"):       None,
     ("advance", "crypto_overview"): None,
     ("advance", "crypto_onchain"):  None,
+    ("advance", "news_read"):       None,
 }
 
 
