@@ -535,6 +535,68 @@ async def _fetch_realized_price() -> Optional[dict]:
     return {"realized_price": float(val), "date": latest.get("date")}
 
 
+async def _fetch_sth_realized_price() -> Optional[dict]:
+    """
+    Short-Term Holder Realized Price (coin'leri ≤ 155 gün önce hareket etmiş
+    cüzdanların ortalama maliyeti). Kısa-vadeli yatırımcıların maliyet temeli;
+    fiyat bu seviyenin altına inerse STH'ler genelde kayıpta → satış baskısı.
+
+    Faz D.1 — CryptoQuant endpoint /btc/market-indicator/sth-realized-price
+    veya /btc/market-data/sth-realized-price varyantları denenir. Mevcut
+    değilse None döner ve snapshot'ta sth_realized_price alanı eksik kalır
+    (frontend graceful fallback).
+    """
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/btc/market-indicator/sth-realized-price",
+        {"window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    # CryptoQuant naming varyantları
+    val = (
+        latest.get("sth_realized_price")
+        or latest.get("realized_price")
+        or latest.get("price")
+        or 0
+    )
+    if not val:
+        return None
+    return {"realized_price": float(val), "date": latest.get("date")}
+
+
+async def _fetch_lth_realized_price() -> Optional[dict]:
+    """
+    Long-Term Holder Realized Price (coin'leri > 155 gün önce hareket etmiş
+    cüzdanların ortalama maliyeti). Uzun-vadeli yatırımcıların maliyet temeli;
+    güçlü destek seviyesi, fiyat buna inerse "buy-the-dip" tetiklenir.
+    """
+    yesterday = _yesterday_str()
+    raw = await _cq_get(
+        "/btc/market-indicator/lth-realized-price",
+        {"window": "day", "from": yesterday, "limit": 3},
+    )
+    if not raw:
+        return None
+    rows = raw.get("result", {}).get("data", [])
+    if not rows:
+        return None
+    latest = rows[-1]
+    val = (
+        latest.get("lth_realized_price")
+        or latest.get("realized_price")
+        or latest.get("price")
+        or 0
+    )
+    if not val:
+        return None
+    return {"realized_price": float(val), "date": latest.get("date")}
+
+
 async def _fetch_spot_taker_ratio() -> Optional[dict]:
     """Spot taker buy/sell ratio. >1 = spot alıcı baskın (kurumsal/sağlıklı),
     <1 = spot satıcı baskın. Funding ile birlikte 'yön kaynağı' verir:
@@ -1384,12 +1446,17 @@ async def _build_btc_snapshot() -> dict:
         _fetch_cached("sopr_ratio",        "BTC", _TTL_CYCLE,         _fetch_sopr_ratio),
         _fetch_cached("btc_liquidations",  "BTC", _TTL_FUNDING,       _fetch_btc_liquidations),
         _fetch_cached("korean_premium",    "BTC", _TTL_FUNDING,       _fetch_korean_premium),
+        # Faz D.1 — STH/LTH realized price bantları (kısa/uzun-vade yatırımcı maliyet temeli).
+        # CryptoQuant endpoint mevcut değilse None döner, snapshot'ta alan eksik kalır.
+        _fetch_cached("sth_realized_price", "BTC", _TTL_CYCLE,        _fetch_sth_realized_price),
+        _fetch_cached("lth_realized_price", "BTC", _TTL_CYCLE,        _fetch_lth_realized_price),
     )
     (
         netflow, whale_ratio, miner_outflow, miner_reserve,
         stablecoin_inflow, funding_rates, open_interest, sopr, cb_premium,
         mvrv, nupl, mpi, puell, leverage_ratio, realized_price, hash_rate,
         spot_taker, sopr_ratio, btc_liquidations, korean_premium,
+        sth_realized_price, lth_realized_price,
     ) = results
     return {
         "symbol": "BTC",
@@ -1408,6 +1475,9 @@ async def _build_btc_snapshot() -> dict:
         "puell": puell,
         "leverage_ratio": leverage_ratio,
         "realized_price": realized_price,
+        # Faz D.1 — STH/LTH realized price (CryptoQuant endpoint mevcutsa)
+        "sth_realized_price": sth_realized_price,
+        "lth_realized_price": lth_realized_price,
         "hash_rate": hash_rate,
         "spot_taker": spot_taker,
         "sopr_ratio": sopr_ratio,

@@ -21,6 +21,7 @@ from .feature_quota import router as feature_quota_router
 from .corporate_admin import router as corporate_admin_router
 from .corporate_public import router as corporate_public_router
 from .academy import router as academy_router
+from .cockpit import router as cockpit_router
 
 router = APIRouter(prefix="/api/v1", tags=["v1"])
 
@@ -45,3 +46,4 @@ router.include_router(billing_router, tags=["billing"])
 router.include_router(crypto_onchain_router, tags=["crypto"])
 router.include_router(feature_quota_router, tags=["feature-quota"])
 router.include_router(academy_router, tags=["academy"])
+router.include_router(cockpit_router, tags=["cockpit"])

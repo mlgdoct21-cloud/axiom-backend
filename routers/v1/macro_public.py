@@ -628,3 +628,21 @@ async def macro_track_record(
         "aggregate": rate,
         "recent_outcomes": public_recent,
     }
+
+
+@router.get("/liquidity")
+async def macro_global_liquidity(response: Response):
+    """
+    Global Likidite Endeksi (Fed M2 + ECB Total Assets, USD-converted).
+    Makro Pulse chip'inin tertiary satırında özet olarak gösterilir.
+    """
+    response.headers["Cache-Control"] = "public, max-age=300, s-maxage=300, stale-while-revalidate=600"
+    try:
+        from services.macro_liquidity import compute_global_liquidity
+        data = await compute_global_liquidity()
+        if data is None:
+            return {"error": "data_unavailable"}
+        return data
+    except Exception as e:
+        logger.error(f"macro/liquidity error: {e}", exc_info=True)
+        return {"error": str(type(e).__name__)}
