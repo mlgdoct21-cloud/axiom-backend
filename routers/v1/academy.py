@@ -10,6 +10,7 @@ daha uzun cache verilebilir.
 """
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
@@ -27,10 +28,20 @@ logger = get_logger("academy_router")
 
 router = APIRouter(prefix="/academy", tags=["academy"])
 
+# Lokal geliştirme kolaylığı: AXIOM_LOCAL_DEV=1 SADECE lokal .env'de set'lidir
+# (Railway prod'da YOKTUR). Set'liyken akademiyi giriş yapmadan, tüm premium/advance
+# içerik açık şekilde önizleyebilmek için tier'ı 'advance' kabul ederiz. Prod'u
+# ETKİLEMEZ — bayrak orada tanımlı olmadığı için normal JWT akışı çalışır.
+_LOCAL_DEV_TIER: Optional[str] = (
+    "advance" if os.getenv("AXIOM_LOCAL_DEV", "").strip().lower() in ("1", "true", "yes") else None
+)
+
 
 async def _peek_tier(authorization: Optional[str]) -> str:
     """Best-effort tier read (macro_public.py ile aynı kalıp).
     JWT yoksa/bozuksa 'free' döner — 401 fırlatmaz."""
+    if _LOCAL_DEV_TIER:
+        return _LOCAL_DEV_TIER
     if not authorization:
         return "free"
     parts = authorization.strip().split()

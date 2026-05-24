@@ -319,6 +319,14 @@ def _fmt_usd(n: Optional[float]) -> str:
     return f"{int(round(n)):,}".replace(",", ".") + " $"
 
 
+def _signed_usd(n: Optional[float]) -> str:
+    """İşaretli kâr/zarar: '+1.493 $' / '−6.054 $'. Senaryo çiplerinde kullanılır."""
+    if n is None:
+        return "—"
+    sign = "+" if n >= -0.5 else "−"
+    return sign + _fmt_usd(abs(n))
+
+
 def _build(strategy: str, asset: str) -> dict:
     spec = _STRATEGIES[strategy]
     legs_spec: list[_Leg] = spec["legs"]
@@ -387,6 +395,10 @@ def _build(strategy: str, asset: str) -> dict:
         metrics.append({"label": "Alınan net prim", "value": abs(net_debit), "kind": "gain"})
 
     summary = _summary(strategy, asset, s0, resolved["days"], legs, net_debit, bes)
+    teaching = _teaching(
+        strategy, asset, s0, resolved["days"], underlying, legs,
+        net_debit, bes, max_loss, max_profit, upside_unbounded,
+    )
 
     out = {
         "available": True,
@@ -403,6 +415,7 @@ def _build(strategy: str, asset: str) -> dict:
         "metrics": metrics,
         "breakevens": bes,
         "summary": summary,
+        "teaching": teaching,
         "payoff": payoff,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -476,6 +489,237 @@ def _summary(strategy: str, asset: str, s0: float, days: float, legs: list[dict]
                 f"{_fmt_usd(abs(net_debit))}.{be_txt} İki taraflı, tanımlı riskli kira.")
 
     return head + "yapıyı kurduğunda vade sonu kâr/zarar profili aşağıdaki gibidir."
+
+
+# ---------------------------------------------------------------------------
+# Öğretmen-öğrenci anlatımı (deterministik, adım adım hikaye)
+# ---------------------------------------------------------------------------
+# Her strateji bir karakter üzerinden anlatılır. Karakter sadece anlatım rengidir;
+# tüm rakamlar gerçek piyasa verisinden + payoff matematiğinden gelir.
+_CHARACTER: dict[str, tuple[str, str]] = {
+    # (özne, iyelik) — Türkçe ek doğruluğu için iyelik formu ayrıca tutulur.
+    "protective-put": ("Mehmet", "Mehmet'in"),
+    "covered-call": ("Zeynep", "Zeynep'in"),
+    "cash-secured-put": ("Ayşe", "Ayşe'nin"),
+    "debit-spread": ("Can", "Can'ın"),
+    "credit-spread": ("Elif", "Elif'in"),
+    "straddle": ("Deniz", "Deniz'in"),
+    "iron-condor": ("Burak", "Burak'ın"),
+}
+
+
+def _step(label: str, body: str, pnl: Optional[float] = None) -> dict:
+    out = {"label": label, "body": body}
+    if pnl is not None:
+        out["pnl"] = _signed_usd(pnl)
+    return out
+
+
+def _teaching(strategy: str, asset: str, s0: float, days: float, underlying: float,
+              legs: list[dict], net_debit: float, bes: list[float],
+              max_loss: float, max_profit: Optional[float],
+              upside_unbounded: bool) -> Optional[dict]:
+    """Adım adım hikaye: bir karakter, kurulum + 2 somut senaryo + ders.
+
+    Senaryo P&L'leri gerçek payoff motorundan (`_structure_pnl`) hesaplanır —
+    uydurma yok. Karakter ismi sadece anlatımı somutlaştırmak için.
+    """
+    name, poss = _CHARACTER.get(strategy, ("Ayşe", "Ayşe'nin"))
+    rnd = _ASSET_MAP[asset]["round"]
+    calls = sorted([l for l in legs if l["type"] == "call"], key=lambda l: l["strike"])
+    puts = sorted([l for l in legs if l["type"] == "put"], key=lambda l: l["strike"])
+    dstr = int(round(days))
+
+    def pnl(price: float) -> float:
+        return round(_structure_pnl(price, s0, underlying, legs), 2)
+
+    def nice(mult: float) -> float:
+        return float(round(s0 * mult, rnd))
+
+    spot_s = _fmt_usd(s0)
+
+    if strategy == "protective-put" and puts:
+        p = puts[0]
+        floor = round(p["strike"] - p["premium"], 2)
+        p_up = nice(1.15)
+        return {
+            "intro": (f"Diyelim ki {poss} 1 {asset}'si var (bugün {spot_s}). Fiyat düşerse zarar "
+                      f"etmekten korkuyor. Ama şimdi satarsa, fiyat yükseldiğinde bu kazancı "
+                      f"kaçıracak. İkisini birden istiyor: hem aşağıya karşı korunmak, hem yukarıyı "
+                      f"açık tutmak."),
+            "steps": [
+                _step("KURULUM",
+                      f"{name}, {_fmt_usd(p['strike'])} kullanım fiyatlı bir put alır. Bu bir "
+                      f"sigorta gibidir: fiyat ne kadar düşerse düşsün, {asset}'sini "
+                      f"{_fmt_usd(p['strike'])} seviyesinden satma hakkını garanti eder. Bu "
+                      f"sigortanın bedeli (prim) {_fmt_usd(p['premium'])}."),
+                _step(f"FİYAT {_fmt_usd(p_up)} OLURSA (yükseliş)",
+                      f"{asset} değer kazanır ve {name} kârda olur. Tek eksiği, baştan ödediği "
+                      f"{_fmt_usd(p['premium'])}'lık sigorta primi. Yani yukarı yolu tamamen açık "
+                      f"kalır, kazancından sadece prim kadar az alır.", pnl(p_up)),
+                _step("FİYAT SERT DÜŞERSE",
+                      f"İşte sigorta burada işe yarar. Fiyat çakılsa bile {name} {asset}'sini "
+                      f"{_fmt_usd(p['strike'])}'den satabilir. Primi de hesaba katınca eline en kötü "
+                      f"ihtimalle {_fmt_usd(floor)} kalır; bundan daha fazlasını kaybetmez.", max_loss),
+            ],
+            "takeaway": ("Küçük bir sigorta primi ödeyerek aşağı yöndeki riskini sınırlarsın, ama "
+                         "yukarı kazanç potansiyelin tamamen açık kalır. Portföyünü rahatça elinde "
+                         "tutmanın yoludur."),
+        }
+
+    if strategy == "covered-call" and calls:
+        c = calls[0]
+        return {
+            "intro": (f"Diyelim ki {poss} 1 {asset}'si var (bugün {spot_s}). Fiyatın bir süre fazla "
+                      f"hareket etmeyeceğini, yatay gideceğini düşünüyor. 'Bu süre boşa geçmesin, "
+                      f"bari biraz ek gelir toplayayım' diyor."),
+            "steps": [
+                _step("KURULUM",
+                      f"{name}, {_fmt_usd(c['strike'])} kullanım fiyatlı bir call satar. Yani fiyat "
+                      f"{_fmt_usd(c['strike'])}'e çıkarsa {asset}'sini o fiyattan satmayı baştan "
+                      f"kabul eder. Karşılığında hemen {_fmt_usd(c['premium'])} prim (kira gibi) alır."),
+                _step("FİYAT BUGÜNKÜ CİVARINDA KALIRSA",
+                      f"Fiyat {_fmt_usd(c['strike'])}'in altında kaldığı sürece o call kimsenin "
+                      f"işine yaramaz; boşa çıkar. {name} hem {asset}'sini tutmaya devam eder, hem "
+                      f"de aldığı prim cebinde kalır.", pnl(s0)),
+                _step(f"FİYAT {_fmt_usd(c['strike'])} ÜSTÜNE FIRLARSA",
+                      f"Bu sefer {asset}'sini {_fmt_usd(c['strike'])}'den satmak zorunda kalır. Yine "
+                      f"kârdadır (fiyat artışı + kira), ama kârı {_fmt_usd(c['strike'])}'de durur; "
+                      f"daha yukarısını kaçırır.", max_profit),
+            ],
+            "takeaway": ("Yatay piyasada düzenli prim geliri toplarsın. Sert yükselişte kazancın bir "
+                         "tavanla sınırlanır — ama yine de kârda olursun. Kısacası: garanti küçük "
+                         "kazanç için, büyük yükseliş ihtimalinden vazgeçersin."),
+        }
+
+    if strategy == "cash-secured-put" and puts:
+        p = puts[0]
+        eff = round(p["strike"] - p["premium"], 2)
+        return {
+            "intro": (f"Diyelim ki {poss} elinde {_fmt_usd(p['strike'])} nakit var. {asset}'yi "
+                      f"(bugün {spot_s}) almak istiyor, ama biraz daha ucuza, indirimli girmek istiyor."),
+            "steps": [
+                _step("KURULUM",
+                      f"{name}, {_fmt_usd(p['strike'])} kullanım fiyatlı bir put satar. Yani 'fiyat "
+                      f"buraya düşerse 1 {asset}'yi {_fmt_usd(p['strike'])}'den almaya hazırım' der. "
+                      f"Bunun karşılığında hemen {_fmt_usd(p['premium'])} prim (peşin para) alır."),
+                _step("FİYAT YÜKSELİR / YATAY KALIRSA",
+                      f"Fiyat {_fmt_usd(p['strike'])}'in üstünde kalırsa kimse {asset}'sini {name}'ye "
+                      f"bu fiyattan satmak istemez; put boşa çıkar. {name} {asset} almaz, ama aldığı "
+                      f"prim tamamen cebinde kalır.", pnl(s0)),
+                _step(f"FİYAT {_fmt_usd(p['strike'])} ALTINA İNERSE",
+                      f"{name} sözünü tutar ve 1 {asset}'yi {_fmt_usd(p['strike'])}'den alır. Ama "
+                      f"baştan {_fmt_usd(p['premium'])} prim aldığı için gerçek alış maliyeti "
+                      f"{_fmt_usd(eff)} olur — yani planladığından da ucuza girer."),
+            ],
+            "takeaway": ("Cash-secured put'ta iki yol da kazançlı: ya beklerken prim toplarsın, ya "
+                         "da istediğin coini indirimli alırsın. İkisi de baştan planlı, sürpriz yok."),
+        }
+
+    if strategy == "debit-spread" and len(calls) >= 2:
+        lo_c, hi_c = calls[0], calls[-1]
+        return {
+            "intro": (f"Diyelim ki {name}, {asset}'nin (bugün {spot_s}) yükseleceğine inanıyor. Ama "
+                      f"yanılırsa çok para kaybetmek istemiyor; hem ucuz hem de riski baştan belli "
+                      f"bir yol arıyor."),
+            "steps": [
+                _step("KURULUM",
+                      f"{name} iki işlem yapar: {_fmt_usd(lo_c['strike'])} call ALIR (yükselişten "
+                      f"kazanmak için) ve aynı anda {_fmt_usd(hi_c['strike'])} call SATAR (maliyeti "
+                      f"düşürmek için). Aradaki fark olan {_fmt_usd(net_debit)}'ı net öder — riske "
+                      f"attığı tek para budur."),
+                _step(f"FİYAT {_fmt_usd(hi_c['strike'])} ÜSTÜNE ÇIKARSA",
+                      f"{name} haklı çıkar ve en yüksek kârına ulaşır. Ama sattığı "
+                      f"{_fmt_usd(hi_c['strike'])} call yüzünden kazancı orada durur; fiyat daha da "
+                      f"fırlasa bile kârı değişmez.", max_profit),
+                _step(f"FİYAT {_fmt_usd(lo_c['strike'])} ALTINDA KALIRSA",
+                      f"{name} yanılmıştır; iki call da boşa çıkar. Kaybı yalnızca baştan ödediği "
+                      f"{_fmt_usd(net_debit)} ile sınırlı — bir kuruş fazlası gitmez.", max_loss),
+            ],
+            "takeaway": ("Az parayla yön bahsi oynarsın. Hem en fazla ne kazanabileceğin, hem de en "
+                         "fazla ne kaybedebileceğin daha işleme girerken bellidir. Sürpriz yok."),
+        }
+
+    if strategy == "credit-spread" and len(puts) >= 2:
+        lo_p, hi_p = puts[0], puts[-1]
+        credit = abs(net_debit)
+        return {
+            "intro": (f"Diyelim ki {name}, {asset}'nin (bugün {spot_s}) en azından sert "
+                      f"düşmeyeceğini düşünüyor — yatay ya da hafif yukarı bekliyor. Bu beklentiden "
+                      f"prim kazanmak istiyor."),
+            "steps": [
+                _step("KURULUM",
+                      f"{name} iki işlem yapar: {_fmt_usd(hi_p['strike'])} put SATAR (prim toplamak "
+                      f"için) ve daha aşağıda {_fmt_usd(lo_p['strike'])} put ALIR (kendini büyük "
+                      f"düşüşe karşı korumak için). Net olarak cebine {_fmt_usd(credit)} prim girer."),
+                _step(f"FİYAT {_fmt_usd(hi_p['strike'])} ÜSTÜNDE KALIRSA",
+                      f"{name} haklı çıkar. İki put da boşa çıkar ve baştan aldığı "
+                      f"{_fmt_usd(credit)} prim tamamen kendisinde kalır. En iyi sonuç budur.",
+                      max_profit),
+                _step(f"FİYAT {_fmt_usd(lo_p['strike'])} ALTINA İNERSE",
+                      f"{name} yanılmıştır. Ama satın aldığı {_fmt_usd(lo_p['strike'])} put bir "
+                      f"güvenlik ağı gibidir: zararı belli bir noktada durur, sınırsız büyümez.",
+                      max_loss),
+            ],
+            "takeaway": ("Primi en baştan peşin alırsın; karşılığında sınırlı ve önceden bilinen bir "
+                         "risk taşırsın. Piyasa yerinde saysa bile para kazandıran nadir "
+                         "kurgulardan biridir."),
+        }
+
+    if strategy == "straddle" and calls and puts:
+        k = calls[0]["strike"]
+        p_big = nice(1.25)
+        be_txt = ""
+        if len(bes) >= 2:
+            be_txt = f" ({_fmt_usd(bes[0])} altı ya da {_fmt_usd(bes[-1])} üstü)"
+        return {
+            "intro": (f"Diyelim ki {name}, büyük bir haber (örneğin önemli bir ekonomi verisi) "
+                      f"bekliyor. {asset}'nin (bugün {spot_s}) sert oynayacağından emin — ama yukarı "
+                      f"mı aşağı mı gideceğini bilmiyor."),
+            "steps": [
+                _step("KURULUM",
+                      f"{name}, aynı {_fmt_usd(k)} seviyesinden hem bir call hem bir put ALIR. Biri "
+                      f"yukarı, diğeri aşağı hareketten kazanır. Toplam {_fmt_usd(net_debit)} prim "
+                      f"öder; iki bahsi birden açmış olur."),
+                _step("FİYAT SERT OYNARSA (yukarı veya aşağı)",
+                      f"Fiyat yeterince hareket edip başabaş noktalarını{be_txt} aşarsa, kazanan "
+                      f"bacak diğerinin maliyetini fazlasıyla karşılar ve {name} kâra geçer. Yön "
+                      f"önemli değil, yeter ki hareket büyük olsun.", pnl(p_big)),
+                _step("FİYAT YERİNDE SAYARSA",
+                      f"En kötü senaryo budur: fiyat fazla oynamaz, iki opsiyon da zamanla erir. "
+                      f"{name} ödediği primi kaybeder — ama kaybı bu primle sınırlıdır.", max_loss),
+            ],
+            "takeaway": ("Burada yönü değil, hareketin büyüklüğünü satın alırsın. Piyasa coşarsa "
+                         "kazanırsın; sessiz kalırsa ödediğin prim erir. Belirsizliğin yüksek olduğu "
+                         "anlarda mantıklıdır."),
+        }
+
+    if strategy == "iron-condor" and len(puts) >= 2 and len(calls) >= 2:
+        inner_low = puts[-1]["strike"]   # short put (üst put)
+        inner_high = calls[0]["strike"]  # short call (alt call)
+        credit = abs(net_debit)
+        return {
+            "intro": (f"Diyelim ki {name}, {asset}'nin (bugün {spot_s}) bir süre sakin kalacağını, "
+                      f"belli bir bandın içinde dolaşacağını düşünüyor. Bu durgunluktan gelir elde "
+                      f"etmek istiyor."),
+            "steps": [
+                _step("KURULUM",
+                      f"{name} hem altta hem üstte birer 'satış' kurgusu kurar (altta put spread, "
+                      f"üstte call spread). Böylece fiyat ortada kaldıkça kazanır. Bu kurulumdan "
+                      f"cebine net {_fmt_usd(credit)} prim girer."),
+                _step(f"FİYAT {_fmt_usd(inner_low)}–{_fmt_usd(inner_high)} BANDINDA KALIRSA",
+                      f"{name} haklı çıkar. Fiyat bu rahat bandın içinde kaldığı sürece tüm "
+                      f"opsiyonlar boşa çıkar ve aldığı {_fmt_usd(credit)} primin tamamı kendisinde "
+                      f"kalır.", max_profit),
+                _step("FİYAT BANDI KIRARSA (yukarı veya aşağı)",
+                      f"Fiyat banttan taşarsa {name} zarar eder. Ama her iki uçta da satın aldığı "
+                      f"koruma sayesinde zararı belli bir noktada durur; kontrolden çıkmaz.", max_loss),
+            ],
+            "takeaway": ("Sakin, yatay piyasada iki taraftan birden kira toplarsın. Risk baştan "
+                         "tanımlı ve sınırlıdır. Fiyat hareketsizken para kazanmanın yoludur."),
+        }
+
+    return None
 
 
 # ---------------------------------------------------------------------------
