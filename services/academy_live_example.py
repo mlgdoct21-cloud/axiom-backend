@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -39,10 +40,17 @@ _CACHE_TTL = 60
 _TIMEOUT = 6
 _TARGET_DAYS = 30
 
-# Desteklenen varlıklar — kripto-first (Deribit ücretsiz + tam zincir).
+# Desteklenen varlıklar.
+#   kind=crypto → Deribit canlı opsiyon zinciri (ücretsiz, tam) + CoinGecko/BS fallback.
+#   kind=equity → FMP canlı spot + Black-Scholes TEORİK prim (gerçek opsiyon zinciri
+#     için ayrı/ücretli kaynak gerekir; eğitimde payoff şekli aynı). Hisse-başı (1
+#     hisse) gösterilir; UI'da "1 sözleşme = 100 hisse" notu düşülür.
 _ASSET_MAP = {
-    "BTC": {"index": "btc_usd", "currency": "BTC", "coingecko": "bitcoin", "default_iv": 0.55, "round": -3},
-    "ETH": {"index": "eth_usd", "currency": "ETH", "coingecko": "ethereum", "default_iv": 0.65, "round": -2},
+    "BTC": {"kind": "crypto", "index": "btc_usd", "currency": "BTC", "coingecko": "bitcoin", "default_iv": 0.55, "round": -3},
+    "ETH": {"kind": "crypto", "index": "eth_usd", "currency": "ETH", "coingecko": "ethereum", "default_iv": 0.65, "round": -2},
+    "SPY": {"kind": "equity", "fmp": "SPY", "default_iv": 0.18, "round": -1},
+    "AAPL": {"kind": "equity", "fmp": "AAPL", "default_iv": 0.30, "round": -1},
+    "QQQ": {"kind": "equity", "fmp": "QQQ", "default_iv": 0.22, "round": -1},
 }
 
 
@@ -254,10 +262,42 @@ def _fetch_coingecko_spot(asset: str) -> Optional[float]:
         return None
 
 
+def _fetch_fmp_spot(symbol: str) -> Optional[float]:
+    """Hisse/endeks için gerçek spot (FMP /stable/quote)."""
+    key = os.getenv("FMP_API_KEY", "").strip()
+    if not key:
+        logger.debug("FMP_API_KEY yok — equity spot çekilemedi")
+        return None
+    try:
+        r = requests.get(
+            "https://financialmodelingprep.com/stable/quote",
+            params={"symbol": symbol, "apikey": key},
+            timeout=_TIMEOUT,
+        )
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        if isinstance(data, list) and data and data[0].get("price"):
+            return float(data[0]["price"])
+        return None
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("FMP spot %s failed: %s", symbol, exc)
+        return None
+
+
 def _resolve_theoretical(asset: str, legs: list[_Leg]) -> Optional[dict]:
-    """Deribit yoksa: gerçek spot (CoinGecko) + Black-Scholes teorik prim."""
+    """Gerçek spot + Black-Scholes teorik prim.
+
+    Kripto: spot CoinGecko'dan (Deribit'e ulaşılamadığında fallback).
+    Hisse/endeks: spot FMP'den — birincil yol (gerçek opsiyon zinciri yok).
+    """
     cfg = _ASSET_MAP[asset]
-    spot = _fetch_coingecko_spot(asset)
+    if cfg["kind"] == "equity":
+        spot = _fetch_fmp_spot(cfg["fmp"])
+        data_source = "theoretical_equity"
+    else:
+        spot = _fetch_coingecko_spot(asset)
+        data_source = "theoretical_fallback"
     if not spot:
         return None
     iv = cfg["default_iv"]
@@ -274,7 +314,7 @@ def _resolve_theoretical(asset: str, legs: list[_Leg]) -> Optional[dict]:
             "instrument": None,
         })
     return {
-        "data_source": "theoretical_fallback",
+        "data_source": data_source,
         "spot": spot,
         "days": float(_TARGET_DAYS),
         "legs": out_legs,
@@ -332,7 +372,10 @@ def _build(strategy: str, asset: str) -> dict:
     legs_spec: list[_Leg] = spec["legs"]
     underlying: float = spec["underlying"]
 
-    resolved = _resolve_live(asset, legs_spec) or _resolve_theoretical(asset, legs_spec)
+    if _ASSET_MAP[asset]["kind"] == "crypto":
+        resolved = _resolve_live(asset, legs_spec) or _resolve_theoretical(asset, legs_spec)
+    else:  # equity — Deribit yok, doğrudan FMP spot + BS teorik
+        resolved = _resolve_theoretical(asset, legs_spec)
     if not resolved:
         return {"available": False, "asset": asset, "strategy": strategy}
 
