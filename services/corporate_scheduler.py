@@ -163,9 +163,34 @@ async def _maybe_weekly() -> None:
         return  # bu süreçte zaten denendi
     logger.info(f"corp weekly trigger: week_start={week_start} eid={eid}")
     results = await synthesize_week()  # idempotent; varsa cheap-skip
-    _last_synth_week_eid = eid
+
+    _ALREADY = "already exists (force=True ile yenile)"
+
+    def _resolved(r) -> bool:
+        """Tier kalıcı olarak çözüldü mü? Yazıldı / DB'de zaten var /
+        asla başarmaz (bilinmeyen tier) → True. 'gemini empty', guard
+        fail, 'no sources' gibi GEÇİCİ hatalar → False (yeniden dene)."""
+        if r.written:
+            return True
+        if r.skipped and (
+            r.reason == _ALREADY or (r.reason or "").startswith("unknown tier")
+        ):
+            return True
+        return False
+
+    # Hafta yalnız TÜM tier'lar çözülünce "yapıldı" sayılır. Aksi halde
+    # premium'da transient 'gemini empty' tüm hafta sessizce atlanırdı →
+    # bir sonraki poll (3h) yeniden denesin diye guard'ı set ETME.
+    if results and all(_resolved(r) for r in results):
+        _last_synth_week_eid = eid
+    else:
+        unresolved = [f"{r.tier}:{r.reason}" for r in results if not _resolved(r)]
+        logger.warning(
+            f"corp weekly NOT fully resolved, poll'da yeniden denenecek: {unresolved}"
+        )
+
     for r in results:
-        if r.written or r.skipped and r.reason == "already exists (force=True ile yenile)":
+        if r.written or (r.skipped and r.reason == _ALREADY):
             await broadcast_synthesis_safe(r.event_id, r.tier)
 
 

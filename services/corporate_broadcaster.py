@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import html
 import os
+import re
 from typing import Optional
 
 from sqlalchemy import text
@@ -69,22 +70,29 @@ async def _load_row(event_id: str, tier: str) -> Optional[dict]:
         return None
 
 
+# 24h içinde bu kadar FARKLI event broadcast edilmişse → storm say, blokla.
+# 1 bitişik meşru yayına (geçen haftanın catch-up'ı + bu haftanın normal
+# yayını, ~10h arayla) izin verir; gerçek koruma zaten per-event stamp.
+_STORM_DISTINCT_THRESHOLD = 2
+
+
 async def _recent_broadcast_within_24h(event_id: str) -> bool:
-    """Defense-in-depth: son 24 saatte (bu event hariç) herhangi bir
-    kurumsal broadcast stamp'i var mı — loop/storm guard."""
+    """Defense-in-depth storm guard: son 24 saatte (bu event hariç) KAÇ
+    FARKLI kurumsal event broadcast edilmiş? Eşik (2) ve üzeri → storm
+    (örn. event_id churn bug'ı) → blokla. Tek bitişik meşru broadcast
+    ENGELLENMEZ. Aynı event'in tekrarı zaten per-event stamp ile bloklanır."""
     try:
         async with engine.begin() as conn:
-            r = (await conn.execute(
+            cnt = (await conn.execute(
                 text(
-                    "SELECT 1 FROM corporate_syntheses "
+                    "SELECT COUNT(DISTINCT event_id) FROM corporate_syntheses "
                     "WHERE event_id <> :e AND ("
                     "  broadcasted_premium_at > NOW() - INTERVAL '24 hours' "
-                    "  OR broadcasted_advance_at > NOW() - INTERVAL '24 hours') "
-                    "LIMIT 1"
+                    "  OR broadcasted_advance_at > NOW() - INTERVAL '24 hours')"
                 ),
                 {"e": event_id},
-            )).first()
-        return r is not None
+            )).scalar()
+        return (cnt or 0) >= _STORM_DISTINCT_THRESHOLD
     except Exception as e:  # noqa: BLE001
         logger.info(f"corp 24h-cap check skip: {e}")
         return False
@@ -103,6 +111,22 @@ async def _stamp(event_id: str, tier: str) -> None:
         logger.warning(f"corp stamp failed {event_id}/{tier}: {e}")
 
 
+def _md_to_tg_html(md: str) -> str:
+    """Markdown gövdesini Telegram-HTML'e çevir. ÖNCE html.escape (içerik
+    güvenliği: <>&), SONRA güvenli işaret dönüşümü:
+      - satır başı '## Başlık' → <b>Başlık</b>
+      - '**kalın**' (eşli) → <b>kalın</b>
+    Üretilen <b> etiketleri DAİMA dengeli: başlık tüm satırı sarar, kalın
+    yalnız eşli ** ikilisini eşler (tek kalan ** literal kalır). Malformed
+    HTML → Telegram 400 → send_telegram_message sessizce yutar (mesaj
+    gitmez) olduğu için denge kritik. Aksi halde synthesis_md ham '## ...'
+    olarak görünür."""
+    safe = html.escape(md or "")
+    safe = re.sub(r"(?m)^[ \t]*#{1,6}[ \t]*(.+?)[ \t]*$", r"<b>\1</b>", safe)
+    safe = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", safe)
+    return safe
+
+
 def _format_message(tier: str, week_start, synthesis_md: str) -> str:
     badge = "💎 PREMIUM" if tier == "premium" else "🚀 ADVANCE"
     head = (f"🏛️ <b>AXIOM Kurumsal Sentez</b> · {badge}\n"
@@ -111,7 +135,7 @@ def _format_message(tier: str, week_start, synthesis_md: str) -> str:
     budget = _TELEGRAM_LIMIT - len(head)
     if len(body) > budget:
         body = body[:budget - 20].rstrip() + "\n…(devamı dashboard'da)"
-    return head + html.escape(body)
+    return head + _md_to_tg_html(body)
 
 
 def _format_free_teaser(week_start, synthesis_md: str) -> str:
@@ -123,7 +147,7 @@ def _format_free_teaser(week_start, synthesis_md: str) -> str:
     excerpt = full[:_FREE_TEASER_CHARS].rstrip()
     if len(full) > _FREE_TEASER_CHARS:
         excerpt += "…"
-    return _FREE_WATERMARK + head + html.escape(excerpt) + _FREE_UPGRADE_CTA
+    return _FREE_WATERMARK + head + _md_to_tg_html(excerpt) + _FREE_UPGRADE_CTA
 
 
 async def _fanout(message: str, users: list) -> tuple[int, int]:
