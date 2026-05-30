@@ -40,6 +40,10 @@ from core.logger import get_logger
 
 logger = get_logger("macro.fmp_economic")
 
+# Process-lifetime set: log each unmapped US event once instead of every fetch.
+# Resets on deploy/restart — surfaces newly-seen names without flooding logs.
+_LOGGED_UNMATCHED_US: set[str] = set()
+
 FMP_BASE_URL = "https://financialmodelingprep.com/stable"
 _USER_AGENT = "AXIOM-Macro/0.1 (+https://axiom-dashboard-sigma.vercel.app)"
 _HTTP_TIMEOUT = httpx.Timeout(15.0, connect=10.0)
@@ -258,7 +262,6 @@ async def fetch_fmp_calendar(
         return out
 
     events: list[FMPEvent] = []
-    seen_unmatched_us = set()
     for ev in body:
         if not isinstance(ev, dict):
             continue
@@ -269,12 +272,12 @@ async def fetch_fmp_calendar(
         event_name = ev.get("event") or ""
         cls = _classify(event_name)
         if not cls:
-            # Log unmatched US event names once per fetch — actual!=null only.
+            # Log unmatched US event names once per process lifetime — actual!=null only.
             # Helps refine regex when FMP uses an unexpected naming for a
             # release we care about. Pre-release (actual=null) rows are
             # noisy so we skip them in the log.
-            if ev.get("actual") is not None and event_name not in seen_unmatched_us:
-                seen_unmatched_us.add(event_name)
+            if ev.get("actual") is not None and event_name not in _LOGGED_UNMATCHED_US:
+                _LOGGED_UNMATCHED_US.add(event_name)
                 logger.info(
                     f"fmp_economic UNMATCHED US event: '{event_name}' "
                     f"actual={ev.get('actual')} date={ev.get('date')}"
