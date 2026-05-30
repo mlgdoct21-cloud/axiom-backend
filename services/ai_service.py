@@ -39,8 +39,8 @@ KURALLAR:
 ÇIKTI JSON FORMATI:
 {
   "telegram_hook": "Aşağıdaki 3 bölümden oluşan profesyonel Türkçe metin:\n\n📝 **Özet:** Haberin ana fikri (1 cümle).\n\n⚡ **Etki:** Piyasa/Hisse üzerindeki finansal etkisi.\n\n🧠 **Axiom:** Analistlerimizin stratejik görüşü (Örn: 'Mevcut P/E seviyesi göz önüne alındığında...').",
-  "dashboard_summary": "Dashboard kullanıcıları için 2-3 paragraflık derinlemesine pazar özeti. Haber ile şirketin finansal durumunu (sağlanmışsa) harmanla.",
-  "axiom_analysis": "Hisse için kurumsal risk ve fırsat tespiti (kısa ve eyleme dökülebilir)."
+  "dashboard_summary": "Dashboard'da 'Haberin Özeti' bloğu — SADECE OLGULAR (kim, ne, nerede, kilit rakamlar). 80-130 kelime. Yorum/spekülasyon/sonuç çıkarım YOK; bunlar axiom_analysis'in işi.",
+  "axiom_analysis": "Dashboard'da 'AXIOM Görüşü' bloğu — yatırımcı için ne anlama geldiği + bir SOMUT tetik/seviye/eylem. 60-90 kelime."
 }
 """
 
@@ -159,24 +159,29 @@ KURALLAR:
        🧠 **Axiom:** Analistlerimizin stratejik görüşü. Context verisine
            dayanarak (P/E, ROE, yakın momentum) yorum. Yatırımcının dikkat
            etmesi gereken tek bir tetik veya seviye.
-  • "dashboard_summary" (180-280 kelime, 2-3 paragraf) —
-       İlk paragraf: haberin bağlamı ve zincirleme etkisi.
-       İkinci paragraf: context varsa şirketin güncel finansal pozisyonu
-       (marketCap, P/E, ROE, net borç) ışığında analitik yorum; context
-       yoksa sektörel/makro kıyas.
-       Üçüncü paragraf (opsiyonel): yakın gelecek için izlenecek olaylar
-       ve veri takvimi (earnings, CPI, FOMC, merger closing vs.).
+  • "dashboard_summary" (80-130 kelime, 1-2 KISA paragraf) —
+       BAŞLIK: "Haberin Özeti". SADECE OLGULAR: kim, ne, nerede, kilit
+       rakamlar (haberden/canlı blok'tan). 2 paragraf yazıyorsan: 1)
+       olay ve bağlam, 2) zincirleme somut etkiler (regülatör/sektör/
+       sembol). YORUM/spekülasyon/"olabilir"/"edilecektir" YOK — bu
+       cümleler axiom_analysis bloğuna gider.
   • "axiom_analysis" (60-90 kelime) —
-       Kurumsal tarzda risk/fırsat tespiti. Maddeler değil, akıcı metin.
-       Somut seviye veya tetikleyici içer ("Ernst & Young denetimi sonucu
-       %0,5 marj tıraşı halinde", "10Y ABD tahvil 4,40 üstü tutarsa").
+       BAŞLIK: "AXIOM Görüşü". Soru: yatırımcı için ne anlama geliyor +
+       ne yapmalı? Bir SOMUT seviye/tetik/eylem ZORUNLU ("kaldıraçtan
+       kaç", "10Y 4,40 üstü tutarsa", "bu borsadan uzak dur"). Akıcı
+       metin. dashboard_summary'deki cümleyi TEKRAR ETME — orada veri,
+       burada yargı.
 
 KALİTE ÇITASI — bunlardan kaçın:
   ✗ "Yakından takip edilmeli", "önemli bir gelişme", "dikkatle izlenmeli"
     gibi içi boş, copy-paste jenerik ifadeler.
   ✗ "Yatırımcılar yatırım kararlarını kendileri vermelidir" uyarısı.
   ✗ Aynı cümlenin dashboard_summary ve axiom_analysis'te tekrarı.
-  ✗ 40 kelimeden kısa dashboard_summary.
+    Özet = olgular; Görüş = yargı. Çakışma KESİN yasak.
+  ✗ dashboard_summary'de "olabilir/edilecektir/değerlendirilebilir"
+    spekülatif fiilleri (bunlar Görüş'e gider).
+  ✗ 30 kelimeden kısa dashboard_summary VEYA 40 kelimeden kısa
+    axiom_analysis.
 
 ÇIKTI FORMATI (örnek — yalnızca JSON dizisi):
 [
