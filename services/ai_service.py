@@ -39,7 +39,7 @@ KURALLAR:
 ÇIKTI JSON FORMATI:
 {
   "telegram_hook": "Aşağıdaki 3 bölümden oluşan profesyonel Türkçe metin:\n\n📝 **Özet:** Haberin ana fikri (1 cümle).\n\n⚡ **Etki:** Piyasa/Hisse üzerindeki finansal etkisi.\n\n🧠 **Axiom:** Analistlerimizin stratejik görüşü (Örn: 'Mevcut P/E seviyesi göz önüne alındığında...').",
-  "dashboard_summary": "Dashboard'da 'Haberin Özeti' bloğu — SADECE OLGULAR (kim, ne, nerede, kilit rakamlar). 80-130 kelime. Yorum/spekülasyon/sonuç çıkarım YOK; bunlar axiom_analysis'in işi.",
+  "dashboard_summary": "Dashboard'da 'Haberin Özeti' bloğu — SADECE OLGULAR (kim, ne, nerede, kilit rakamlar). 3 paragraf, 180-260 kelime, paragraflar arasında BOŞ SATIR (\\n\\n). Yorum/spekülasyon/sonuç çıkarım YOK; bunlar axiom_analysis'in işi.",
   "axiom_analysis": "Dashboard'da 'AXIOM Görüşü' bloğu — yatırımcı için ne anlama geldiği + bir SOMUT tetik/seviye/eylem. 60-90 kelime."
 }
 """
@@ -159,12 +159,17 @@ KURALLAR:
        🧠 **Axiom:** Analistlerimizin stratejik görüşü. Context verisine
            dayanarak (P/E, ROE, yakın momentum) yorum. Yatırımcının dikkat
            etmesi gereken tek bir tetik veya seviye.
-  • "dashboard_summary" (80-130 kelime, 1-2 KISA paragraf) —
+  • "dashboard_summary" (180-260 kelime, TAM 3 PARAGRAF) —
        BAŞLIK: "Haberin Özeti". SADECE OLGULAR: kim, ne, nerede, kilit
-       rakamlar (haberden/canlı blok'tan). 2 paragraf yazıyorsan: 1)
-       olay ve bağlam, 2) zincirleme somut etkiler (regülatör/sektör/
-       sembol). YORUM/spekülasyon/"olabilir"/"edilecektir" YOK — bu
-       cümleler axiom_analysis bloğuna gider.
+       rakamlar (haberden/canlı blok'tan). Paragraf akışı ZORUNLU:
+         P1) Olay + ana aktörler + zaman/yer + kilit rakam(lar).
+         P2) Arka plan/bağlam — neden şimdi, daha geniş çerçeve, ilgili
+             tarihçe veya emsal veriler.
+         P3) Zincirleme somut etkiler — regülatör/sektör/sembol/rakip
+             aktörlere yansıyan ölçülebilir sonuçlar.
+       Paragraflar arasında BOŞ SATIR ZORUNLU (\\n\\n). YORUM/spekülasyon/
+       "olabilir"/"edilecektir" YOK — bu cümleler axiom_analysis bloğuna
+       gider.
   • "axiom_analysis" (60-90 kelime) —
        BAŞLIK: "AXIOM Görüşü". Soru: yatırımcı için ne anlama geliyor +
        ne yapmalı? Bir SOMUT seviye/tetik/eylem ZORUNLU ("kaldıraçtan
@@ -180,8 +185,8 @@ KALİTE ÇITASI — bunlardan kaçın:
     Özet = olgular; Görüş = yargı. Çakışma KESİN yasak.
   ✗ dashboard_summary'de "olabilir/edilecektir/değerlendirilebilir"
     spekülatif fiilleri (bunlar Görüş'e gider).
-  ✗ 30 kelimeden kısa dashboard_summary VEYA 40 kelimeden kısa
-    axiom_analysis.
+  ✗ 150 kelimeden kısa dashboard_summary VEYA 40 kelimeden kısa
+    axiom_analysis. dashboard_summary 3 paragraftan az ise REDDEDİLİR.
 
 ÇIKTI FORMATI (örnek — yalnızca JSON dizisi):
 [
