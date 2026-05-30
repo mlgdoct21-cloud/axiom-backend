@@ -511,33 +511,6 @@ def _format_briefing(snap: dict, yesterday: Optional[dict] = None, next_macro: O
         "",
     ]
 
-    if score is not None:
-        # Day-over-day delta line
-        delta_line = ""
-        if yesterday and yesterday.get("score") is not None:
-            y_score = yesterday["score"]
-            delta = score - y_score
-            arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "▬")
-            delta_str = f"{arrow} {abs(delta):.0f} puan" if delta != 0 else "değişmedi"
-            delta_line = f"  (dün {y_score:.0f} → bugün {score:.0f}, {delta_str})"
-
-        lines.append(f"🎯 <b>AXIOM SKOR: {score:.0f}/100</b>  {zone}{delta_line}")
-        if summary:
-            lines.append(f"<i>{summary}</i>")
-        lines.append("")
-
-    if positives:
-        lines.append("✅ <b>GÜÇ VEREN SİNYALLER:</b>")
-        for p in positives:
-            lines.append(f"  +{p['contribution']:>2d}  {p['label_tr']}")
-        lines.append("")
-
-    if negatives:
-        lines.append("⚠️ <b>BASKI YAPAN SİNYALLER:</b>")
-        for n in negatives:
-            lines.append(f"  {n['contribution']:>3d}  {n['label_tr']}")
-        lines.append("")
-
     # Auto-narrative — SSoT: top contributors'tan label'ı AYNEN al,
     # genel template + listelenen sinyaller arasında çelişki olmasın.
     # (Önceki sürüm "akıllı para birikim yapıyor" gibi soyut cümleler
@@ -545,53 +518,90 @@ def _format_briefing(snap: dict, yesterday: Optional[dict] = None, next_macro: O
     top_pos_label = positives[0]["label_tr"] if positives else None
     top_neg_label = negatives[0]["label_tr"] if negatives else None
 
+    # Narrative artık mesajın headline'ı — somut, sade, kısa.
+    # Skor'a referans VERME (barometer altta); bunun yerine duruma direkt isim ver.
     if score is None:
-        narrative = "On-chain veri henüz yeterli değil; brifing yarın yenilenir."
+        narrative = "On-chain veri bugün eksik kaldı; brifing yarın yenilenir."
     elif score >= 70:
         if top_pos_label and top_neg_label:
             narrative = (
-                f"Güç tarafında {top_pos_label} domine ediyor; baskı tarafında "
-                f"{top_neg_label} izleniyor. Skor olumlu bölgede, ancak baskı "
-                "sinyallerinden biri sertleşirse erken uyarı veririz."
+                f"Bugün tablo lehimize: {top_pos_label} güç veriyor. "
+                f"Tek izlenecek nokta: {top_neg_label}. Trend olumlu."
             )
         elif top_pos_label:
             narrative = (
-                f"Güç tarafında {top_pos_label} öne çıkıyor; baskı tarafı "
-                "şu an sessiz. Skor olumlu bölgede."
+                f"Bugün tablo lehimize: {top_pos_label} öne çıkıyor, baskı tarafı şu an sessiz. "
+                "Trend olumlu."
             )
         else:
-            narrative = "Skor olumlu bölgede; her sinyali izlemeye devam edin."
+            narrative = "Bugün tablo lehimize; sinyalleri izlemeye devam et."
     elif score <= 40:
         if top_neg_label and top_pos_label:
             narrative = (
-                f"Baskı tarafında {top_neg_label} domine ediyor; güç tarafında "
-                f"{top_pos_label} hâlâ devrede. Skor riskli bölgede — pozisyon "
-                "büyüklüğünü düşük tutun."
+                f"Bugün aleyhimize: {top_neg_label} satış baskısı hakim. "
+                f"{top_pos_label} hâlâ destek veriyor ama yön net değil. "
+                "Pozisyon büyüklüğünü küçük tut, kaldıraçtan uzak dur."
             )
         elif top_neg_label:
             narrative = (
-                f"Baskı tarafında {top_neg_label} öne çıkıyor; güç sinyali "
-                "şu an zayıf. Skor riskli bölgede — risk yönetimi öncelikli."
+                f"Bugün aleyhimize: {top_neg_label} öne çıkıyor, güç sinyali zayıf. "
+                "Risk yönetimi öncelikli — kaldıraçtan uzak dur."
             )
         else:
-            narrative = "Skor riskli bölgede — pozisyon büyüklüğünü düşük tutun."
+            narrative = "Bugün aleyhimize — pozisyon büyüklüğünü küçük tut, kaldıraçtan uzak dur."
     else:
-        # 41-69 dikkatli/karışık bölge
-        parts = ["Skor karışık bölgede"]
-        if top_pos_label:
-            parts.append(f"güç: {top_pos_label}")
-        if top_neg_label:
-            parts.append(f"baskı: {top_neg_label}")
-        narrative = "; ".join(parts) + (
-            ". Belirgin yön sinyali için bu sinyallerden birinin sertleşmesini "
-            "bekleyin."
-        )
+        # 41-69 karışık bölge — yön belirsiz
+        if top_pos_label and top_neg_label:
+            narrative = (
+                f"Bugün yön karışık: {top_pos_label} lehimize çekerken "
+                f"{top_neg_label} aleyhimize basıyor. Sinyallerden biri belirginleşene kadar "
+                "büyük pozisyon açma."
+            )
+        elif top_pos_label:
+            narrative = (
+                f"Bugün yön belirsiz: {top_pos_label} hafif destek veriyor ama net bir baskı yok. "
+                "Sinyaller netleşene kadar bekle."
+            )
+        elif top_neg_label:
+            narrative = (
+                f"Bugün yön belirsiz: {top_neg_label} hafif baskı yapıyor ama net bir güç yok. "
+                "Sinyaller netleşene kadar bekle."
+            )
+        else:
+            narrative = "Bugün yön belirsiz; sinyaller netleşene kadar büyük pozisyon açma."
 
+    # 1) HEADLINE: Yorum/hikaye en üstte — kullanıcı 5 saniyede ne olduğunu okusun.
     lines.extend([
-        "💬 <b>Axiom Yorumu:</b>",
-        f"<i>{narrative}</i>",
+        "💬 <b>Bugün ne oluyor?</b>",
+        narrative,
         "",
     ])
+
+    # 2) Risk barometresi — küçük tek satır
+    if score is not None:
+        delta_line = ""
+        if yesterday and yesterday.get("score") is not None:
+            y_score = yesterday["score"]
+            delta = score - y_score
+            arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "▬")
+            delta_str = f"{arrow}{abs(delta):.0f}" if delta != 0 else "="
+            delta_line = f"  (dün {y_score:.0f} → bugün {score:.0f}, {delta_str})"
+        lines.append(f"📊 <b>Risk barometresi:</b> {zone}  {score:.0f}/100{delta_line}")
+        lines.append("<i>(skor: zincir-üstü gücün tek-rakam özeti)</i>")
+        lines.append("")
+
+    # 3) Lehimize / aleyhimize — etiketler (ağırlık rakamı YOK, sıralama önem-sırasını korur)
+    if positives:
+        lines.append("✅ <b>Lehimize:</b>")
+        for p in positives:
+            lines.append(f"  • {p['label_tr']}")
+        lines.append("")
+
+    if negatives:
+        lines.append("⚠️ <b>Aleyhimize:</b>")
+        for n in negatives:
+            lines.append(f"  • {n['label_tr']}")
+        lines.append("")
 
     # "Sıradaki Önemli Olay" — macro takvim entegrasyonu
     if next_macro:

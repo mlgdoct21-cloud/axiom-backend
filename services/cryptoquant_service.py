@@ -791,15 +791,15 @@ def _interpret_signals(snapshot: dict) -> dict:
         else:
             t_strong, t_mild = 5000, 500
         if val > t_strong:
-            sig, label = "BEARISH", "🔴 Şiddetli Satış"
+            sig, label = "BEARISH", "🔴 Şiddetli Borsaya Giriş (Exchange Inflow)"
         elif val > t_mild:
-            sig, label = "BEARISH", "⚠️ Hafif Satış Baskısı"
+            sig, label = "BEARISH", "⚠️ Hafif Satış Baskısı (Exchange Inflow)"
         elif val < -t_strong:
-            sig, label = "BULLISH", "💎 Şiddetli Birikim"
+            sig, label = "BULLISH", "💎 Şiddetli Borsadan Çıkış · Birikim (Exchange Outflow)"
         elif val < -t_mild:
-            sig, label = "BULLISH", "🟢 Hafif Birikim"
+            sig, label = "BULLISH", "🟢 Hafif Birikim (Exchange Outflow)"
         else:
-            sig, label = "NEUTRAL", "🟡 Dengeli"
+            sig, label = "NEUTRAL", "🟡 Borsa Akışı Dengeli (Netflow)"
         unit = sym
         signals["exchange_netflow"] = {
             "value_str": f"{'+' if val >= 0 else ''}{val:,.0f} {unit}",
@@ -812,11 +812,11 @@ def _interpret_signals(snapshot: dict) -> dict:
     if wr:
         val = wr["whale_ratio"]
         if val >= 0.85:
-            sig, label = "BEARISH", "🔴 Balina Aktif"
+            sig, label = "BEARISH", "🔴 Balinalar Aktif (Whale Ratio Yüksek)"
         elif val >= 0.7:
-            sig, label = "NEUTRAL", "🟡 İzle"
+            sig, label = "NEUTRAL", "🟡 Balina Hareketi İzlenmeli (Whale Ratio)"
         else:
-            sig, label = "BULLISH", "🟢 Normal"
+            sig, label = "BULLISH", "🟢 Balina Baskısı Yok (Whale Ratio Normal)"
         signals["whale_ratio"] = {
             "value_str": f"{val:.2f}",
             "signal": sig,
@@ -871,15 +871,15 @@ def _interpret_signals(snapshot: dict) -> dict:
             val = si.get("inflow_total", 0)  # backward compat
         val = float(val)
         if val > 500_000_000:
-            sig, label = "BULLISH", "🟢 Güçlü Alım Gücü (net giriş)"
+            sig, label = "BULLISH", "🟢 Güçlü Alım Gücü · Borsaya Stablecoin Girişi (Stablecoin Netflow+)"
         elif val > 100_000_000:
-            sig, label = "BULLISH", "🟢 Hafif Alım Gücü (net giriş)"
+            sig, label = "BULLISH", "🟢 Hafif Alım Gücü · Stablecoin Net Giriş (Netflow+)"
         elif val > -100_000_000:
-            sig, label = "NEUTRAL", "🟡 Net Akış Dengeli"
+            sig, label = "NEUTRAL", "🟡 Stablecoin Akışı Dengeli (Netflow≈0)"
         elif val > -500_000_000:
-            sig, label = "BEARISH", "🔴 Hafif Çıkış (net)"
+            sig, label = "BEARISH", "🔴 Hafif Çıkış · Stablecoin Borsadan Çekiliyor (Netflow−)"
         else:
-            sig, label = "BEARISH", "🔴 Güçlü Stablecoin Çıkışı (net)"
+            sig, label = "BEARISH", "🔴 Güçlü Stablecoin Çıkışı · Büyük Para Nakde Geçiyor (Netflow−)"
         m = val / 1_000_000
         sign = "+" if val >= 0 else ""
         signals["stablecoin_inflow"] = {
@@ -893,9 +893,9 @@ def _interpret_signals(snapshot: dict) -> dict:
     if fr:
         avg = fr["avg_24h"]
         if avg > 0.001:
-            sig, label = "BEARISH", "⚠️ Aşırı Long"
+            sig, label = "BEARISH", "⚠️ Aşırı Long Yığılması (Long Funding Yüksek)"
         elif avg < -0.001:
-            sig, label = "BULLISH", "💡 Short Sıkışması"
+            sig, label = "BULLISH", "💡 Short Sıkışması (Short Squeeze)"
         else:
             sig, label = "NEUTRAL", "🟡 Dengeli"
         signals["funding_rates"] = {
@@ -1065,11 +1065,11 @@ def _interpret_signals(snapshot: dict) -> dict:
     if st and st.get("ratio") is not None:
         v = st["ratio"]
         if v >= 1.05:
-            sig, label = "BULLISH", "🟢 Spot Alıcı Baskın"
+            sig, label = "BULLISH", "🟢 Spot Borsada Alıcı Baskın (Spot Taker Buy)"
         elif v >= 0.98:
-            sig, label = "NEUTRAL", "🟡 Spot Dengeli"
+            sig, label = "NEUTRAL", "🟡 Spot Borsada Denge (Spot Taker ≈0)"
         else:
-            sig, label = "BEARISH", "🔴 Spot Satıcı Baskın"
+            sig, label = "BEARISH", "🔴 Spot Borsada Satıcı Baskın (Spot Taker Sell)"
         signals["spot_taker"] = {
             "value_str": f"{v:.3f}",
             "signal": sig,
@@ -1081,13 +1081,13 @@ def _interpret_signals(snapshot: dict) -> dict:
     if sratio:
         v = sratio["sopr_ratio"]
         if v >= 1.15:
-            sig, label = "BEARISH", "⚠️ LTH Dağıtım Baskın (Tepe Uyarısı)"
+            sig, label = "BEARISH", "⚠️ Uzun Vadeli Yatırımcı Dağıtımı (LTH) · Tepe Uyarısı"
         elif v >= 1.05:
-            sig, label = "NEUTRAL", "🟡 Hafif LTH Yön Gösteriyor"
+            sig, label = "NEUTRAL", "🟡 Uzun Vadeli Yatırımcı Yön Gösteriyor (LTH)"
         elif v >= 0.95:
-            sig, label = "BULLISH", "🟢 Kohortlar Dengede"
+            sig, label = "BULLISH", "🟢 Yatırımcı Kohortları Dengede (LTH/STH)"
         else:
-            sig, label = "BULLISH", "💎 STH Baskın (Taze Para Hareketleniyor)"
+            sig, label = "BULLISH", "💎 Kısa Vadeli Yatırımcı Baskın (STH) · Taze Para Akıyor"
         signals["sopr_ratio"] = {
             "value_str": f"{v:.4f}",
             "signal": sig,
@@ -1102,15 +1102,15 @@ def _interpret_signals(snapshot: dict) -> dict:
         short_v = bliq["short_usd"]
         if total > 50_000_000:
             if long_v > short_v * 2:
-                sig, label = "BULLISH", "🟢 Long Tasfiyesi (Forced Sell Bitti)"
+                sig, label = "BULLISH", "🟢 Long Tasfiyesi Bitti · Zorunlu Satış Sonu (Long Liquidation End)"
             elif short_v > long_v * 2:
-                sig, label = "BEARISH", "🔴 Short Sıkışması Sonrası"
+                sig, label = "BEARISH", "🔴 Short Sıkışması Sonrası (Short Squeeze End)"
             else:
-                sig, label = "NEUTRAL", "⚠️ Çift Yönlü Tasfiye"
+                sig, label = "NEUTRAL", "⚠️ Çift Yönlü Tasfiye (Long+Short Liquidation)"
         elif total > 5_000_000:
-            sig, label = "NEUTRAL", "🟡 Orta Tasfiye"
+            sig, label = "NEUTRAL", "🟡 Orta Düzey Tasfiye (Liquidation)"
         else:
-            sig, label = "BULLISH", "🟢 Sakin Türev"
+            sig, label = "BULLISH", "🟢 Sakin Türev Piyasası (Derivatives Quiet)"
         signals["btc_liquidations"] = {
             "value_str": (
                 f"${total/1_000_000:,.1f}M "
