@@ -46,6 +46,12 @@ yfinance==0.2.40
 pandas==2.2.0
 numpy==1.26.4
 
+# BIST TL UFRS bilanço/gelir/nakit scraper — İş Yatırım public API adaptörü.
+# Haftalık cron services/bist_financials_service.py bist_financials tablosunu doldurur.
+# FMP Türkiye için TL UFRS tablosu döndürmediği için bu paket Temel Analiz
+# sekmesinde BIST hisselerinde boşluğu kapatır.
+isyatirimhisse==5.0.1
+
 # Macro inline-keyboard charts — rendered server-side as PNG and uploaded
 # via Telegram sendPhoto. Headless (Agg backend) on Railway.
 matplotlib==3.8.4

@@ -19,6 +19,7 @@ from services.coinglass_scheduler import coinglass_scraper_supervisor
 from services.macro_sources.reliability_probe import reliability_probe_supervisor
 from services.cryptoquant_scheduler import cryptoquant_supervisor
 from services.corporate_scheduler import corporate_supervisor
+from services.bist_financials_service import bist_financials_loop
 from core.logger import get_logger
 from core.schema_guard import ensure_schema
 from core.rate_limit import limiter, RateLimitExceeded
@@ -146,10 +147,20 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Failed to start corporate scheduler: {e}")
 
+    # BIST TL UFRS bilanço haftalık scraper (isyatirimhisse).
+    # İlk run startup'tan 5dk sonra, sonra 7 günde bir BIST_SYMBOLS yenilenir.
+    bist_fin_task = None
+    if not local_dev:
+        try:
+            bist_fin_task = asyncio.create_task(bist_financials_loop())
+            logger.info("BIST financials scheduler started")
+        except Exception as e:
+            logger.error(f"Failed to start BIST financials scheduler: {e}")
+
     yield
 
     logger.info("Application shutdown")
-    for task in [bot_task, crawler_task, etf_scraper_task, coinglass_task, macro_probe_task, cryptoquant_task, corporate_task]:
+    for task in [bot_task, crawler_task, etf_scraper_task, coinglass_task, macro_probe_task, cryptoquant_task, corporate_task, bist_fin_task]:
         if task:
             task.cancel()
             try:

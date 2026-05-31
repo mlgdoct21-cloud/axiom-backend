@@ -465,6 +465,32 @@ _POSTGRES_GUARDS = [
         "ix_acad_user",
         "CREATE INDEX IF NOT EXISTS ix_acad_user ON user_academy_progress(user_id)",
     ),
+    # BIST TL UFRS bilanço — isyatirimhisse scraper (axiom-backend/services/bist_financials_service.py)
+    (
+        "bist_financials table",
+        """CREATE TABLE IF NOT EXISTS bist_financials (
+            id BIGSERIAL PRIMARY KEY,
+            symbol VARCHAR(16) NOT NULL,
+            period VARCHAR(8) NOT NULL,
+            item_code VARCHAR(16) NOT NULL,
+            item_name_tr TEXT,
+            item_name_en TEXT,
+            value NUMERIC(28, 2),
+            currency VARCHAR(4) NOT NULL DEFAULT 'TRY',
+            financial_group VARCHAR(4) NOT NULL DEFAULT '1',
+            source VARCHAR(32) NOT NULL DEFAULT 'isyatirimhisse',
+            fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT uq_bist_fin_spi UNIQUE (symbol, period, item_code, currency, financial_group)
+        )""",
+    ),
+    (
+        "ix_bist_fin_symbol",
+        "CREATE INDEX IF NOT EXISTS ix_bist_fin_symbol ON bist_financials(symbol)",
+    ),
+    (
+        "ix_bist_fin_symbol_period",
+        "CREATE INDEX IF NOT EXISTS ix_bist_fin_symbol_period ON bist_financials(symbol, period)",
+    ),
 ]
 
 
