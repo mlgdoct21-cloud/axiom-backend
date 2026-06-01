@@ -1187,3 +1187,1261 @@ modules:
               correct: false
               feedback: "Bu ilk mumun özelliğidir; düşüş trendini sahneye koyar."
         glossary_refs: [morning-star, evening-star, sabah-yildizi, aksam-yildizi]
+
+# ============================================================================
+# MODÜL 6 — Fibonacci & Geometri (Faz 2)
+# Altın oran, retracement, extension, confluence
+# ============================================================================
+  - id: M6
+    slug: fibonacci-geometri
+    title: "Fibonacci & Geometri — Düzeltmenin Matematiği"
+    tagline: "Doğanın orantısı haritada da konuşur."
+    tier_required: premium
+    summary: |
+      Fibonacci serisi doğada (deniz kabuğu, çiçek tohumları, galaksi sarmalları)
+      gözlenen bir orandır. Piyasa kalabalığı da farkında olmadan bu orantılara
+      tepki verir — 0.382, 0.500, 0.618 (altın oran) ve 0.786 düzeltme
+      seviyeleri trader'ların ortak sözlüğüdür. Bu modül Fibonacci'yi
+      "büyü" değil, "kalabalığın koordinatlı durduğu yer" olarak öğretir.
+    duration_min: 24
+    lessons:
+
+      - id: M6L1
+        slug: fibonacci-temelleri
+        title: "Fibonacci Temelleri — Oranlar ve Neden İşler"
+        learning_objective: "Fibonacci dizisini, altın oranı (0.618) ve neden trader kolektifinde 'self-fulfilling' davrandığını anlamak."
+        tier_required: premium
+        body: |
+          Diyelim ki Ayşe bir grafiği ilk kez Fibonacci aracıyla açıyor. Karşısında
+          0.236, 0.382, 0.500, 0.618 ve 0.786 yatay çizgileri beliriyor. "Bu sayılar
+          nereden geliyor?" diye soruyor. Cevap: Fibonacci dizisi (0, 1, 1, 2, 3,
+          5, 8, 13, 21, 34…). Komşu iki sayının oranı sonsuza giderken 1.618'e
+          yaklaşır — altın orana. Bu sayıların tersi (1/1.618 = 0.618), karesi
+          (0.618² = 0.382), karekökü (√0.618 = 0.786) … hepsi piyasada yorum
+          kazanır.
+
+          Neden işler? İki cevap var:
+
+          1) Doğal: İnsan algısı bu oranlara yatkın (sanat, mimari, anatomi).
+             Trader'ın iç-mantığında bir geri çekilmenin %50'sini "yarıya geldi"
+             olarak hissetmesi, %61.8'i "üçte ikiye yakın" olarak hissetmesi
+             tesadüf değil.
+
+          2) Kolektif: Yeterince trader bu seviyelere bakıyorsa, fiyat
+             oraya geldiğinde alış/satış emirleri yığılır → seviye gerçekten
+             tepki üretir. Buna "self-fulfilling prophecy" denir. Fibonacci
+             tek başına yatırım tezi değil, kalabalığın hafıza haritasıdır.
+
+          Fibonacci'nin en yaygın iki kullanımı:
+          • Retracement: Bir trend hareketinden sonra ne kadar geri çekilebilir?
+          • Extension: Geri çekilme bitince fiyat ne kadar uzanabilir?
+
+          Bu derste retracement'a odaklanıyoruz; extension M6L3'te.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC son 3 ayda $60K'dan $80K'a yükseldi (swing low → swing high).
+              Geri çekilme başladı. Fibonacci aracını swing low'dan yüksek'e
+              çizdiğin anda dört kritik seviye netleşir: 0.382 ($72.4K),
+              0.500 ($70K), 0.618 ($67.6K), 0.786 ($64.3K). Geri çekilme
+              0.382-0.618 arasında tepki üretirse trend sağlam; 0.786'ya
+              kadar gelip durursa "derin düzeltme" — trend hipotezi kırılma
+              eşiğinde.
+          - asset: ABD Hissesi
+            symbol: AAPL
+            scenario: |
+              AAPL bilanço sonrası $170'tan $190'a koştu. Sonra geri çekilme
+              başladı. 0.382 = $182.4, 0.500 = $180, 0.618 = $177.6. Pazar
+              "klasik" davranıyorsa fiyat bu üç seviyede en azından geçici
+              tepki üretir; ama hiçbiri tutmaz ve doğrudan altına inerse
+              hareketin gücü konusunda şüpheye düşmek gerekir.
+        navigation_link: chart
+        navigation_note: "Fibonacci, haritada 'kalabalığın koordinatlı durduğu yerlerin' işaretidir. Doğru çizilirse rotada kayalık noktaları, yanlış çizilirse hayal görüntüsü olur."
+        quiz:
+          question: "0.618 Fibonacci seviyesinin TEMEL anlamı nedir?"
+          options:
+            - text: "Altın oranın tersi (1/φ); piyasada en güçlü gözlemlenen düzeltme seviyesi."
+              correct: true
+              feedback: "Doğru. 0.618 = 1/1.618 — kalabalığın 'üçte ikilik geri çekilme' sezgisi."
+            - text: "Trend dönüşünün matematik kanıtı — fiyat buraya gelirse mutlaka döner."
+              correct: false
+              feedback: "Hayır. Hiçbir seviye 'mutlak' değildir — sadece olasılık taşır."
+            - text: "Yarı yarıya geri çekilme noktası."
+              correct: false
+              feedback: "Bu 0.500'dür; psikolojik ama matematik anlamı sınırlı."
+        glossary_refs: [fibonacci-retracement, altin-oran, fibonacci-extension]
+
+      - id: M6L2
+        slug: retracement-uygulama
+        title: "Retracement Uygulaması — Swing Seçimi ve Derinlik Yorumu"
+        learning_objective: "Doğru swing low/high'ı seçmeyi, 0.382/0.500/0.618/0.786 derinliklerinin trend gücü hakkında ne söylediğini öğrenmek."
+        tier_required: premium
+        body: |
+          Diyelim ki Mehmet aynı grafikte üç farklı Fibonacci çizimi yapıyor ve
+          üçü de farklı seviyeler gösteriyor. Sorun: yanlış swing seçilirse araç
+          yanıltıcı olur. Doğru kullanım şu sırada:
+
+          1) Önce trend yönünü tespit et. Yükseliş trendi varsa, ortaklığı
+             tanımlayan swing low (hareketin başladığı yer) ve swing high
+             (hareketin son durduğu yer) bul.
+
+          2) Aracı swing low'dan swing high'a çiz (yukarı trend için).
+             Aşağı trend için tersi: swing high'dan swing low'a.
+
+          3) 0.000 başlangıç, 1.000 son. Geri çekilme başladığında fiyat
+             1.000'den 0.000'a doğru ilerler — 0.382, 0.500, 0.618 ara
+             duraklar.
+
+          Derinlik yorumu (klasik):
+          • 0.236 — yüzeyel düzeltme. Trend çok güçlü; alıcı satıcı kavgasında
+            satıcılar çok hafif. Genelde dar konsolidasyondan sonra hareket
+            devam eder.
+          • 0.382 — normal düzeltme. Sağlam trendlerde tipik. Buradan tepki
+            geliyorsa "sağlıklı geri çekilme bitti" yorumu yapılır.
+          • 0.500 — psikolojik. Matematik anlamı sınırlı ama trader'lar bakar.
+            Eğer 0.500'de takılmazsa, hareket 0.618'e kadar gelme olasılığı
+            artar.
+          • 0.618 — derin düzeltme. Trend hâlâ sağlam ama "test edildi".
+            Burada tutarsa, sonraki yükseliş güçlü olabilir.
+          • 0.786 — kritik eşik. Bu seviyeye gelmek trend hipotezini zorlar.
+            0.786 altına kapanış genelde "trend bitti" sinyali sayılır.
+
+          Önemli: Fibonacci tek başına işlem kararı değil. Mum şekli, hacim,
+          başka seviyelerle çakışma (confluence) gerekir.
+        worked_examples:
+          - asset: Kripto
+            symbol: ETH
+            scenario: |
+              ETH $2.4K'dan $3.6K'a koştu (50% hareket). Geri çekilme başladı.
+              0.382 = $3.144K, 0.500 = $3.0K (yuvarlak sayı, ek psikolojik
+              ağırlık), 0.618 = $2.856K. Fiyat $3.0K bandında uzun fitilli
+              mum + hacim artışı + ertesi yeşil kapanış üretirse, klasik
+              "0.500 retracement tepkisi" senaryosu gerçekleşir.
+          - asset: ABD Hissesi
+            symbol: SPY
+            scenario: |
+              SPY $440'tan $480'a yükseldi. Geri çekilme 0.618 = $455.3'e
+              kadar geldi ve burada büyük yeşil bir gün üretti. "Derin
+              düzeltme bitti" yorumu güçlenir. Stop loss disiplinde
+              $452-453 altına konur — 0.786 ($471 değil, $448.5)
+              kırıldıysa trend hipotezi şüpheli.
+        navigation_link: shoal
+        navigation_note: "Fibonacci seviyeleri, geminin yolu üzerindeki bilinen sığlıklardır. Kaptan derinliği önceden ölçer — sürpriz nadirdir."
+        quiz:
+          question: "Bir yükseliş trendinde fiyat 0.786 retracement seviyesinin altına KAPANIRSA temel yorum hangisidir?"
+          options:
+            - text: "Trend hâlâ sağlam; bu sadece bir korku dalgası."
+              correct: false
+              feedback: "Hayır. 0.786 sınır eşiktir; altına kapanış yapı kırılmasını işaret eder."
+            - text: "Geri çekilme normal seyrinde."
+              correct: false
+              feedback: "0.786 normal değil; 0.382-0.618 arası normaldir."
+            - text: "Trend hipotezi büyük olasılıkla bitti; yapı kırıldı."
+              correct: true
+              feedback: "Doğru. 0.786 son kale; altı yeni bir trend yönüne karar zemini."
+        glossary_refs: [fibonacci-retracement, swing-high, swing-low, retracement-derinligi]
+
+      - id: M6L3
+        slug: extension-ve-hedef
+        title: "Fibonacci Extension — Hedef Projeksiyonu"
+        learning_objective: "Geri çekilme tamamlandıktan sonra 1.272, 1.414, 1.618 ve 2.618 uzantı seviyelerinin nasıl hedef olarak kullanıldığını öğrenmek."
+        tier_required: premium
+        body: |
+          Diyelim ki Selin bir geri çekilmenin bittiğine ve trendin devam
+          edeceğine inanıyor. "Tamam, alacağım — ama nereye kadar gider?"
+          sorusu için Fibonacci Extension devreye girer.
+
+          Extension mantığı: Bir geri çekilme bittikten sonra fiyat yukarı
+          (yükselişte) projeksiyon yapar. En yaygın seviyeler:
+          • 1.272 — yumuşak hedef. Hareketin %27'si kadar fazla uzanır.
+            Konservatif kar realizasyonu noktası.
+          • 1.414 — geometrik orta hedef (√2). Az kullanılır ama 1.272 ile
+            1.618 arası bant olarak işe yarar.
+          • 1.618 — altın oran hedefi. Klasik birinci hedef. Birçok trader
+            "ana hedef" olarak burayı kullanır.
+          • 2.000 — psikolojik 2x noktası. Hareketin tam kendisi kadar
+            tekrarı.
+          • 2.618 — güçlü trend hedefi. Trend çok güçlüyse veya pazar
+            "blow-off" fazına girdiyse buralara uzanabilir.
+
+          Pratik akış:
+          1) Önce swing low → swing high'ı işaretle (hareket).
+          2) Geri çekilmenin nereye geldiğini gör (örnek: 0.618).
+          3) Extension aracını üçüncü nokta olarak geri çekilme dibine koy.
+          4) 1.272 / 1.618 / 2.000 / 2.618 seviyeleri yukarı yönde belirir.
+
+          Hedefe ulaşıldığında kademeli kar al disiplini: 1.272'de pozisyonun
+          1/3'ü, 1.618'de 1/3'ü, kalan 1/3'ü trailing stop ile.
+
+          Önemli: Extension tahmindir — hedef "gelirse" demektir, "gelir"
+          demek değildir. Fiyat 1.618'e gelmeden geri dönerse, kar realizasyonu
+          erken plan gerektirir.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC $60K → $80K hareketi, geri çekilme 0.618 ($67.6K) tepki
+              üretti. Extension projeksiyonu: 1.272 = $85.4K (yumuşak hedef),
+              1.618 = $92.4K (ana hedef), 2.000 = $100K (psikolojik
+              hedef), 2.618 = $112.4K (blow-off hedef). Pazar büyük trende
+              girdiyse $100K hedefi konuşulur.
+          - asset: ABD Hissesi
+            symbol: AAPL
+            scenario: |
+              AAPL $170 → $190 hareketi, geri çekilme 0.500 ($180) tepki
+              üretti. Extension: 1.272 = $195.4, 1.618 = $202.4, 2.000 = $210.
+              Kademeli kar realizasyonu için trader $195'te %33, $202'de %33,
+              kalan %33'ü trailing ATR stop ile tutar.
+        navigation_link: harbor
+        navigation_note: "Extension limanı; geri çekilme rüzgar dindiğinde rotanın nereye uzanabileceğinin tahminidir. Liman görüldüğünde sevinilmez, demir atılır."
+        quiz:
+          question: "1.618 Fibonacci extension seviyesinin pratikteki rolü nedir?"
+          options:
+            - text: "Trader'ın 'ana hedef' olarak yaygın kabul ettiği projeksiyon noktası."
+              correct: true
+              feedback: "Doğru. Altın oran hedefi; çoğu trader birinci kademe kar realizasyonu yapar."
+            - text: "Trend dönüşünün kesin sinyali."
+              correct: false
+              feedback: "Hayır. Extension hedeftir, dönüş değil; hedefe geldiğinde tepki olabilir ama otomatik dönüş yoktur."
+            - text: "Geri çekilme bittikten sonra fiyatın gideceği zorunlu nokta."
+              correct: false
+              feedback: "Hiçbir hedef 'zorunlu' değildir; piyasa hedef öncesi geri dönebilir."
+        glossary_refs: [fibonacci-extension, projeksiyon, kademeli-kar-realizasyonu]
+
+      - id: M6L4
+        slug: fibonacci-confluence
+        title: "Confluence — Fibonacci + S/R + EMA Çakışması"
+        learning_objective: "Birden fazla teknik aracın aynı seviyede buluşmasının (confluence) neden tek başına Fibonacci'den daha güvenilir olduğunu görmek."
+        tier_required: premium
+        body: |
+          Diyelim ki Burak iki ayrı grafiğe bakıyor. Birinde sadece 0.618
+          var; diğerinde 0.618 + EMA200 + yatay destek bandı — üçü de aynı
+          fiyat seviyesinde buluşuyor. Hangisi daha sağlam? İkincisi.
+          Sebebi: confluence (teknik çakışma).
+
+          Confluence, birden fazla bağımsız aracın aynı seviyeye işaret
+          etmesidir. Her aracın kendi "kalabalığı" var:
+          • Fibonacci'ye bakan trader topluluğu
+          • EMA'ya bakan trend takipçileri
+          • S/R bantlarına bakan klasik analistler
+          • Pivot noktalarına bakan günlük trader'lar
+
+          Üç-dört araç aynı noktada üst üste düşerse, dört farklı topluluk
+          aynı yerde emir biriktiriyor demektir → seviye gerçekten güçlü.
+
+          Yaygın confluence kombinasyonları:
+          1) Fibonacci 0.618 + EMA200 + yatay destek: "üçlü altın seviye".
+             Çok sık tepki üretir.
+          2) Fibonacci 1.618 extension + önceki swing high: "klasik direnç +
+             matematik hedef" eşleşmesi.
+          3) Pivot point + Fibonacci + round number ($100K, $50K…):
+             "psikoloji + matematik" buluşması.
+
+          Confluence pratiği:
+          • Fibonacci çizdikten sonra EMA20/50/200, son 6 ay swing'leri,
+            yuvarlak sayıları ekrana koy.
+          • Fibonacci seviyelerinden hangisi başka bir araçla çakışıyorsa,
+            ona "yıldız" işareti koy — yüksek olasılık zonu.
+          • Çakışmayan tek başına Fibonacci seviyelerine düşük ağırlık ver;
+            sadece "olabilir" zonu olarak tut.
+
+          Confluence olmadan tek başına 0.382/0.500/0.618 sadece "yatay
+          ihtimal". Confluence ile o seviye "stratejik zon" olur.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC geri çekilmesinde 0.618 = $67.6K. Aynı seviyede haftalık
+              EMA50 = $67.8K, 3 ay önceki swing low = $67K bandı. Üçü
+              $67-68K bandında çakışıyor. Bu, klasik "triple confluence"
+              destek zonu. Tepki olasılığı tek başına 0.618'den çok daha
+              yüksek.
+          - asset: ABD Hissesi
+            symbol: SPY
+            scenario: |
+              SPY 0.500 retracement = $460. EMA200 = $458. Bilanço dönemi
+              öncesi yatay konsolidasyonun alt sınırı = $459. Üçü $458-460
+              bandında. Burada üretilen tepki klasik bir confluence
+              senaryosu — yatırımcı 0.500 tek başına olduğundan çok daha
+              güçlü ele alır.
+        navigation_link: shoal
+        navigation_note: "Confluence haritada birden fazla işaretin örtüştüğü noktadır. Tek bir uyarı 'belki', üç uyarı 'mutlaka dikkat'."
+        quiz:
+          question: "Aşağıdakilerden hangisi 'confluence' kavramının en doğru tanımıdır?"
+          options:
+            - text: "Tek bir aracın güçlü sinyal üretmesi."
+              correct: false
+              feedback: "Hayır. Confluence çoklu araç çakışmasıdır, tek araç değil."
+            - text: "Birden fazla bağımsız teknik aracın aynı fiyat seviyesinde buluşması."
+              correct: true
+              feedback: "Doğru. Farklı topluluklar aynı yerde emir biriktirir → seviye güçlenir."
+            - text: "İki farklı trend çizgisinin kesişme noktası."
+              correct: false
+              feedback: "Bu özel bir confluence örneği ama tanımın tamamı değil."
+        glossary_refs: [confluence, fibonacci-retracement, destek-direnc, ema]
+
+# ============================================================================
+# MODÜL 7 — Momentum & Osilatörler (Faz 2)
+# RSI, Stochastic, CCI, Williams %R, Divergence
+# ============================================================================
+  - id: M7
+    slug: momentum-osilatorler
+    title: "Momentum & Osilatörler — Hızın ve Yorgunluğun Dili"
+    tagline: "Fiyat ne kadar gittiği değil, hangi hızla gittiğidir."
+    tier_required: premium
+    summary: |
+      Bir trend var ama ne kadar güçlü? Hızı azalıyor mu? Tepe ihtimali var
+      mı? Bu soruları fiyat tek başına yanıtlamaz — momentum osilatörleri
+      cevaplar. RSI, Stochastic, CCI, Williams %R… hepsi farklı bir "hız
+      ölçer" mantığı taşır. Bu modül osilatörleri "kestirme sinyal araçları"
+      değil, "fiyatın yorgunluk göstergesi" olarak öğretir.
+    duration_min: 24
+    lessons:
+
+      - id: M7L1
+        slug: rsi-temelleri
+        title: "RSI Temelleri — Aşırı Alım/Satım ve 50 Zonu"
+        learning_objective: "RSI(14)'ün nasıl hesaplandığını, 30/50/70 zonlarının ne anlattığını ve neden tek başına yetersiz kaldığını anlamak."
+        tier_required: premium
+        body: |
+          Diyelim ki Selin RSI göstergesini ilk kez açıyor ve "70 üstü
+          aşırı alım demek, satıyorum" diye düşünüyor. Bu klasik bir hata.
+          RSI'ı doğru okumak için önce ne ölçtüğünü anlamak gerek.
+
+          RSI (Relative Strength Index, J. Welles Wilder, 1978): Son N
+          (genelde 14) bardaki ortalama yükseliş ile ortalama düşüşün
+          oranını 0-100 arasında bir sayıya dönüştürür. Formül kabaca:
+          RSI = 100 - 100/(1 + RS), RS = Avg Gain / Avg Loss.
+
+          Üç temel zon:
+          • 70 üstü: "aşırı alım" — son 14 barda alıcılar baskındı, fiyat
+            yorgun olabilir. AMA "yorgun" satış sinyali değildir; sadece
+            "satış için ortam olgunlaşıyor" demektir. Güçlü trendlerde
+            RSI haftalarca 70 üstünde kalır.
+          • 30 altı: "aşırı satım" — son 14 barda satıcılar baskındı.
+            Yorgunluk başlamış olabilir. Yine alım sinyali değil; sadece
+            ortam olgunlaşıyor.
+          • 50 zonu: trendin belkemiği. Yükseliş trendinde RSI çoğunlukla
+            50 üstünde durur, 50'ye dokunur tepki verir; 50 altına derin
+            iniş trend zayıflığı işareti.
+
+          RSI'ı pratikte üç şekilde kullan:
+          1) Trend filtreleyici: 50 üstü = yükseliş eğilimi, 50 altı =
+             düşüş eğilimi.
+          2) Yorgunluk göstergesi: 70+ uzun süredir devam ediyorsa,
+             trend kararının ertelenmesi mantıklı; agresif alım riski
+             yüksek.
+          3) Divergence detektörü: Fiyat HH yapıyor ama RSI LH yapıyorsa
+             "klasik bearish divergence" — derin konu, M7L4'te.
+
+          Yaygın hata: 70'i otomatik sat, 30'u otomatik al olarak görmek.
+          Wilder kendisi bunu söylemedi; aşırı alım/satım sadece "dikkat
+          zonu"dur.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC 3 hafta üst üste yeşil günler üretiyor; günlük RSI(14) = 78.
+              "Aşırı alım" denir, ama trend hâlâ güçlü — fiyat yatay
+              durmaya bile başlamadı. Burada satış sinyali yok; ama
+              agresif yeni pozisyon açmak için RSI'ın 70 altına gelip
+              tekrar 50 üstü tutması beklenir (klasik "RSI reset").
+          - asset: ABD Hissesi
+            symbol: AAPL
+            scenario: |
+              AAPL bilanço sonrası %12 düştü, RSI(14) = 26. "Aşırı satım".
+              Bu tek başına alım değil; çekiç mum + ertesi yeşil
+              kapanış + RSI'ın 30 üstüne dönüşü = klasik dönüş kompozisyonu.
+              Üçü olmadan RSI 26 sadece "dikkat" sinyalidir.
+        navigation_link: compass
+        navigation_note: "RSI pusulasıdır — yön değil, hızı gösterir. Pusula 'kuzeydeki rüzgar 70'te' diyor olabilir; ama rota kararı pusulanın tek başına işidir değildir."
+        quiz:
+          question: "Günlük grafikte RSI(14) = 75 ve trend güçlü yükseliş. Doğru yorum hangisidir?"
+          options:
+            - text: "Otomatik sat — aşırı alım kuralı işliyor."
+              correct: false
+              feedback: "Hayır. Güçlü trendlerde RSI haftalarca 70+ kalır; otomatik kural yanıltıcıdır."
+            - text: "Trend yorgun olabilir; agresif yeni alımı ertelemek ve RSI reset (geri çekilme + 50 üstü tutma) beklemek makul."
+              correct: true
+              feedback: "Doğru. 70+ 'satış değil', sadece 'dikkat zonu'dur; ek teyit aranır."
+            - text: "RSI 75 trendin biteceği anlamına gelir."
+              correct: false
+              feedback: "RSI 75 'bitme' demez; sadece 'son 14 barda alıcı baskınlığı yüksekti' der."
+        glossary_refs: [rsi, asiri-alim, asiri-satim, momentum]
+
+      - id: M7L2
+        slug: stochastic-osilator
+        title: "Stochastic — Hızlı Momentum ve %K/%D Kesişimi"
+        learning_objective: "Stochastic'in nasıl çalıştığını, %K ve %D kesişimlerinin ne anlattığını ve RSI ile farklarını öğrenmek."
+        tier_required: premium
+        body: |
+          Diyelim ki Burak'a "RSI yetmiyor, daha hızlı bir momentum osilatörü
+          ister misin?" diye soruyorlar. Burada Stochastic devreye giriyor.
+
+          Stochastic (George Lane, 1950'ler): Kapanışın son N bardaki yüksek-düşük
+          aralığındaki YERİNİ ölçer. Formül: %K = (Kapanış - LL) / (HH - LL) × 100,
+          burada LL = son N bardaki en düşük, HH = son N bardaki en yüksek.
+          %D = %K'nın 3-bar SMA'sı (sinyal çizgisi).
+
+          Tipik ayarlar:
+          • %K period = 14, %D smoothing = 3 (klasik)
+          • Daha hızlı için 5,3
+          • Daha temkinli için 21,7
+
+          Üç zon (RSI'a benzer ama daha keskin):
+          • 80 üstü: aşırı alım
+          • 20 altı: aşırı satım
+          • 50 zonu: belirsizlik
+
+          Stochastic'in RSI'dan farkı:
+          1) Daha gürültülü, daha hızlı. Genelde 80+/20- bölgelerine RSI'dan
+             daha sık girer.
+          2) %K ve %D kesişimi vurgulanır — RSI'da tek çizgi var, Stochastic'te
+             iki.
+          3) Aşırı bölgelerden çıkış sinyali RSI'dan daha hızlı gelir.
+
+          Klasik sinyaller:
+          • Bullish cross: 20 altında %K çizgisi %D çizgisini aşağıdan yukarı
+            keser → klasik tabandan dönüş adayı.
+          • Bearish cross: 80 üstünde %K çizgisi %D çizgisini yukarıdan aşağı
+            keser → klasik tepeden dönüş adayı.
+          • 50 kesişimi: trend yönü değişimi sinyali.
+
+          Önemli: Tek başına Stochastic özellikle yatay piyasalarda iyi çalışır;
+          güçlü trendlerde sürekli aşırı bölgede kalır ve "yalan" cross'lar
+          üretir. Mutlaka trend filtresi (EMA, ADX) ile birlikte kullan.
+        worked_examples:
+          - asset: Kripto
+            symbol: ETH
+            scenario: |
+              ETH 4 saatlik grafikte yatay banda girdi. Stochastic(14,3) 22'de
+              bullish cross verdi (alt bantta). Ertesi mum yeşil + RSI 30 üstüne
+              döndü. Yatay piyasada bu klasik bir dip tespitidir; küçük pozisyon
+              için makul setup.
+          - asset: ABD Hissesi
+            symbol: QQQ
+            scenario: |
+              QQQ güçlü yükseliş trendinde; günlük Stochastic 90'da, 3 haftadır
+              orada. "Aşırı alım" denir ama trend devam ediyor — bu durumda
+              Stochastic yalancı sinyaller üretir. Doğru tutum: trend bitmedikçe
+              Stochastic'in tek başına sözüne bakmamak; ADX 30+ ise trend güçlü,
+              ADX 20- ise Stochastic ciddiye alınır.
+        navigation_link: compass
+        navigation_note: "Stochastic, RSI pusulasının daha hızlı titreyen kuzenidir. Yatay denizde berrak çalışır, fırtınada (güçlü trend) yanıltır."
+        quiz:
+          question: "Stochastic'in RSI'a göre en belirgin farkı nedir?"
+          options:
+            - text: "İki çizgi (%K ve %D) ve daha hızlı tepki — kesişim sinyalleri daha sık üretir."
+              correct: true
+              feedback: "Doğru. Stochastic daha gürültülü ama daha hızlı; cross sinyalleri merkez."
+            - text: "Trend gücünü daha iyi ölçer."
+              correct: false
+              feedback: "Hayır. Trend gücü için ADX kullanılır; Stochastic momentum/aşırı bölge için."
+            - text: "Sadece günlük grafikte çalışır."
+              correct: false
+              feedback: "Tüm zaman dilimlerinde çalışır; sadece farklı sinyal sıklığı verir."
+        glossary_refs: [stochastic, k-line, d-line, asiri-alim, asiri-satim]
+
+      - id: M7L3
+        slug: cci-ve-williams
+        title: "CCI ve Williams %R — Orta-Vade Momentum ve Ekstrem Zonlar"
+        learning_objective: "CCI'nın trend gücü ölçüsü ve Williams %R'nin Stochastic-benzeri yapısı ile farklarını anlamak."
+        tier_required: premium
+        body: |
+          Diyelim ki Mehmet RSI ve Stochastic'i öğrendi; "Başka var mı?" diye
+          soruyor. İki tane daha klasik var: CCI ve Williams %R.
+
+          CCI (Commodity Channel Index, Donald Lambert, 1980): Tipik fiyatın
+          (TP = (H+L+C)/3) SMA'sından ortalama sapmasını ölçer. Sınırsız bir
+          osilatör — -300 ile +300 arasında gezer.
+
+          Üç zon:
+          • +100 üstü: güçlü yükseliş momentumu (trend takibi sinyali)
+          • -100 altı: güçlü düşüş momentumu
+          • -100 ile +100 arası: yatay/zayıf
+
+          CCI'ın RSI'dan farkı: CCI sınırsızdır. RSI 0-100 hapis; CCI +300'e
+          kadar gidebilir → ekstrem trendlerde "ne kadar güçlü?" sorusuna
+          daha keskin yanıt verir.
+
+          İki kullanım:
+          1) Lambert'in orijinal yöntemi: +100 yukarı geçince trend takibi alımı,
+             -100 aşağı geçince trend takibi satışı. Trend takip sistemi.
+          2) Modern yöntem: +200/-200 ekstremlerinde "kâr alma" zonu olarak
+             kullanılır.
+
+          Williams %R (Larry Williams, 1973): Stochastic'in tersine işaretli
+          kuzeni. Formül: %R = (HH - Close) / (HH - LL) × -100. -20 ile -100
+          arasında gezer (negatif değerler).
+
+          Zonlar:
+          • -20 üstü: aşırı alım
+          • -80 altı: aşırı satım
+
+          Williams %R'nin Stochastic'ten farkı:
+          • Smoothing yok — daha gürültülü.
+          • Tek çizgi (cross sinyali yok), daha hızlı.
+          • Negatif skala (alışkanlık ister).
+
+          Pratikte: CCI orta-vade trend gücü için, Williams %R kısa-vade
+          ekstrem tespiti için kullanılır. İkisi de tek başına yeterli değil;
+          fiyat aksiyonuyla birlikte okunur.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC günlük CCI(20) +180'de. Klasik yorum: güçlü yükseliş momentumu
+              ama ekstrem zona giriyor. Pozisyondaki trader kademeli kar realizasyonu
+              düşünebilir; agresif yeni alım için 'CCI reset' (+100 altına geri
+              dönüş + tekrar 0 üstü tutma) beklenir.
+          - asset: ABD Hissesi
+            symbol: NVDA
+            scenario: |
+              NVDA 4 saatlik Williams %R = -8 (aşırı alım ekstremi). Tek başına
+              satış değil; gün-içi trader -20'nin altına geri dönüşü (%R'nin
+              "soğuma" sinyali) bekler. Geri dönüş gelirse kısa vadeli
+              geri çekilme adayı işaret eder.
+        navigation_link: compass
+        navigation_note: "CCI trend rüzgarının şiddetini, Williams %R rüzgarın yorgunluk halkalarını ölçer. İkisi de pusulaya katkı verir, ne kararı tek başına vermez."
+        quiz:
+          question: "CCI ile Stochastic arasındaki temel fark nedir?"
+          options:
+            - text: "CCI sınırsızdır (+300'e kadar), Stochastic 0-100 hapsindedir; CCI ekstrem trend gücünü daha keskin ölçer."
+              correct: true
+              feedback: "Doğru. CCI'ın sınırsızlığı güçlü trendlerde 'ne kadar güçlü?' sorusuna keskin yanıt verir."
+            - text: "CCI sadece emtia için çalışır."
+              correct: false
+              feedback: "Adı 'commodity' olsa da hisse, kripto, FX, endeks — tüm enstrümanlarda çalışır."
+            - text: "Stochastic daha eski."
+              correct: false
+              feedback: "Yanlış kronoloji; Stochastic 1950'ler, CCI 1980."
+        glossary_refs: [cci, williams-r, momentum, asiri-alim]
+
+      - id: M7L4
+        slug: divergence-disiplini
+        title: "Divergence Disiplini — Klasik ve Gizli Uyumsuzluk"
+        learning_objective: "Klasik (regular) ve gizli (hidden) divergence'ı ayırt etmek, neden divergence tek başına işlem kararı olmadığını anlamak."
+        tier_required: premium
+        body: |
+          Diyelim ki Ayşe grafiğine RSI ekledi ve fark etti: "Fiyat yeni
+          zirve yaptı ama RSI eski zirvesini geçemedi". Bu klasik bearish
+          divergence (karşı rüzgar).
+
+          Divergence (uyumsuzluk), fiyat ile osilatör arasındaki yön
+          farkıdır. İki ana tür var: klasik (regular) ve gizli (hidden).
+
+          KLASIK DIVERGENCE — trend dönüş sinyali:
+          • Bullish klasik: Fiyat LL (lower low) yapıyor; osilatör HL
+            (higher low) yapıyor. Satıcı baskısı zayıflıyor → tabandan
+            dönüş adayı.
+          • Bearish klasik: Fiyat HH (higher high) yapıyor; osilatör LH
+            (lower high) yapıyor. Alıcı baskısı zayıflıyor → tepeden
+            dönüş adayı.
+
+          GİZLİ DIVERGENCE — trend DEVAM sinyali:
+          • Bullish gizli: Fiyat HL yapıyor; osilatör LL yapıyor. Geri
+            çekilme oldu ama momentum içeride toparlanıyor → trend devam
+            adayı.
+          • Bearish gizli: Fiyat LH yapıyor; osilatör HH yapıyor. Tepki
+            geldi ama momentum içeride zayıflıyor → düşüş devam adayı.
+
+          Hangi osilatörle bakılır?
+          • RSI — en yaygın, klasik
+          • MACD — orta vadeli trendlerde güçlü
+          • Stochastic — kısa vade
+          • OBV (hacim divergence) — özel; M9'da işlenir
+
+          Önemli disiplin:
+          1) Divergence tek başına işlem sinyali DEĞİLDİR. Sadece dikkat
+             uyarısıdır. Ek teyit gerekir: trend çizgisi kırılımı, mum
+             formasyonu, hacim teyidi.
+          2) Güçlü trendler içinde divergence haftalarca devam edebilir
+             ve trend bitmez. Buna "divergence cluster" denir.
+          3) Klasik divergence trend bittikten sonra ortaya çıkar; gizli
+             divergence trend devamı içinde. İkisini karıştırmak en sık
+             hatadır.
+
+          Pratikte: Divergence görürsen → ek teyit ara. Üç-dört bar
+          beklemeden işlem yok.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC üç haftada iki yeni zirve yaptı: $78K (Aralık) ve $82K (Ocak).
+              RSI ilk zirvede 74, ikinci zirvede 68. Klasik bearish divergence —
+              alıcı baskısı zayıflıyor. Tek başına satış değil; ama bir sonraki
+              zirvede mum şekli zayıf (yıldız, doji) + hacim daralıyor + trend
+              çizgisi destek kırılırsa, dönüş senaryosu çoklu teyitle güçlenir.
+          - asset: ABD Hissesi
+            symbol: SPY
+            scenario: |
+              SPY geri çekilme yaptı: ilk dip $460, ikinci dip $455. RSI ilk
+              dipte 32, ikinci dipte 38. Klasik bullish divergence — satış
+              baskısı tükeniyor. Tek başına alım değil ama mum çekici + ertesi
+              yeşil kapanış + EMA200 yakınlığı varsa, "klasik dönüş kompozisyonu"
+              gelişiyor demektir.
+        navigation_link: crosswind
+        navigation_note: "Divergence karşı rüzgardır. Gemi ileri gidiyor ama rüzgar artık arkasında değil. Tek başına rota değiştirilmez; rüzgarın gücü ve süresi gözlenir."
+        quiz:
+          question: "Bir yükseliş trendinde fiyat HL (higher low) yaparken RSI LL (lower low) yaparsa hangi tür divergence vardır ve ne anlatır?"
+          options:
+            - text: "Bullish gizli divergence — trend DEVAM adayı (geri çekilme bitti, momentum içeride toparlanıyor)."
+              correct: true
+              feedback: "Doğru. Gizli divergence trend dönüşü değil, devam sinyalidir."
+            - text: "Bearish klasik divergence — trend dönüş."
+              correct: false
+              feedback: "Klasik bearish fiyat HH + osilatör LH'dir; bu senaryo o değil."
+            - text: "Divergence yok."
+              correct: false
+              feedback: "Var; fiyat ve osilatör ters yönlerde — tanımı sağlıyor."
+        glossary_refs: [divergence, klasik-divergence, gizli-divergence, momentum]
+
+# ============================================================================
+# MODÜL 8 — Trend & Volatilite İndikatörleri (Faz 2)
+# MA ailesi, MACD, Bollinger, Ichimoku
+# ============================================================================
+  - id: M8
+    slug: trend-volatilite
+    title: "Trend & Volatilite — MA Ailesi, MACD, Bollinger, Ichimoku"
+    tagline: "Trendi göster, hızını ölç, sınırlarını çiz."
+    tier_required: premium
+    summary: |
+      Trendi göz açıp kapayıncaya kadar gösteren, hızını sayıya çeviren,
+      sınırlarını çizen indikatörler ailesi. SMA/EMA ile başlayan klasik
+      kuyruk; MACD ile momentumu netleştiren orta sınıf; Bollinger ile
+      volatiliteyi banda alan modern köşe taşı; Ichimoku ile beş çizgide
+      her şeyi söyleyen Japon mektubu. Bu modülün sonunda bir grafiğe
+      bakıp "trend ne, hızı ne, sınır neresi?" sorularını tek bakışta
+      yanıtlayabileceksin.
+    duration_min: 24
+    lessons:
+
+      - id: M8L1
+        slug: ma-ailesi
+        title: "Hareketli Ortalamalar — SMA, EMA, Golden/Death Cross"
+        learning_objective: "SMA ve EMA arasındaki farkı, periyot seçiminin anlamını ve klasik 50/200 cross stratejisini öğrenmek."
+        tier_required: premium
+        body: |
+          Diyelim ki Mehmet bir grafiğe ilk indikatörünü ekliyor: 20 periyotlu
+          SMA. Niye? Çünkü hareketli ortalamalar (Moving Average, MA) en eski
+          ve en güvenilir trend göstergesidir.
+
+          İki ana tür:
+          • SMA (Simple Moving Average): Son N kapanışın aritmetik ortalaması.
+            Hesabı en basit; gecikme en yüksek. Ama "düzleştirme" en temiz.
+          • EMA (Exponential Moving Average): Son N kapanışı ağırlıklı ortalar
+            (yeni veri daha ağır). Gecikme daha az; ama gürültü daha çok.
+
+          Hangi periyot ne anlatır?
+          • 10-20 periyot: kısa vade trend (gün-haftalık)
+          • 50 periyot: orta vade (haftalık-aylık)
+          • 100 periyot: orta-uzun vade
+          • 200 periyot: ana trend (yıllık) — "yatırımcı çizgisi"
+
+          MA'nın üç temel kullanımı:
+          1) Trend yönü filtresi: Fiyat MA üstünde ise yükseliş eğilimi, altında
+             ise düşüş. EMA20 = "kısa rüzgar", EMA200 = "iklim".
+          2) Dinamik destek/direnç: Güçlü trendlerde fiyat MA'ya değer ve
+             tepki verir. EMA50 popüler "alış yeri" — geri çekilmede dokunup
+             yukarı dönen klasik patern.
+          3) Kesişim sinyalleri: İki MA'nın kesişimi karar zeminidir.
+
+          Klasik kesişimler:
+          • Golden Cross: SMA50 yukarıdan SMA200'ü keser. "Altın haç" — ana
+             trend yükselişe döndü işareti. Geleneksel olarak yatırımcı sinyali.
+          • Death Cross: SMA50 aşağıdan SMA200'ü keser. "Ölüm haçı" — ana
+             trend düşüşe döndü işareti. Risk azaltma sinyali.
+
+          Önemli: MA gecikmelidir. Cross olduğunda hareketin bir kısmı kaçırılmış
+          olur. Trader bunu kabul eder; karşılığı "false signal" azlığıdır —
+          yatay piyasalarda MA stratejisi zayıftır ama trend piyasalarında güvenilir.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC günlük grafikte EMA20 = $76K, EMA50 = $72K, EMA200 = $65K.
+              Sıralama yukarıdan aşağı: 20 > 50 > 200. Bu "tam yükseliş dizilimi" —
+              kısa vade kuvvetli, orta vade kuvvetli, ana trend kuvvetli. Bu
+              dizilim bozulmadıkça (örnek: 20 aşağıya 50'yi keserse) yükseliş
+              hipotezi sağlam.
+          - asset: ABD Hissesi
+            symbol: AAPL
+            scenario: |
+              AAPL SMA50 son 6 ayda ilk kez SMA200'ün üzerine çıktı (golden
+              cross). Buradan sonraki klasik beklenti: orta vadeli yükseliş
+              trendi başlıyor. Kar açma için EMA50'ye dokunma ve tepki bekleyen
+              swing trader'lar tipik alım stratejisidir.
+        navigation_link: channel
+        navigation_note: "MA, geminin uzun yıllık rotasıdır. Kısa MA güncel akıntıyı, uzun MA okyanus akıntısını gösterir; ikisinin sıralaması rotanın sağlığını söyler."
+        quiz:
+          question: "EMA'nın SMA'ya göre belirgin avantajı nedir?"
+          options:
+            - text: "Son verilere daha ağır yer verir; trend dönüşlerine daha hızlı tepki verir."
+              correct: true
+              feedback: "Doğru. EMA gecikmeyi azaltır ama daha gürültülüdür."
+            - text: "Daha az gürültü üretir."
+              correct: false
+              feedback: "Tam tersi; EMA daha gürültülüdür çünkü son veri daha ağırdır."
+            - text: "Sadece kripto için çalışır."
+              correct: false
+              feedback: "Her enstrümanda çalışır."
+        glossary_refs: [sma, ema, golden-cross, death-cross]
+
+      - id: M8L2
+        slug: macd-okuma
+        title: "MACD Okuma — Sinyal Kesişimi, Histogram, Sıfır Çizgisi"
+        learning_objective: "MACD'nin üç bileşenini (line, signal, histogram) ayırt etmek; sıfır çizgisinin önemini ve sinyal kesişimlerini doğru yorumlamak."
+        tier_required: premium
+        body: |
+          Diyelim ki Selin grafikte bir alt-panel görüyor: iki çizgi ve renkli
+          barlar. Bu MACD (Moving Average Convergence Divergence, Gerald Appel,
+          1970'ler).
+
+          MACD üç parçadan oluşur:
+          1) MACD line: EMA(12) - EMA(26). İki MA'nın farkı. Pozitif değerler
+             yükseliş, negatif değerler düşüş eğilimi.
+          2) Signal line: MACD line'ın 9-periyot EMA'sı. Yumuşatılmış versiyon.
+          3) Histogram: MACD line - Signal line. Hızı görselleştirir; iki çizgi
+             arasındaki mesafe artarken büyüyen yeşil/kırmızı barlar.
+
+          İki kritik yatay çizgi:
+          • Sıfır çizgisi: MACD line sıfırın üstündeyse EMA12 > EMA26 →
+            kısa vade trend yukarı. Altında ise yukarı. Sıfır çizgisi
+            geçişleri "ana yön değişimi" olarak okunur.
+          • Signal kesişimi: MACD line, signal line'ı yukarı keserse "bullish
+            cross"; aşağı keserse "bearish cross". Cross'un sıfırın altında
+            mı üstünde mi olduğu ÖNEMLİ — sıfır altı bullish cross "düşüş içinde
+            tepki" sinyali (zayıf), sıfır üstü bullish cross "trend devam"
+            sinyali (güçlü).
+
+          Histogram okuma:
+          • Histogram büyürken: iki çizgi açılıyor → trend hızlanıyor.
+          • Histogram küçülürken: iki çizgi yakınlaşıyor → trend yavaşlıyor.
+          • Histogramın sıfıra dönüşü cross'tan ÖNCE gelir — erken uyarı.
+
+          Klasik MACD divergence (M7L4'te bahsedilen):
+          • Fiyat yeni zirve yapıyor ama MACD eski zirvesini geçemiyor →
+            klasik bearish divergence. Trend yorgun.
+          • Fiyat yeni dip yapıyor ama MACD daha sığ dip → klasik bullish
+            divergence. Düşüş yorgun.
+
+          Önemli: MACD orta-vadeli (günlük) için iyi çalışır. Çok kısa zaman
+          dilimlerinde (1-15 dk) sürekli kesişim üretir ve gürültü yüksektir.
+        worked_examples:
+          - asset: Kripto
+            symbol: ETH
+            scenario: |
+              ETH günlük MACD sıfır üstünde, signal line'ı yukarı kesti (bullish
+              cross). Histogram büyüyor. Klasik "yükseliş trendi içinde momentum
+              hızlanıyor" senaryosu. Bu cross güçlüdür çünkü sıfır üstündedir.
+          - asset: ABD Hissesi
+            symbol: NVDA
+            scenario: |
+              NVDA günlük MACD sıfır altında, signal line'ı yukarı kesti.
+              Klasik "düşüş içinde tepki" senaryosu — zayıf cross. Gerçek
+              trend dönüşü için MACD line'ın sıfır çizgisini de yukarı
+              geçmesi beklenir.
+        navigation_link: swell
+        navigation_note: "MACD trendin hız ve yönünü aynı anda söyler. Sıfır çizgisi denizin yüzeyi; üstünde yüzersin, altında dalarsın."
+        quiz:
+          question: "MACD'de 'sıfır çizgisi üstünde bullish cross' ile 'sıfır altında bullish cross' arasındaki temel fark nedir?"
+          options:
+            - text: "Sıfır üstü cross trend devam (güçlü); sıfır altı cross düşüş içinde tepki (zayıf)."
+              correct: true
+              feedback: "Doğru. Cross'un mevkii sinyal kalitesini belirler."
+            - text: "İkisi de aynı; fark yok."
+              correct: false
+              feedback: "Yanlış. Mevkii çok şey değiştirir."
+            - text: "Sıfır altı cross daha güçlüdür çünkü 'düşükten dönüş' anlamı taşır."
+              correct: false
+              feedback: "Tersine, sıfır altı cross genellikle zayıf 'tepki' sinyalidir; trend dönüşü için ek teyit gerekir."
+        glossary_refs: [macd, macd-histogram, sifir-cizgisi, signal-line]
+
+      - id: M8L3
+        slug: bollinger-bantlari
+        title: "Bollinger Bantları — Volatilite, Sıkışma ve Bant Yürüyüşü"
+        learning_objective: "Bollinger Bantlarının nasıl oluştuğunu, sıkışma (squeeze) ve bant yürüyüşü (walking the band) örüntülerini tanımak."
+        tier_required: premium
+        body: |
+          Diyelim ki Burak ekrana üç çizgi daha ekledi: bir orta çizgi ve onun
+          etrafında iki bant. Bu Bollinger Bands (John Bollinger, 1980'ler) —
+          volatilite tabanlı dinamik destek/direnç.
+
+          Yapı:
+          • Orta çizgi: 20 periyot SMA.
+          • Üst bant: SMA + (2 × standart sapma).
+          • Alt bant: SMA - (2 × standart sapma).
+
+          Anahtar mantık: Bantlar fiyatın istatistiksel kararlı dolaşma
+          alanını gösterir. ~%95 zamanda fiyat iki bant arasında kalır (normal
+          dağılım varsayımı). Bantların dışına çıkmak "olağandışı" hareket
+          işaretidir.
+
+          Üç temel örüntü:
+
+          1) SIKIŞMA (Squeeze): Bantlar daralıyor → volatilite düşüyor → enerji
+             birikiyor. Piyasa "patlama" öncesi sessizlik. Squeeze ne kadar uzun
+             ve dar olursa, sonraki kırılım o kadar büyük olur. Squeeze yön
+             göstermez — sadece "yakında büyük hareket" der.
+
+          2) BANT YÜRÜYÜŞÜ (Walking the Band): Güçlü trendlerde fiyat üst veya
+             alt banda yapışır ve günlerce orada yürür. Yükseliş trendinde
+             üst banda yürüme "trend çok güçlü" — bu "aşırı alım sat" demek
+             değildir; tam tersine "trend takip et" demektir.
+
+          3) BANT DIŞI KAPANIŞ + GERİ DÖNÜŞ (Reversal): Fiyat üst banda
+             aşırı uzandı, sonra bant dışında kapandı, ertesi mum geri döndü
+             → klasik aşırı uzanım/geri çekilme adayı. Yatay piyasalarda en
+             iyi çalışır.
+
+          Pratik kombinasyon:
+          • Bollinger + RSI: Bant dokunuşu + RSI ekstrem zonu = güçlü teyit.
+          • Bollinger + Squeeze: Daralan bant + ADX 15 altında = patlama
+            öncesi.
+          • Bollinger + Hacim: Bant dışı kapanış + yüksek hacim = trend devam;
+            düşük hacim = sahte kırılım adayı.
+
+          Önemli: Bantlar tek başına "fiyat üst bantta, sat" demek değildir.
+          Trend yapısı + diğer indikatörlerle birlikte okunur.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC 3 hafta boyunca 4 saatlik grafikte daralan Bollinger içinde
+              ($73K-$75K bandında). Bant genişliği son 6 ayın en alt %15
+              diliminde — klasik squeeze. Bir sabah büyük yeşil mum üst bandı
+              kırdı + hacim ortalamanın 2 katı → bullish breakout adayı.
+              Hedef projeksiyon: bant genişliği kadar yukarı (~$77-78K).
+          - asset: ABD Hissesi
+            symbol: AAPL
+            scenario: |
+              AAPL bilanço sonrası üst bant dışına çıktı ve 4 gün üst banda
+              yapışık yürüdü ("walking the band"). RSI 75-80'de. Klasik
+              güçlü trend devamı senaryosu — "aşırı alım sat" yorumu yanıltıcı.
+              Pozisyondaki trader trail stop EMA10 altına çekerek devam eder.
+        navigation_link: channel
+        navigation_note: "Bollinger fiyatın dolaşma kanalıdır. Daralırsa rüzgar düşmüştür; sonraki esinti büyüktür. Bandın dışı ya istisna ya da yeni rota."
+        quiz:
+          question: "Bollinger 'squeeze' (sıkışma) hangi senaryoyu en doğru ifade eder?"
+          options:
+            - text: "Bantlar daralıyor; volatilite düşüyor; yakında büyük hareket geliyor (yön belirsiz)."
+              correct: true
+              feedback: "Doğru. Squeeze enerji birikimidir; yön sinyali değil, hareket sinyalidir."
+            - text: "Trend sona eriyor."
+              correct: false
+              feedback: "Tam tersi; squeeze sonrası genelde yeni trend başlar."
+            - text: "Fiyat üst bandın üstünde, satış zamanı."
+              correct: false
+              feedback: "Bu 'aşırı uzanım' senaryosu; squeeze değil."
+        glossary_refs: [bollinger-bandlari, squeeze, walking-the-band, volatilite]
+
+      - id: M8L4
+        slug: ichimoku-bulut
+        title: "Ichimoku Bulut — Beş Çizgide Tüm Hikaye"
+        learning_objective: "Ichimoku'nun beş bileşenini (Tenkan, Kijun, Senkou A/B, Chikou) ve bulut yapısını okumak."
+        tier_required: premium
+        body: |
+          Diyelim ki Zeynep grafiğe Ichimoku ekledi ve karşısında 5 çizgi
+          ve renkli bir "bulut" gördü. Görsel karmaşık ama mantık
+          olağanüstü zarif.
+
+          Ichimoku Kinko Hyo (Goichi Hosoda, 1969 Japonya): "bir bakışta
+          denge tablosu". Tek bir indikatör beş bileşenle trend, momentum,
+          destek/direnç ve gecikme onayını aynı anda söyler.
+
+          Beş bileşen:
+          1) Tenkan-sen (Çevirme Çizgisi): (En son 9 bardaki HH + LL) / 2.
+             Hızlı, kısa vade momentum çizgisi.
+          2) Kijun-sen (Standart Çizgi): (Son 26 bardaki HH + LL) / 2.
+             Orta vade trend çizgisi. En önemli destek/direnç.
+          3) Senkou Span A (Önder Aralık A): (Tenkan + Kijun) / 2, 26 bar
+             ileri. Bulutun bir kenarı.
+          4) Senkou Span B (Önder Aralık B): (Son 52 bardaki HH + LL) / 2,
+             26 bar ileri. Bulutun diğer kenarı.
+          5) Chikou Span (Gecikme Çizgisi): Bugünkü kapanış, 26 bar geri.
+             Onay çizgisi.
+
+          Bulut (Kumo): Senkou A ile Senkou B arasındaki alan. Yeşilse A > B
+          → yükseliş eğilimi geleceğe taşınıyor; kırmızıysa A < B → düşüş
+          eğilimi.
+
+          Beş klasik kural:
+          1) Fiyat bulutun üstünde → yükseliş yapısı; altındaysa düşüş
+             yapısı; içindeyse yatay.
+          2) Tenkan, Kijun'u yukarı keserse → momentum bullish cross. Aşağı
+             keserse bearish.
+          3) Bulut yeşilse (A > B) → trend yapısı yukarı; kırmızıysa
+             aşağı.
+          4) Chikou Span, 26 bar önceki fiyatın üstündeyse → yapı sağlam.
+             Altındaysa zayıf.
+          5) Kalın bulut → güçlü destek/direnç; ince bulut → zayıf bariyer.
+
+          "Tam bullish setup" (5/5):
+          • Fiyat bulutun üstünde
+          • Tenkan > Kijun
+          • Bulut yeşil
+          • Chikou yukarıda
+          • Kalın bulut destekte
+
+          5/5 nadir görülür; çoğunlukla 3/5 veya 4/5 yeterli sinyal sayılır.
+
+          Önemli: Ichimoku yatay piyasalarda gürültülü çalışır. Trend
+          piyasalarında muhteşemdir.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC günlük: fiyat bulutun üstünde, Tenkan Kijun'u 2 hafta
+              önce yukarı kesti, bulut yeşil, Chikou 26 bar önceki fiyatın
+              üstünde, kalın bulut destek. Klasik "tam bullish setup".
+              Trend takip pozisyonu için Ichimoku güçlü teyit.
+          - asset: ABD Hissesi
+            symbol: SPY
+            scenario: |
+              SPY günlük: fiyat bulutun içinde — yatay yapı. Tenkan ve Kijun
+              yatay. Klasik "kararsızlık" — Ichimoku yön söylemiyor. Bu
+              durumda strateji "buluttan çıkışı bekle" disiplinindedir;
+              içeride agresif pozisyon riskli.
+        navigation_link: chart
+        navigation_note: "Ichimoku haritanın tüm bilgilerini bir karede sunan Japon mektubudur — geçmiş, şimdi, gelecek; trend, momentum, destek. Karmaşık görünür ama tek bakışta hikayeyi anlatır."
+        quiz:
+          question: "Ichimoku'da fiyat 'bulutun içinde' hareket ediyorsa temel yorum nedir?"
+          options:
+            - text: "Kararsızlık / yatay yapı; trend takip stratejileri için zayıf zemin."
+              correct: true
+              feedback: "Doğru. Bulut içi 'belirsizlik bölgesi'dir; çıkış beklenir."
+            - text: "Güçlü yükseliş başlıyor."
+              correct: false
+              feedback: "Yükseliş için fiyatın bulutun üstüne çıkıp orada kalması beklenir."
+            - text: "Trend dönüşü kesin."
+              correct: false
+              feedback: "Bulut içi 'dönüş kesin' demek değil; sadece 'şu an net trend yok' demektir."
+        glossary_refs: [ichimoku, tenkan, kijun, senkou-a, senkou-b, chikou, kumo]
+
+# ============================================================================
+# MODÜL 9 — Hacim ve Akış (Faz 2)
+# Hacim temelleri, OBV, CMF, VWAP, Volume Profile
+# ============================================================================
+  - id: M9
+    slug: hacim-akis
+    title: "Hacim ve Akış — Fiyatın Görünmeyen Yarısı"
+    tagline: "Fiyat ne yaptı; hacim onu kim yaptı."
+    tier_required: premium
+    summary: |
+      Bir hareketi yorumlamak için fiyat yetmez; "kim taşıdı, ne kadar baskıyla,
+      kim direndi" sorularına hacim cevap verir. Bu modül hacmin sözlüğünü
+      açar: klasik teyit kuralı, OBV/CMF akış indikatörleri, VWAP'in disiplini
+      (kurumsalın gizli kontrolü) ve Volume Profile'ın hafıza haritası.
+      Hacim olmadan teknik analiz tek-gözlü körlüktür.
+    duration_min: 24
+    lessons:
+
+      - id: M9L1
+        slug: hacim-temelleri
+        title: "Hacim Temelleri — Teyit ve Sahte Kırılım Filtresi"
+        learning_objective: "Hacmin bir hareketi nasıl teyit ettiğini, neden 'düşük hacimli kırılım' sahte kırılım adayı olduğunu öğrenmek."
+        tier_required: premium
+        body: |
+          Diyelim ki Mehmet bir kırılım gördü: fiyat haftalardır $80K direncini
+          test ediyordu ve nihayet üstüne kapandı. Heyecanla alım düşünüyor.
+          Soru: hacim ne diyor?
+
+          Hacim, bir barda işlem gören toplam miktardır. Fiyat hareketinin
+          "ağırlığını" ölçer. Klasik kural:
+
+          • Fiyat yukarı + hacim yüksek = sağlam yükseliş (alıcı baskısı gerçek).
+          • Fiyat yukarı + hacim düşük = şüpheli yükseliş (kimse yok, kolay geri döner).
+          • Fiyat aşağı + hacim yüksek = sağlam düşüş (satıcı baskısı gerçek).
+          • Fiyat aşağı + hacim düşük = şüpheli düşüş (sadece korku/likidite eksikliği).
+
+          Kırılımlarda en kritik soru:
+          "Kırılım sırasında hacim ortalamanın kaç katı?"
+          • 0.5x altı: çok zayıf; muhtemelen sahte kırılım.
+          • 1.0x: ortalama, kırılım hipotezi belirsiz.
+          • 1.5-2x: güçlü, kırılım kabul edilebilir.
+          • 3x+: çok güçlü; klasik "blow-off" hareketi.
+
+          Hacim örüntüleri:
+          1) Konsolidasyon + dropping volume → "calm before storm". Sıkışma
+             sırasında hacim düşer; kırılım anında patlar.
+          2) Trend devamında artan hacim → sağlıklı trend.
+          3) Trend yorgun olduğunda azalan hacim → güç tükeniyor.
+          4) Climax volume (zirvede aşırı yüksek hacim) → trend dönüşü adayı.
+
+          Önemli: Hacim tek başına yön söylemez; mevcut yorumu güçlendirir
+          veya zayıflatır. Bir kırılım + güçlü hacim = ikisi birlikte. Bir
+          kırılım + zayıf hacim = ya bekle ya küçük pozisyon.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC 3 haftadır $78-80K bandında sıkışmıştı. Ortalama günlük
+              hacim $25 milyar. Bir gün büyük yeşil mum + $80K kırılımı +
+              hacim $48 milyar (1.9x). Bu "klasik teyitli kırılım" senaryosu.
+              Kırılım hipotezi güçlüdür; pozisyon açma için ek teyit (ertesi
+              gün üstte kalma) makul.
+          - asset: ABD Hissesi
+            symbol: NVDA
+            scenario: |
+              NVDA bilanço öncesi $480 direncine yaklaştı. Bilanço açıklandı,
+              fiyat $485'e koştu — ama hacim ortalamanın 0.8 katı. Tipik
+              "bilanço relief rally + sahte kırılım" örüntüsü. Ertesi gün
+              fiyat $475'e döndüğünde, hacim teyidi olmayan kırılımın neden
+              güvenilmez olduğu netleşir.
+        navigation_link: swell
+        navigation_note: "Hacim, rüzgarın şiddetidir. Yelken (fiyat) doluysa ileri gidersin; rüzgar yoksa yelken sallanır ama gemi gitmez."
+        quiz:
+          question: "Bir direnç kırılımı düşük hacimle gerçekleşirse hangi tutum makul?"
+          options:
+            - text: "Şüpheli kabul et; sahte kırılım adayı, ek teyit (kapanış + hacim) bekle."
+              correct: true
+              feedback: "Doğru. Düşük hacimli kırılımlar tipik sahte kırılımlardır."
+            - text: "Hemen büyük pozisyon aç."
+              correct: false
+              feedback: "Hayır. Hacim teyidi olmadan kırılım güvenilir değil."
+            - text: "Trend dönüşü kesin."
+              correct: false
+              feedback: "Hacim eksikliği sadece şüphe doğurur; 'kesin dönüş' demez."
+        glossary_refs: [hacim, hacim-teyidi, sahte-kirilim, climax-volume]
+
+      - id: M9L2
+        slug: obv-ve-cmf
+        title: "OBV ve CMF — Akış İndikatörleri"
+        learning_objective: "OBV (On-Balance Volume) ve CMF (Chaikin Money Flow) farkını, fiyat-akış divergence'ının ne anlattığını öğrenmek."
+        tier_required: premium
+        body: |
+          Diyelim ki Ayşe hacme bakıyor ama "ekstra bir özet ister misin?" diye
+          soruluyor. İki klasik akış indikatörü var: OBV ve CMF.
+
+          OBV (On-Balance Volume, Joseph Granville, 1963): Çok basit ama güçlü.
+          Her gün:
+          • Kapanış dünden YÜKSEKSE → günün hacmini OBV'ye EKLE.
+          • Kapanış dünden DÜŞÜKSE → günün hacmini OBV'den ÇIKAR.
+          • Eşitse OBV değişmez.
+
+          OBV bir "kümülatif" indikatördür; tek sayıdan oluşur. Yorumu:
+          • OBV yeni zirve yapıyorsa fiyatın yeni zirvesi "akış teyitli".
+          • OBV eski zirvesini yapamıyorsa (fiyat yapsa bile) → "klasik
+            bearish akış divergence". Fiyat yükseliyor ama hacim baskısı
+            içeride zayıflıyor.
+
+          CMF (Chaikin Money Flow, Marc Chaikin, 1980'ler): Daha sofistike.
+          Her bardaki "kapanışın bara konumunu" (close-low-high pozisyonu)
+          hacimle çarpar, son N (genelde 20) bar boyunca ortalar. -1 ile +1
+          arasında gezer.
+
+          • CMF > 0 → para giriyor (alıcı baskısı).
+          • CMF < 0 → para çıkıyor (satıcı baskısı).
+          • CMF > +0.25 → çok güçlü alıcı baskısı.
+          • CMF < -0.25 → çok güçlü satıcı baskısı.
+
+          OBV vs CMF farkları:
+          • OBV sınırsız, kümülatif; uzun vadeli akışı gösterir.
+          • CMF -1/+1 hapis, periyodik; son N barlık akışı gösterir.
+          • OBV trend yönünü erken yakalar; CMF momentum tipinde.
+
+          Akış divergence pratiği:
+          1) Klasik bullish akış divergence: Fiyat LL, OBV/CMF HL → tabandan
+             dönüş adayı.
+          2) Klasik bearish akış divergence: Fiyat HH, OBV/CMF LH → tepeden
+             dönüş adayı.
+          3) CMF sıfır çizgisi geçişi: trend yönü değişimi sinyali.
+
+          Önemli: Akış indikatörleri trend dönüşlerini fiyattan ÖNCE haber
+          verebilir ama her zaman değil. Ek teyit (mum şekli, S/R, trend
+          çizgisi) gerekir.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC iki haftadır yeni zirveler yapıyor ($78K, $80K, $82K).
+              OBV ise ikinci zirvede eski zirvesini geçemedi, üçüncüde
+              daha da geri kaldı. Klasik bearish OBV divergence — alıcı
+              baskısı içeride zayıflıyor. Tek başına satış değil; ama
+              tepede mum yıldızı + hacim climax + trend çizgisi kırılırsa,
+              dönüş senaryosu çoklu teyitle güçlenir.
+          - asset: ABD Hissesi
+            symbol: AAPL
+            scenario: |
+              AAPL günlük CMF 6 hafta üst üste +0.20'nin üstünde — sürekli
+              kurumsal alım. Fiyat henüz yeni zirveye çıkmadı ama akış pozitif.
+              Klasik "akış öncülüğü" senaryosu; fiyat zirvesini daha geç
+              yapar. Disiplinli yatırımcı akışı bekler, fiyat onayını sonra
+              ekler.
+        navigation_link: swell
+        navigation_note: "OBV ve CMF, fiyatın altındaki gizli akıntılardır. Yüzeyde dalga küçük olabilir ama akıntı kuvvetliyse rota değişir."
+        quiz:
+          question: "OBV ile CMF arasındaki temel fark nedir?"
+          options:
+            - text: "OBV kümülatif (sınırsız), CMF periyodik (-1/+1); OBV uzun vade akışı, CMF kısa-orta vade momentumu gösterir."
+              correct: true
+              feedback: "Doğru. İkisi farklı zaman ölçeği için tasarlandı."
+            - text: "Sadece OBV güvenilirdir."
+              correct: false
+              feedback: "İkisi de farklı bağlamlarda güvenilir."
+            - text: "CMF sadece kripto için çalışır."
+              correct: false
+              feedback: "Tüm enstrümanlarda çalışır."
+        glossary_refs: [obv, cmf, akis-divergence, hacim]
+
+      - id: M9L3
+        slug: vwap-disiplini
+        title: "VWAP — Kurumsalın Gizli Kontrol Çizgisi"
+        learning_objective: "VWAP'in (Volume-Weighted Average Price) ne ölçtüğünü, neden kurumsal trader'ların referans çizgisi olduğunu ve gün-içi vs günlük rolling kullanımını öğrenmek."
+        tier_required: premium
+        body: |
+          Diyelim ki Selin kurumsal bir trader'ın masasında oturuyor. Bütün
+          gün ekrandaki tek "yatay-eğri" çizgi VWAP. Niye?
+
+          VWAP (Volume-Weighted Average Price): Bir periyot boyunca işlem
+          gören her barı (genelde tipik fiyat × hacim olarak) ağırlıklı
+          ortalar. Formül:
+          VWAP = Σ(TP × Volume) / Σ(Volume), TP = (H+L+C)/3.
+
+          İki kullanım:
+
+          1) GÜN-İÇİ VWAP (intraday): Borsa açılışında reset edilir, gün
+             boyunca devam eder. Kurumsal trader'lar büyük emirleri "VWAP'in
+             altında al, üstünde sat" disiplinde dağıtır — çünkü gün sonunda
+             ortalama maliyeti yenmek temel görevdir.
+
+          2) ROLLING VWAP (sürekli): Belirli bir periyot (örnek son 20 bar)
+             üzerinden kayan ortalama. Günlük/haftalık grafiklerde dinamik
+             destek/direnç olarak kullanılır.
+
+          VWAP'in özel anlamı:
+          • Fiyat VWAP üstündeyse → günün "ortalama trader'ı" kâr durumda.
+          • Fiyat VWAP altındaysa → günün ortalama trader'ı zararda.
+          • VWAP'ten sıçramalar dinamik destek/direnç olarak okunur.
+          • Trend gün boyu VWAP üstünde kalıyorsa "alıcı baskınlığı"
+            güçlü; altında kalıyorsa "satıcı baskınlığı".
+
+          Klasik VWAP kullanımları:
+          1) Day trade'de pozisyon yönü: VWAP üstü long bias, altı short bias.
+          2) Kurumsal benchmark: "VWAP'i yendim mi?" — büyük emir performansının
+             ölçütü.
+          3) Mean-reversion: Fiyat VWAP'tan çok uzaklaştıysa (örnek %2+),
+             geri çekilme adayı.
+          4) Rolling VWAP — günlük grafikte EMA50/200 ile birlikte trend
+             onay çizgisi.
+
+          Önemli: VWAP gün-içi sıfırlanır (intraday); haftalık veya aylık
+          VWAP de tanımlanabilir ama klasik kullanım intraday'dir. Rolling
+          VWAP daha çok modern bir adaptasyondur.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC gün-içi VWAP $79.4K'da. Fiyat sabah $80.2K'a koştu, sonra
+              VWAP'e döndü ve oradan tepki verdi. Klasik gün-içi VWAP
+              destek tepkisi. Day trader bu seviyeden long pozisyon için
+              setup'ı disipline eder.
+          - asset: ABD Hissesi
+            symbol: SPY
+            scenario: |
+              SPY gün-içi VWAP $470'te. Fiyat öğleden sonra $468'e indi —
+              VWAP altına. Kurumsal alım VWAP altında daha aktif (ucuz);
+              gün sonuna kadar fiyat VWAP'e geri dönüş üretirse, klasik
+              "kurumsal magnet" senaryosu. Bu pozisyondaki day trader VWAP
+              altı uzun-fitilli mumda küçük long düşünebilir.
+        navigation_link: harbor
+        navigation_note: "VWAP, kurumsalın gizli rota çizgisidir. Günün hava raporu çizgisi gibi — fiyat üstünde yelken doğal, altında bayır yukarı."
+        quiz:
+          question: "VWAP'in kurumsal trader için en kritik anlamı nedir?"
+          options:
+            - text: "Büyük emirleri 'VWAP'in altında al, üstünde sat' disipline dağıtmak — ortalama maliyeti yenmek temel görev."
+              correct: true
+              feedback: "Doğru. VWAP kurumsalın performans ölçütüdür."
+            - text: "VWAP otomatik alım/satım sinyali üretir."
+              correct: false
+              feedback: "Hayır, VWAP referans çizgisidir; karar tek başına vermez."
+            - text: "VWAP sadece kripto için çalışır."
+              correct: false
+              feedback: "VWAP tüm hacimli enstrümanlarda çalışır; kökeni hisse senedi piyasasıdır."
+        glossary_refs: [vwap, hacim, kurumsal-akis, dinamik-destek-direnc]
+
+      - id: M9L4
+        slug: volume-profile-giris
+        title: "Volume Profile — Hafıza Haritası"
+        learning_objective: "Volume Profile'ın yapısını (POC, Value Area, Low-Volume Node) ve neden 'fiyatın hafıza haritası' olduğunu anlamak."
+        tier_required: premium
+        body: |
+          Diyelim ki Zeynep grafiğin yanına yatay barlar gördü. Bu Volume Profile —
+          "hangi fiyat seviyesinde NE KADAR işlem oldu?" sorusunun cevabı.
+
+          Klasik hacim x-eksende (zaman bazlı). Volume Profile y-eksende
+          (fiyat bazlı). Yani bir gün/hafta/ay boyunca, her fiyat seviyesinde
+          kümüle olarak ne kadar hacim oldu görsel olarak gösterilir.
+
+          Üç temel kavram:
+
+          1) POC (Point of Control): En yüksek hacmin gerçekleştiği fiyat
+             seviyesi. Profilin "kalbi". Bu seviyede en çok karar verilmiş;
+             fiyat tekrar buraya gelmek için "magnet" gibi davranır.
+
+          2) Value Area: Toplam hacmin %70'inin gerçekleştiği fiyat aralığı
+             (1 standart sapma yaklaşımı). Üst sınırı VAH (Value Area High),
+             alt sınırı VAL (Value Area Low). Fiyatın "konfor alanı".
+
+          3) Low-Volume Node (LVN): Çok az hacmin olduğu seviyeler. Boş
+             alanlar. Fiyat buralardan hızlı geçer — "vacuum zone" denir.
+             Kırılım senaryosunda LVN'lerden geçiş hızlıdır.
+
+          Pratik kullanım:
+          1) POC dinamik destek/direnç: Fiyat POC'a yaklaştığında genelde
+             tepki üretir. POC kırılırsa, sonraki POC veya VAH/VAL hedef olur.
+
+          2) Value Area Disiplini:
+             • Fiyat Value Area içindeyse → yatay yapı; mean-reversion stratejileri.
+             • Fiyat Value Area dışına çıkıyorsa → trend stratejileri.
+             • Value Area dışında uzun süre kalıyorsa → yeni Value Area oluşuyor.
+
+          3) LVN'den Geçiş: Bir LVN üzerinden fiyat ilerlerse, hızlı hareket
+             eder ve genelde bir sonraki HVN (High-Volume Node) noktasında
+             durur. LVN'ler kırılımlarda hedef belirleme aracıdır.
+
+          Klasik Volume Profile setup'ları:
+          • POC sıçraması: Fiyat POC'a değiyor, mum şekli + hacim teyidi
+            varsa tepki adayı.
+          • Value Area Breakout: Fiyat VAH üstüne kapanıyor + hacim güçlü
+            → bullish breakout.
+          • LVN gap: Fiyat LVN içinde hızlanıyor; bir sonraki HVN'ye kadar
+            duraksız hareket beklentisi.
+
+          Önemli: Volume Profile periyot seçilebilir (session, daily, weekly,
+          composite). Çoklu periyot çakışan POC'lar (örnek günlük POC = haftalık
+          POC) çok güçlü seviyelerdir. Profil zamanla evrilir; eski POC etkisini
+          yitirir.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC son 30 günlük Volume Profile: POC $75.5K'da, VAH $79K,
+              VAL $72K. Fiyat şu an $74K — VAL yakınında. Profil
+              gösteriyor ki $72K'da büyük emir birikimi var; oraya tepki
+              üretme olasılığı yüksek. Disiplinli trader VAL'e long setup
+              + stop VAL altına koyar.
+          - asset: ABD Hissesi
+            symbol: AAPL
+            scenario: |
+              AAPL 6 aylık Volume Profile'da POC $182.5'te. Fiyat $190'a
+              yükseldi; $182.5 ile $190 arasında belirgin LVN var. Fiyat
+              $185 altına dönerse, LVN'den $182.5 POC'a hızla iner — magnet
+              etkisi. Stop ve hedef projeksiyonları LVN/POC haritasıyla
+              kalibre edilir.
+        navigation_link: chart
+        navigation_note: "Volume Profile, denizin geçmişteki rota haritasıdır. POC en sık demir atılan liman; LVN'ler boş açık denizler. Fiyat geçmişten öğrenir."
+        quiz:
+          question: "POC (Point of Control) nedir ve nasıl davranır?"
+          options:
+            - text: "Profilin en yüksek hacimli seviyesi; fiyat genelde POC'a magnet gibi çekilir ve tepki üretir."
+              correct: true
+              feedback: "Doğru. POC profilin kalbi, dinamik destek/direnç."
+            - text: "Profilin orta noktası (median)."
+              correct: false
+              feedback: "Hayır; orta nokta median, POC en yüksek hacimdir; farklı yerler olabilir."
+            - text: "Trend dönüş noktası."
+              correct: false
+              feedback: "POC kendi başına dönüş noktası değil; magnet ve dinamik destek/direnç."
+        glossary_refs: [volume-profile, poc, value-area, lvn, hvn]

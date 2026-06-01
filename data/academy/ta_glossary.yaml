@@ -445,6 +445,26 @@ fibonacci:
     intuition: "Fibonacci çiziminde bitiş noktası — yerel dip."
     one_liner: "Düzeltme 100% bu seviyede tamamlanır."
 
+  - slug: projeksiyon
+    tr: "Projeksiyon (Fibonacci Hedef)"
+    intuition: "Extension seviyelerinin geri çekilme sonrası fiyat hedefi olarak kullanımı."
+    one_liner: "1.272 yumuşak, 1.618 ana hedef; pazar 'gelirse' kademeli kâr realizasyonu."
+
+  - slug: retracement-derinligi
+    tr: "Retracement Derinliği"
+    intuition: "0.382 = sağlam trend, 0.618 = derin düzeltme, 0.786 altı = trend hipotezi kırılma eşiği."
+    one_liner: "Derinlik trend gücü hakkında 'sağlam mı, yorgun mu, kırıldı mı' özetini verir."
+
+  - slug: kademeli-kar-realizasyonu
+    tr: "Kademeli Kâr Realizasyonu"
+    intuition: "Hedeflere ulaşıldıkça pozisyonun 1/3 - 1/3 - 1/3 kapatılması, kalanın trail stop ile tutulması."
+    one_liner: "Tek bir hedefe bağımlılığı kaldırır; trail-stop ile trend devam ederse de kâra ortak kalır."
+
+  - slug: confluence
+    tr: "Confluence (Teknik Çakışma)"
+    intuition: "Fibonacci + EMA + S/R gibi farklı araçların aynı fiyat seviyesinde buluşması."
+    one_liner: "Tek araç 'belki', çoklu araç çakışması 'mutlaka dikkat' zonu üretir."
+
 # ============================================================================
 # 6. İNDİKATÖRLER — Faz 2 hazırlık (temel terimler)
 # ============================================================================
@@ -483,3 +503,247 @@ indikatorler:
     tr: "Divergence (Uyumsuzluk)"
     intuition: "Fiyat yeni zirve/dip yaparken indikator (RSI, MACD) yapmaması."
     one_liner: "Klasik 'momentum tükeniyor' sinyali — özellikle tepe/dip dönüşlerinde önemli."
+
+  - slug: klasik-divergence
+    tr: "Klasik (Regular) Divergence"
+    intuition: "Fiyat yeni zirve/dip yapıyor ama osilatör eski seviyesini geçemiyor → dönüş adayı."
+    one_liner: "Trend tepelerinin ve diplerinin 'sessiz tükenme' sinyali; tek başına işlem değil, ek teyit ister."
+
+  - slug: gizli-divergence
+    tr: "Gizli (Hidden) Divergence"
+    intuition: "Fiyat HL/LH yapıyor ama osilatör LL/HH yapıyor → trend DEVAM sinyali."
+    one_liner: "Geri çekilme bitti, momentum içeride toparlanıyor — trend takibi için klasik teyit."
+
+  - slug: stochastic
+    tr: "Stochastic Osilatörü"
+    intuition: "Kapanışın son N bardaki yüksek-düşük aralığında YERİNİ ölçer; %K + %D iki çizgi."
+    one_liner: "Yatay piyasada cross sinyalleri berrak; güçlü trendde yanıltır."
+
+  - slug: k-line
+    tr: "%K Çizgisi"
+    intuition: "Stochastic'in ham hızlı çizgisi: (Close - LL) / (HH - LL) × 100."
+    one_liner: "%D ile kesişimi klasik momentum sinyalidir — alt bantta bullish, üst bantta bearish."
+
+  - slug: d-line
+    tr: "%D Çizgisi"
+    intuition: "%K'nın 3-periyot SMA'sı — yumuşatılmış sinyal çizgisi."
+    one_liner: "Cross için referans; tek başına yorum kazanmaz."
+
+  - slug: cci
+    tr: "CCI (Commodity Channel Index)"
+    intuition: "Tipik fiyatın (TP) SMA'sından ortalama sapmasını ölçer; sınırsız osilatör."
+    one_liner: "+100 üstü trend takibi, -100 altı düşüş takibi; +200/-200 ekstrem kâr realizasyonu zonu."
+
+  - slug: williams-r
+    tr: "Williams %R"
+    intuition: "Stochastic'in tersine işaretli kuzeni: (HH - Close) / (HH - LL) × -100."
+    one_liner: "-20 üstü aşırı alım, -80 altı aşırı satım; daha hızlı, daha gürültülü."
+
+  - slug: adx
+    tr: "ADX (Average Directional Index)"
+    intuition: "Trend gücünü 0-100 arası ölçen indikatör; yön söylemez, sadece güç söyler."
+    one_liner: "25 üstü trend güçlü, 20 altı yatay; yön için DI+ / DI- çizgileri kullanılır."
+
+  - slug: ichimoku
+    tr: "Ichimoku Bulut"
+    intuition: "Tenkan + Kijun + Senkou A/B + Chikou — beş çizgide trend, momentum, destek/direnç."
+    one_liner: "Fiyat bulut üstünde yükseliş, altında düşüş, içinde kararsızlık yapısı."
+
+  - slug: tenkan
+    tr: "Tenkan-sen (Çevirme Çizgisi)"
+    intuition: "Son 9 bardaki (HH + LL) / 2 — Ichimoku'nun hızlı çizgisi."
+    one_liner: "Kijun ile kesişimi kısa vade momentum sinyalidir."
+
+  - slug: kijun
+    tr: "Kijun-sen (Standart Çizgi)"
+    intuition: "Son 26 bardaki (HH + LL) / 2 — Ichimoku'nun orta vade trend çizgisi."
+    one_liner: "En önemli dinamik destek/direnç; fiyat Kijun üstünde yapı sağlam."
+
+  - slug: senkou-a
+    tr: "Senkou Span A"
+    intuition: "(Tenkan + Kijun) / 2, 26 bar ileri çizilir — bulutun bir kenarı."
+    one_liner: "Senkou B'nin üstündeyse bulut yeşil (yükseliş projeksiyonu)."
+
+  - slug: senkou-b
+    tr: "Senkou Span B"
+    intuition: "Son 52 bardaki (HH + LL) / 2, 26 bar ileri çizilir — bulutun diğer kenarı."
+    one_liner: "Senkou A altındaysa bulut kırmızı (düşüş projeksiyonu)."
+
+  - slug: chikou
+    tr: "Chikou Span (Gecikme Çizgisi)"
+    intuition: "Bugünkü kapanış, 26 bar geri çizilir — yapı onay çizgisi."
+    one_liner: "26 bar önceki fiyatın üstündeyse yapı sağlam; altındaysa zayıf."
+
+  - slug: kumo
+    tr: "Kumo (Bulut)"
+    intuition: "Senkou A ile Senkou B arasındaki alan — dinamik destek/direnç bandı."
+    one_liner: "Kalın bulut güçlü, ince bulut zayıf bariyer; renk yön ipucu verir."
+
+  - slug: sifir-cizgisi
+    tr: "MACD Sıfır Çizgisi"
+    intuition: "MACD line'ın sıfırı geçişi — kısa vade trend yön değişimi sinyali."
+    one_liner: "Sıfır üstü bullish cross güçlü; altı zayıf 'tepki' sinyalidir."
+
+  - slug: signal-line
+    tr: "Signal Line (MACD Sinyal Çizgisi)"
+    intuition: "MACD line'ın 9-periyot EMA'sı — yumuşatılmış sinyal referansı."
+    one_liner: "MACD line ile kesişimi klasik momentum sinyalini üretir."
+
+  - slug: macd-histogram
+    tr: "MACD Histogram"
+    intuition: "MACD line - signal line; iki çizgi arasındaki mesafenin barı."
+    one_liner: "Büyüyen histogram trend hızlanması, küçülen yavaşlama; sıfıra dönüş cross öncüsü."
+
+  - slug: asiri-alim
+    tr: "Aşırı Alım (Overbought)"
+    intuition: "Osilatörün üst zona girmesi — alıcı baskısı yorgun olabilir."
+    one_liner: "Otomatik satış değil, sadece dikkat zonu; güçlü trendde haftalarca kalır."
+
+  - slug: asiri-satim
+    tr: "Aşırı Satım (Oversold)"
+    intuition: "Osilatörün alt zona girmesi — satıcı baskısı yorgun olabilir."
+    one_liner: "Otomatik alım değil; ek teyit (mum + hacim) ister."
+
+  - slug: momentum
+    tr: "Momentum"
+    intuition: "Fiyat hareketinin hızı; trendin gücü ve yorgunluğu."
+    one_liner: "Trend yön söyler, momentum 'ne kadar hızlı?' sorusuna yanıt verir."
+
+# ============================================================================
+# 7. HACİM — Akış, OBV, CMF, VWAP, Volume Profile (Faz 2)
+# ============================================================================
+hacim:
+  - slug: hacim
+    tr: "Hacim (Volume)"
+    intuition: "Bir barda işlem gören toplam miktar — hareketin 'ağırlığı'."
+    one_liner: "Fiyat ne yaptı, hacim onu kim yaptı; teyit veya şüphe katmanıdır."
+
+  - slug: hacim-teyidi
+    tr: "Hacim Teyidi"
+    intuition: "Bir kırılım/hareketin hacim artışı ile birlikte gerçekleşmesi."
+    one_liner: "Kırılım anında 1.5-2x ortalama hacim 'klasik teyit'; 0.5x altı sahte kırılım adayı."
+
+  - slug: climax-volume
+    tr: "Climax Volume (Doruk Hacmi)"
+    intuition: "Trend zirvesinde aşırı yüksek hacim — 3-5x ortalama; satıcı/alıcı tükenmesi adayı."
+    one_liner: "Klasik 'son hücum' örüntüsü; tek başına dönüş değil, ek teyit ister."
+
+  - slug: obv
+    tr: "OBV (On-Balance Volume)"
+    intuition: "Kapanış yukarıysa hacmi ekle, aşağıysa çıkar — kümülatif akış çizgisi (Granville, 1963)."
+    one_liner: "Fiyat zirvesi ama OBV LH ise klasik bearish akış divergence."
+
+  - slug: cmf
+    tr: "CMF (Chaikin Money Flow)"
+    intuition: "Kapanışın bar içindeki yerini hacimle ağırlıklayıp son N bar ortalar (-1/+1 hapis)."
+    one_liner: "CMF > 0 alıcı, < 0 satıcı baskını; +0.25 üstü/-0.25 altı çok güçlü."
+
+  - slug: mfi
+    tr: "MFI (Money Flow Index)"
+    intuition: "Hacimli RSI — tipik fiyat × hacim üzerinden 0-100 momentum endeksi."
+    one_liner: "80 üstü aşırı alım, 20 altı aşırı satım; hacim katkısıyla RSI'dan daha sağlam."
+
+  - slug: akis-divergence
+    tr: "Akış Divergence"
+    intuition: "Fiyat ile OBV/CMF arasında uyumsuzluk — gizli alıcı/satıcı baskısı."
+    one_liner: "Fiyat öncesi erken uyarı verebilir; her zaman değil, ek teyit ister."
+
+  - slug: vwap
+    tr: "VWAP (Volume-Weighted Average Price)"
+    intuition: "Periyot boyunca tipik fiyat × hacim ağırlıklı ortalaması — kurumsalın referans çizgisi."
+    one_liner: "Fiyat VWAP üstündeyse günün 'ortalama trader'ı kâr durumda; magnet ve dinamik S/R."
+
+  - slug: kurumsal-akis
+    tr: "Kurumsal Akış"
+    intuition: "Büyük emirlerin VWAP altında alım, üstünde satım disiplinde dağıtılması."
+    one_liner: "'VWAP'i yendim mi?' sorusu kurumsal performans ölçütüdür."
+
+  - slug: dinamik-destek-direnc
+    tr: "Dinamik Destek/Direnç"
+    intuition: "EMA, VWAP, POC gibi zamanla kayan seviyelerin S/R rolünü üstlenmesi."
+    one_liner: "Yatay S/R sabit; dinamik S/R her bar yeniden çizilir — trendi takip eder."
+
+  - slug: sahte-kirilim
+    tr: "Sahte Kırılım (False Breakout)"
+    intuition: "Fiyat seviyeyi kırıyor ama hacim ve takip eden mum yapısı bunu desteklemiyor."
+    one_liner: "Genelde düşük hacim + ertesi gün geri dönüş; teknik tuzakların klasiği."
+
+  - slug: volume-profile
+    tr: "Volume Profile"
+    intuition: "Her fiyat seviyesinde kümülatif hacmin yatay grafik dağılımı — 'hafıza haritası'."
+    one_liner: "POC + Value Area + LVN, fiyatın geçmişte ne kadar 'durduğunu' söyler."
+
+  - slug: poc
+    tr: "POC (Point of Control)"
+    intuition: "Volume Profile'da en yüksek hacim gerçekleşen fiyat seviyesi — profilin kalbi."
+    one_liner: "Fiyat genelde POC'a magnet gibi çekilir; dinamik destek/direnç olarak okunur."
+
+  - slug: value-area
+    tr: "Value Area (Değer Bölgesi)"
+    intuition: "Toplam hacmin %70'i (≈1σ) içinde gerçekleştiği fiyat aralığı; VAH üst, VAL alt."
+    one_liner: "Fiyatın 'konfor alanı'; içinde yatay yapı, dışına çıkış trend stratejisi."
+
+  - slug: lvn
+    tr: "LVN (Low-Volume Node)"
+    intuition: "Volume Profile'da çok az hacim olan boş fiyat aralıkları — 'vakum bölgeleri'."
+    one_liner: "Fiyat LVN'lerden hızla geçer; kırılımlarda hedef olarak okunur."
+
+  - slug: hvn
+    tr: "HVN (High-Volume Node)"
+    intuition: "Volume Profile'da yoğun hacim biriken yatay seviyeler — dinamik destek/direnç."
+    one_liner: "POC en güçlü HVN'dir; kümülatif HVN'ler 'magnet zon' davranır."
+
+# ============================================================================
+# 8. İLERİ ÇERÇEVE — MTF, Wyckoff, Elliott, Market Profile (Faz 3 hazırlık)
+# ============================================================================
+ileri_cerceve:
+  - slug: mtf
+    tr: "MTF (Multi-Timeframe Analizi)"
+    intuition: "Aynı varlığı 3+ zaman diliminde okumak — haftalık (iklim), günlük (rüzgar), 4h (rota)."
+    one_liner: "Üst dilim yön verir, alt dilim giriş; yön+giriş ayrılığı disiplinin temelidir."
+
+  - slug: pivot-points
+    tr: "Pivot Points (Pivot Noktaları)"
+    intuition: "Önceki günün H+L+C ortalaması + S1/S2/R1/R2 türev seviyeler — gün-içi referans haritası."
+    one_liner: "Day trader'ın klasik destek/direnç haritası; özellikle FX/endeks/emtiada güçlü."
+
+  - slug: wyckoff
+    tr: "Wyckoff Metodolojisi"
+    intuition: "Richard Wyckoff'un (1930'lar) akümülasyon/dağıtım fazları + 'composite man' modeli."
+    one_liner: "Yatay yapıyı akümülasyon (büyük el alıyor) veya dağıtım (büyük el satıyor) olarak okur."
+
+  - slug: composite-man
+    tr: "Composite Man"
+    intuition: "Wyckoff'un soyut 'büyük operatör' modeli — piyasa onun gibi planladığında nasıl davranır."
+    one_liner: "Akümülasyon → manipülasyon → markup → distribution fazlarının hikaye iskeletidir."
+
+  - slug: elliott
+    tr: "Elliott Dalga Teorisi"
+    intuition: "Ralph Elliott'un (1930'lar) trend hareketlerinin 5-3 dalga örüntüsünde gerçekleştiği teorisi."
+    one_liner: "Impulse 5 (1-2-3-4-5), correction 3 (A-B-C); Fibonacci oranlarıyla iç içe."
+    pitfall: "Dalga sayımı subjektif; ex-post net görünür, ex-ante çoklu yorum mümkün."
+
+  - slug: impulse
+    tr: "Impulse Dalga"
+    intuition: "Elliott'da ana trend yönündeki 5 dalga: 1-3-5 motor, 2-4 düzeltme."
+    one_liner: "3. dalga genelde en uzun; 5. dalga divergence ile bitebilir."
+
+  - slug: correction
+    tr: "Corrective Dalga"
+    intuition: "Elliott'da ana trende karşı 3 dalga (A-B-C); zigzag, flat, triangle çeşitleri."
+    one_liner: "A düşüş, B tepki, C son düşüş; sonra impulse 1 başlar."
+
+  - slug: market-profile
+    tr: "Market Profile"
+    intuition: "TPO (Time-Price Opportunity) bazlı profil — her fiyatta kaç süre kalındığı görseli."
+    one_liner: "Volume Profile hacim, Market Profile zaman bazlı; ikisi tamamlayıcı."
+
+  - slug: heikin-ashi
+    tr: "Heikin-Ashi"
+    intuition: "Smoothed mum formatı: open=(prev_o+prev_c)/2, close=(o+h+l+c)/4 — trend daha temiz görünür."
+    one_liner: "Trend takip için klasik; gerçek OHLC değildir, giriş/çıkış için saf candlestick gerekir."
+
+  - slug: pusula-sinyali
+    tr: "Pusula Sinyali (AXIOM Marka)"
+    intuition: "Birden çok indikatör (RSI + MACD + trend yapı) aynı yöne işaret ettiğinde 'pusula döndü' yorumu."
+    one_liner: "Tek araç 'belki', üç araç 'rota değişiyor' — AXIOM navigasyon vokabülünden."

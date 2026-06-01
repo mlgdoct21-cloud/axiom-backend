@@ -37,7 +37,8 @@ logger = get_logger("academy_ta_example")
 _CACHE: dict = {}
 _CACHE_TTL = 300  # 5 dk
 _TIMEOUT = 8
-_DEFAULT_BARS = 200
+# 365 bar — SMA200 ve uzun-vade indikator için sağlam tarihçe (golden/death cross dahil)
+_DEFAULT_BARS = 365
 
 # ---------------------------------------------------------------------------
 # Desteklenen varlıklar
@@ -673,6 +674,406 @@ def _detect_triangle(bars: list[dict], cfg: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# DETECT — Teknik #7: Fibonacci Retracement
+# ---------------------------------------------------------------------------
+def _detect_fibonacci_retracement(bars: list[dict], cfg: dict) -> dict:
+    """Son 120 barda en geniş swing low → swing high'ı bul, retracement çiz."""
+    closes = ti.closes(bars)
+    decimals = cfg["round"]
+    current = closes[-1]
+
+    # Son 120 barlık pencerede en derin swing low ve en yüksek swing high
+    window = bars[-120:] if len(bars) > 120 else bars
+    offset = len(bars) - len(window)
+    swings = ti.find_swings(window, left=4, right=4)
+    if not swings["highs"] or not swings["lows"]:
+        return {
+            "annotations": [],
+            "metrics": [
+                {"label": "Tespit", "value": "Yeterli swing noktası yok"},
+                {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
+            ],
+            "headline": f"{cfg['label']} için Fibonacci çizimi şu an mümkün değil.",
+            "indicators": {"ema20": ti.ema(closes, 20)},
+            "found": False,
+        }
+
+    # En yüksek swing high ve en düşük swing low (yön belirler)
+    highest = max(swings["highs"], key=lambda s: s["price"])
+    lowest = min(swings["lows"], key=lambda s: s["price"])
+
+    # Yön: hangisi daha sonra geldiyse (timestamp/i bazlı)
+    bullish_move = highest["i"] > lowest["i"]
+    if bullish_move:
+        swing_high = highest["price"]
+        swing_low = lowest["price"]
+        start_i = lowest["i"] + offset
+        end_i = highest["i"] + offset
+        direction = "yükseliş"
+    else:
+        # Düşüş hareketi: yüksek önce, düşük sonra
+        swing_high = highest["price"]
+        swing_low = lowest["price"]
+        start_i = highest["i"] + offset
+        end_i = lowest["i"] + offset
+        direction = "düşüş"
+
+    fibs = ti.fibonacci_retracement(swing_high, swing_low)
+
+    # En yakın seviye
+    nearest = min(fibs, key=lambda f: abs(f["price"] - current))
+    dist_pct = abs(current - nearest["price"]) / current * 100
+
+    annotations = []
+    for f in fibs:
+        annotations.append({
+            "type": "fib_level",
+            "price": f["price"],
+            "label": f"{f['ratio']:.3f}",
+            "ratio": f["ratio"],
+        })
+    # Swing pivotları
+    annotations.append({"type": "pivot", "i": start_i, "price": swing_low if bullish_move else swing_high, "side": "low" if bullish_move else "high", "label": "Swing Başlangıcı"})
+    annotations.append({"type": "pivot", "i": end_i, "price": swing_high if bullish_move else swing_low, "side": "high" if bullish_move else "low", "label": "Swing Sonu"})
+
+    metrics = [
+        {"label": "Yön", "value": direction.capitalize()},
+        {"label": "Swing Low", "value": _fmt(swing_low, decimals)},
+        {"label": "Swing High", "value": _fmt(swing_high, decimals)},
+        {"label": "0.382 seviyesi", "value": _fmt(fibs[2]["price"], decimals)},
+        {"label": "0.500 seviyesi", "value": _fmt(fibs[3]["price"], decimals)},
+        {"label": "0.618 (altın oran)", "value": _fmt(fibs[4]["price"], decimals)},
+        {"label": "0.786 son kale", "value": _fmt(fibs[5]["price"], decimals)},
+        {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
+        {"label": "En yakın Fib", "value": f"{nearest['label']} ({dist_pct:.1f}% mesafe)"},
+    ]
+    headline = f"{cfg['label']} {direction} hareketinde retracement; şu an {nearest['label']} seviyesine yakın."
+
+    return {
+        "annotations": annotations,
+        "metrics": metrics,
+        "headline": headline,
+        "indicators": {"ema20": ti.ema(closes, 20)},
+        "found": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# DETECT — Teknik #8: RSI Divergence
+# ---------------------------------------------------------------------------
+def _detect_rsi_divergence(bars: list[dict], cfg: dict) -> dict:
+    closes = ti.closes(bars)
+    decimals = cfg["round"]
+    rsi14 = ti.rsi(closes, 14)
+    current = closes[-1]
+
+    div = ti.detect_divergence(bars, rsi14, lookback=80, pivot_window=4)
+
+    annotations = []
+    metrics = []
+    if div:
+        annotations.append({"type": "pivot", "i": div["p1_i"], "price": div["p1_price"], "side": "low" if div["kind"] == "bullish" else "high", "label": "Pivot 1"})
+        annotations.append({"type": "pivot", "i": div["p2_i"], "price": div["p2_price"], "side": "low" if div["kind"] == "bullish" else "high", "label": "Pivot 2"})
+        annotations.append({
+            "type": "divergence_line",
+            "from_i": div["p1_i"],
+            "from_price": div["p1_price"],
+            "to_i": div["p2_i"],
+            "to_price": div["p2_price"],
+            "label": f"Fiyat {div['kind'].title()} Divergence",
+            "kind": div["kind"],
+        })
+
+        metrics = [
+            {"label": "Divergence türü", "value": "Bullish (klasik dönüş adayı)" if div["kind"] == "bullish" else "Bearish (klasik dönüş adayı)"},
+            {"label": "Pivot 1 fiyat", "value": _fmt(div["p1_price"], decimals)},
+            {"label": "Pivot 1 RSI", "value": f"{div['o1']:.1f}"},
+            {"label": "Pivot 2 fiyat", "value": _fmt(div["p2_price"], decimals)},
+            {"label": "Pivot 2 RSI", "value": f"{div['o2']:.1f}"},
+            {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
+            {"label": "Anlık RSI", "value": f"{rsi14[-1]:.1f}" if rsi14[-1] else "—"},
+        ]
+        headline = (
+            f"{cfg['label']} grafiğinde klasik {('bullish' if div['kind'] == 'bullish' else 'bearish')} "
+            f"RSI divergence tespit edildi — momentum tükeniyor sinyali."
+        )
+    else:
+        metrics = [
+            {"label": "Tespit", "value": "Son 80 bar içinde belirgin klasik divergence yok"},
+            {"label": "Anlık RSI(14)", "value": f"{rsi14[-1]:.1f}" if rsi14[-1] else "—"},
+            {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
+            {"label": "Trend", "value": _trend_label(bars)},
+        ]
+        headline = f"{cfg['label']} için şu an aktif klasik divergence yok — sözlüksel örnek."
+
+    return {
+        "annotations": annotations,
+        "metrics": metrics,
+        "headline": headline,
+        "indicators": {"ema20": ti.ema(closes, 20), "rsi14": rsi14},
+        "found": div is not None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# DETECT — Teknik #9: MACD Crossover
+# ---------------------------------------------------------------------------
+def _detect_macd_crossover(bars: list[dict], cfg: dict) -> dict:
+    closes = ti.closes(bars)
+    decimals = cfg["round"]
+    m = ti.macd(closes, 12, 26, 9)
+    cross = ti.macd_crossover(m["line"], m["signal"], lookback=40)
+    current = closes[-1]
+
+    annotations = []
+    metrics = []
+    if cross:
+        bars_ago = len(bars) - 1 - cross["i"]
+        annotations.append({
+            "type": "marker",
+            "i": cross["i"],
+            "price": bars[cross["i"]]["c"],
+            "side": "low" if cross["kind"] == "bullish" else "high",
+            "label": f"{cross['kind'].title()} Cross",
+        })
+        # Sıfır çizgisi referansı
+        metrics = [
+            {"label": "Kesişim", "value": f"{cross['kind'].title()} ({bars_ago} bar önce)"},
+            {"label": "Sıfır çizgisi", "value": "Üstünde (güçlü)" if cross["zero_side"] == "above" else "Altında (zayıf 'tepki' sinyali)"},
+            {"label": "MACD line", "value": f"{cross['macd']:+.4f}" if abs(cross['macd']) < 10 else f"{cross['macd']:+.2f}"},
+            {"label": "Signal line", "value": f"{cross['signal']:+.4f}" if abs(cross['signal']) < 10 else f"{cross['signal']:+.2f}"},
+            {"label": "Histogram (şimdi)", "value": f"{m['histogram'][-1]:+.4f}" if m['histogram'][-1] is not None else "—"},
+            {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
+            {"label": "Trend", "value": _trend_label(bars)},
+        ]
+        sign_qual = "güçlü trend devam" if cross["zero_side"] == "above" and cross["kind"] == "bullish" else (
+            "zayıf 'tepki' sinyali" if cross["zero_side"] == "below" and cross["kind"] == "bullish" else (
+                "güçlü düşüş devam" if cross["zero_side"] == "below" and cross["kind"] == "bearish" else
+                "yorgun zirveden zayıf bearish"
+            )
+        )
+        headline = f"{cfg['label']} grafiğinde MACD {cross['kind']} cross ({bars_ago} bar önce) — {sign_qual}."
+    else:
+        last_m = m["line"][-1]
+        last_s = m["signal"][-1]
+        metrics = [
+            {"label": "Tespit", "value": "Son 40 bar içinde MACD-Signal kesişimi yok"},
+            {"label": "MACD line (şimdi)", "value": f"{last_m:+.4f}" if last_m is not None else "—"},
+            {"label": "Signal line (şimdi)", "value": f"{last_s:+.4f}" if last_s is not None else "—"},
+            {"label": "Histogram (şimdi)", "value": f"{m['histogram'][-1]:+.4f}" if m['histogram'][-1] is not None else "—"},
+            {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
+            {"label": "Trend", "value": _trend_label(bars)},
+        ]
+        headline = f"{cfg['label']} için son 40 barda MACD kesişimi yok — mevcut yapı korunuyor."
+
+    return {
+        "annotations": annotations,
+        "metrics": metrics,
+        "headline": headline,
+        "indicators": {"ema20": ti.ema(closes, 20), "macd_line": m["line"], "macd_signal": m["signal"], "macd_hist": m["histogram"]},
+        "found": cross is not None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# DETECT — Teknik #10: Golden / Death Cross (50/200 SMA)
+# ---------------------------------------------------------------------------
+def _detect_golden_cross(bars: list[dict], cfg: dict) -> dict:
+    closes = ti.closes(bars)
+    decimals = cfg["round"]
+    current = closes[-1]
+    sma50 = ti.sma(closes, 50)
+    sma200 = ti.sma(closes, 200)
+
+    cross = ti.detect_ma_cross(sma50, sma200, lookback=120)
+
+    # Eğer henüz cross yok ama 200 SMA mevcut → mevcut dizilim
+    annotations = []
+    metrics = []
+    if cross:
+        bars_ago = len(bars) - 1 - cross["i"]
+        annotations.append({
+            "type": "marker",
+            "i": cross["i"],
+            "price": bars[cross["i"]]["c"],
+            "side": "low" if cross["kind"] == "golden" else "high",
+            "label": f"{'Golden' if cross['kind'] == 'golden' else 'Death'} Cross",
+        })
+        metrics = [
+            {"label": "Kesişim", "value": f"{'Golden Cross (altın haç)' if cross['kind'] == 'golden' else 'Death Cross (ölüm haçı)'}"},
+            {"label": "Kesişim ne zaman", "value": f"{bars_ago} bar önce"},
+            {"label": "SMA50 (şimdi)", "value": _fmt(sma50[-1], decimals) if sma50[-1] is not None else "—"},
+            {"label": "SMA200 (şimdi)", "value": _fmt(sma200[-1], decimals) if sma200[-1] is not None else "—"},
+            {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
+            {"label": "Trend", "value": _trend_label(bars)},
+        ]
+        msg = "ana trend yükselişe döndü" if cross["kind"] == "golden" else "ana trend düşüşe döndü"
+        headline = f"{cfg['label']} grafiğinde {'Golden' if cross['kind'] == 'golden' else 'Death'} Cross ({bars_ago} bar önce) — {msg}."
+    else:
+        if sma50[-1] is not None and sma200[-1] is not None:
+            dizilim = "SMA50 > SMA200 (yükseliş dizilimi)" if sma50[-1] > sma200[-1] else "SMA50 < SMA200 (düşüş dizilimi)"
+            gap_pct = (sma50[-1] - sma200[-1]) / sma200[-1] * 100
+            metrics = [
+                {"label": "Kesişim", "value": "Son 120 bar içinde 50/200 kesişimi yok"},
+                {"label": "Mevcut dizilim", "value": dizilim},
+                {"label": "SMA50 (şimdi)", "value": _fmt(sma50[-1], decimals)},
+                {"label": "SMA200 (şimdi)", "value": _fmt(sma200[-1], decimals)},
+                {"label": "Fark", "value": f"{gap_pct:+.1f}%"},
+                {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
+            ]
+            headline = f"{cfg['label']} için kesişim yok; mevcut dizilim: {dizilim.lower()}."
+        else:
+            metrics = [
+                {"label": "Tespit", "value": "SMA200 için yeterli veri yok (en az 200 bar gerek)"},
+                {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
+            ]
+            headline = f"{cfg['label']} için SMA200 verisi yetersiz."
+
+    return {
+        "annotations": annotations,
+        "metrics": metrics,
+        "headline": headline,
+        "indicators": {"sma50": sma50, "sma200": sma200},
+        "found": cross is not None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# DETECT — Teknik #11: Bollinger Squeeze
+# ---------------------------------------------------------------------------
+def _detect_bollinger_squeeze(bars: list[dict], cfg: dict) -> dict:
+    closes = ti.closes(bars)
+    decimals = cfg["round"]
+    current = closes[-1]
+    bb = ti.bollinger(closes, 20, 2.0)
+    squeeze = ti.detect_bb_squeeze(bb["width"], lookback=120, percentile=0.20)
+
+    annotations = []
+    metrics = []
+    if squeeze:
+        # Üst ve alt bant son seviyelerini level olarak işaretle
+        if bb["upper"][-1] is not None:
+            annotations.append({"type": "level", "price": bb["upper"][-1], "label": "Üst Bant", "side": "resistance"})
+        if bb["lower"][-1] is not None:
+            annotations.append({"type": "level", "price": bb["lower"][-1], "label": "Alt Bant", "side": "support"})
+        if bb["middle"][-1] is not None:
+            annotations.append({"type": "level", "price": bb["middle"][-1], "label": "Orta (SMA20)", "side": "neutral"})
+
+        active = squeeze["active"]
+        width_now = squeeze["width_now"] * 100
+        threshold = squeeze["threshold"] * 100
+        median = squeeze["median"] * 100
+        metrics = [
+            {"label": "Squeeze aktif mi?", "value": "EVET — sıkışma içerisinde" if active else "HAYIR — bantlar açılmış"},
+            {"label": "Bant genişliği (şimdi)", "value": f"{width_now:.2f}%"},
+            {"label": "Squeeze eşiği (alt %20)", "value": f"{threshold:.2f}%"},
+            {"label": "Medyan genişlik", "value": f"{median:.2f}%"},
+            {"label": "Üst bant", "value": _fmt(bb['upper'][-1], decimals) if bb['upper'][-1] else "—"},
+            {"label": "Orta bant (SMA20)", "value": _fmt(bb['middle'][-1], decimals) if bb['middle'][-1] else "—"},
+            {"label": "Alt bant", "value": _fmt(bb['lower'][-1], decimals) if bb['lower'][-1] else "—"},
+            {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
+        ]
+        if active:
+            headline = f"{cfg['label']} Bollinger squeeze AKTİF — enerji birikiyor, yakın kırılım adayı (yön belirsiz)."
+        else:
+            headline = f"{cfg['label']} bantlar açılmış — squeeze yok, mevcut volatilite normal seviyede."
+    else:
+        metrics = [
+            {"label": "Tespit", "value": "Bollinger genişlik geçmişi için yetersiz veri"},
+            {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
+        ]
+        headline = f"{cfg['label']} için Bollinger squeeze analizi şu an mümkün değil."
+
+    return {
+        "annotations": annotations,
+        "metrics": metrics,
+        "headline": headline,
+        "indicators": {"ema20": ti.ema(closes, 20), "bb_upper": bb["upper"], "bb_middle": bb["middle"], "bb_lower": bb["lower"]},
+        "found": squeeze is not None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# DETECT — Teknik #12: Volume Pop (hacim teyitli mum)
+# ---------------------------------------------------------------------------
+def _detect_volume_pop(bars: list[dict], cfg: dict) -> dict:
+    closes = ti.closes(bars)
+    decimals = cfg["round"]
+    current = closes[-1]
+
+    n = len(bars)
+    # Son 30 barda hacim ortalamanın 1.8x üstüne çıkan ilk barı bul
+    found_bar = None
+    for i in range(n - 1, max(n - 30, 20), -1):
+        recent_vols = [b.get("v", 0.0) for b in bars[max(0, i - 20):i] if b.get("v", 0.0) > 0]
+        if not recent_vols:
+            continue
+        avg = sum(recent_vols) / len(recent_vols)
+        cur_v = bars[i].get("v", 0.0)
+        if avg > 0 and cur_v / avg >= 1.8:
+            found_bar = {
+                "i": i,
+                "vol": cur_v,
+                "avg": avg,
+                "ratio": cur_v / avg,
+                "bullish": bars[i]["c"] > bars[i]["o"],
+                "range_pct": (bars[i]["h"] - bars[i]["l"]) / bars[i]["o"] * 100 if bars[i]["o"] > 0 else 0,
+            }
+            break
+
+    obv_series = ti.obv(bars)
+    cmf_series = ti.cmf(bars, 20)
+
+    annotations = []
+    metrics = []
+    if found_bar:
+        bar = bars[found_bar["i"]]
+        bars_ago = n - 1 - found_bar["i"]
+        annotations.append({
+            "type": "marker",
+            "i": found_bar["i"],
+            "price": bar["c"],
+            "side": "low" if found_bar["bullish"] else "high",
+            "label": f"Volume Pop ({found_bar['ratio']:.1f}x)",
+        })
+        side_text = "Yeşil (alıcı baskısı)" if found_bar["bullish"] else "Kırmızı (satıcı baskısı)"
+        metrics = [
+            {"label": "Tespit", "value": f"Hacim pop ({bars_ago} bar önce)"},
+            {"label": "Hacim oranı", "value": f"{found_bar['ratio']:.1f}x ortalama"},
+            {"label": "Mum yönü", "value": side_text},
+            {"label": "Mum menzili", "value": f"%{found_bar['range_pct']:.1f}"},
+            {"label": "OBV (şimdi)", "value": f"{obv_series[-1]:,.0f}" if obv_series[-1] is not None else "—"},
+            {"label": "CMF(20) (şimdi)", "value": f"{cmf_series[-1]:+.3f}" if cmf_series[-1] is not None else "—"},
+            {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
+            {"label": "Trend", "value": _trend_label(bars)},
+        ]
+        teyit = "alıcı baskısı teyitli" if found_bar["bullish"] else "satıcı baskısı teyitli"
+        headline = f"{cfg['label']} grafiğinde hacim pop ({found_bar['ratio']:.1f}x, {bars_ago} bar önce) — {teyit}."
+    else:
+        recent_vols = [b.get("v", 0.0) for b in bars[-21:-1] if b.get("v", 0.0) > 0]
+        avg = sum(recent_vols) / len(recent_vols) if recent_vols else 0
+        cur_v = bars[-1].get("v", 0.0)
+        metrics = [
+            {"label": "Tespit", "value": "Son 30 barda anormal hacim popu yok"},
+            {"label": "Bugünkü hacim", "value": f"{cur_v:,.0f}" if cur_v else "—"},
+            {"label": "20-bar ortalama", "value": f"{avg:,.0f}" if avg else "—"},
+            {"label": "Oran", "value": f"{cur_v/avg:.2f}x" if avg > 0 else "—"},
+            {"label": "OBV (şimdi)", "value": f"{obv_series[-1]:,.0f}" if obv_series[-1] is not None else "—"},
+            {"label": "CMF(20) (şimdi)", "value": f"{cmf_series[-1]:+.3f}" if cmf_series[-1] is not None else "—"},
+            {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
+        ]
+        headline = f"{cfg['label']} için son 30 barda 1.8x üstü hacim popu yok — akış normal seyirde."
+
+    return {
+        "annotations": annotations,
+        "metrics": metrics,
+        "headline": headline,
+        "indicators": {"ema20": ti.ema(closes, 20), "obv": obv_series, "cmf20": cmf_series},
+        "found": found_bar is not None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # TEACHING — karakter + senaryo (her teknik için)
 # ---------------------------------------------------------------------------
 def _teaching(technique: str, found: bool, cfg: dict, label: str) -> dict:
@@ -909,6 +1310,240 @@ def _teaching(technique: str, found: bool, cfg: dict, label: str) -> dict:
             ),
         },
     }
+    # Faz 2 teknikleri
+    teachings.update({
+        "fibonacci-retracement": {
+            "character": "Ayşe",
+            "intro": (
+                f"Ayşe Fibonacci aracını {asset_name} grafiğine çiziyor. Soru: kalabalığın "
+                "koordinatlı durduğu seviyeler nerede? 0.382, 0.500, 0.618 ve 0.786 — bu dört "
+                "rakam matematikle psikolojinin buluştuğu yerlerdir."
+            ),
+            "steps": [
+                {
+                    "title": "Sahne 1 — Swing'i seç",
+                    "body": (
+                        "Ayşe önce hareketin net olduğu en geniş swing low ve swing high'ı bulur. "
+                        "Yanlış swing seçilirse seviyeler yanıltıcı olur. Doğru çizimde araç "
+                        "kalabalığın hafızasıyla aynı koordinatları üretir."
+                    ),
+                },
+                {
+                    "title": "Sahne 2 — Derinliği yorumla",
+                    "body": (
+                        "0.382 = sağlam trend (sığ düzeltme), 0.500 = psikolojik orta, 0.618 = "
+                        "derin ama trend hâlâ sağlam, 0.786 = son kale (altında trend hipotezi "
+                        "kırılır). Ayşe fiyatın hangi seviyeye geldiğini görerek 'trend ne durumda' "
+                        "sorusuna ön cevap yazar."
+                    ),
+                },
+                {
+                    "title": "Sahne 3 — Confluence ara",
+                    "body": (
+                        "Tek başına Fibonacci 'belki'. Aynı seviyede EMA50 + yatay destek + yuvarlak "
+                        "sayı varsa, dört topluluk aynı yerde emir biriktirir — seviye 'mutlaka dikkat' "
+                        "zonuna döner. Ayşe işlem kararını confluence kalitesine bağlar."
+                    ),
+                },
+            ],
+            "takeaway": (
+                "Fibonacci 'sihir' değil; kalabalığın koordinatlı durduğu yerlerin haritasıdır. "
+                "Tek seviye ihtimal, confluence yığını karar zemini. 0.786 altı yapı kırılması "
+                "eşiğidir — orada dikkat iki kat artar."
+            ),
+        },
+        "rsi-divergence": {
+            "character": "Selin",
+            "intro": (
+                f"Selin {asset_name} grafiğinde RSI'ı açtı. Fiyat ve RSI ters yönde mi? Bu "
+                "klasik divergence sorusu — 'trendin altındaki gizli yorgunluk' hikayesi."
+            ),
+            "steps": [
+                {
+                    "title": "Sahne 1 — Pivotları işaretle",
+                    "body": (
+                        "Selin önce fiyatın son iki belirgin dip/tepesini bulur. Sonra RSI'ın aynı "
+                        "barlardaki değerini okur. Pivotları işaretlemeden divergence yorumu havada "
+                        "kalır — hangi iki nokta karşılaştırılıyor netleşmelidir."
+                    ),
+                },
+                {
+                    "title": "Sahne 2 — Yön farkını yakala",
+                    "body": (
+                        "Fiyat yeni dip yapıyor ama RSI daha yüksek dip yapıyor → bullish klasik "
+                        "divergence (taban dönüş adayı). Fiyat yeni tepe yapıyor ama RSI daha düşük "
+                        "tepe yapıyor → bearish klasik divergence (tepe dönüş adayı). Tek başına "
+                        "alım/satım değil — sadece dikkat zonu."
+                    ),
+                },
+                {
+                    "title": "Sahne 3 — Teyidi bekle",
+                    "body": (
+                        "Divergence görüldüğünde Selin hemen pozisyon açmaz. Mum şekli (çekiç/yıldız), "
+                        "S/R tepkisi ve hacim teyidi aranır. Üç-dört kanıt birikmeden işlem yok — bu "
+                        "divergence cluster'larında haftalarca yanlış sinyal almamanın yoludur."
+                    ),
+                },
+            ],
+            "takeaway": (
+                "Divergence trendin altındaki sessiz tükenmeyi gösterir. Klasik divergence dönüş "
+                "adayı, gizli divergence devam adayı — ikisini karıştırmak en sık hatadır. Tek "
+                "başına işlem değil, çok-kanıt bekleyen 'dikkat sinyali'."
+            ),
+        },
+        "macd-crossover": {
+            "character": "Mehmet",
+            "intro": (
+                f"Mehmet {asset_name} grafiğinde MACD panelini açtı. İki çizgi kesişiyor mu? "
+                "Sıfır çizgisinin neresinde? Bu iki soru cross sinyalinin kalitesini belirler."
+            ),
+            "steps": [
+                {
+                    "title": "Sahne 1 — Cross yönünü ayırt et",
+                    "body": (
+                        "MACD line, signal line'ı aşağıdan yukarı keserse 'bullish cross'; yukarıdan "
+                        "aşağı keserse 'bearish cross'. Histogram cross'tan birkaç bar önce sıfıra "
+                        "döner — Mehmet bu erken uyarıyı izler."
+                    ),
+                },
+                {
+                    "title": "Sahne 2 — Sıfır çizgisini oku",
+                    "body": (
+                        "Cross'un sıfır çizgisine göre konumu kritiktir. Sıfır üstü bullish cross = "
+                        "'trend devam' sinyali (güçlü). Sıfır altı bullish cross = 'düşüş içinde tepki' "
+                        "(zayıf). Konum, sinyal kalitesini değiştirir."
+                    ),
+                },
+                {
+                    "title": "Sahne 3 — Histogram ve teyit",
+                    "body": (
+                        "Mehmet cross sonrası histogramın büyüyüp büyümediğine bakar. Büyüyorsa "
+                        "trend hızlanıyor; küçülüyorsa sinyal yalan adayı. Trend filtresi (EMA200) "
+                        "ile çakışan cross'lar ek ağırlık alır."
+                    ),
+                },
+            ],
+            "takeaway": (
+                "MACD cross tek başına 'al/sat' değil. Sıfır çizgisi mevkisi sinyal kalitesini "
+                "belirler; histogram momentumun hızını gösterir. Trend ve sıfır pozisyonu eşleşen "
+                "cross'lar klasik 'güçlü teyit' verir."
+            ),
+        },
+        "golden-cross": {
+            "character": "Zeynep",
+            "intro": (
+                f"Zeynep {asset_name} grafiğinde SMA50 ve SMA200'ü açtı. İki çizgi nerede? "
+                "Kesişti mi? Bu klasik 'yatırımcı çizgileri' uzun-vade trendin habercisidir."
+            ),
+            "steps": [
+                {
+                    "title": "Sahne 1 — Dizilimi gör",
+                    "body": (
+                        "Önce mevcut dizilim: SMA50 > SMA200 ise yükseliş yapısı, tersi düşüş. "
+                        "Aradaki fark büyüyorsa trend hızlanıyor; daralıyorsa cross yaklaşıyor "
+                        "olabilir. Zeynep bu 'sıkışma'yı erken uyarı olarak kullanır."
+                    ),
+                },
+                {
+                    "title": "Sahne 2 — Cross olayı",
+                    "body": (
+                        "Golden Cross: SMA50 yukarıdan SMA200'ü keser → ana trend yükselişe döndü "
+                        "habercisi. Death Cross: tam tersi → düşüşe döndü. Bu çizgiler gecikmelidir; "
+                        "cross olduğunda hareketin bir kısmı kaçırılmıştır."
+                    ),
+                },
+                {
+                    "title": "Sahne 3 — Yorum ve plan",
+                    "body": (
+                        "Zeynep golden cross sonrası 'yatırımcı bias'ını yukarı çevirir; portföy "
+                        "ağırlığı artırılır. Death cross sonrası risk azaltma, nakit ağırlığı artırma "
+                        "klasik refleks. Bu çizgiler 'gün-içi karar' değil, 'ay-yıl politikası' aracıdır."
+                    ),
+                },
+            ],
+            "takeaway": (
+                "Golden/Death Cross gecikmeli ama güvenilirdir. Yatay piyasada zayıf, trend "
+                "piyasasında muhteşemdir. 'Yatırımcı çizgileri' adıyla anılır çünkü gün-içi "
+                "değil, ana yön politikası için tasarlanmıştır."
+            ),
+        },
+        "bollinger-squeeze": {
+            "character": "Burak",
+            "intro": (
+                f"Burak {asset_name} grafiğinde Bollinger Bantları'nın daralıp daralmadığına bakıyor. "
+                "Sessizlik fırtına öncüsü mü? Bu klasik 'enerji birikimi' sorusu."
+            ),
+            "steps": [
+                {
+                    "title": "Sahne 1 — Bant genişliğini izle",
+                    "body": (
+                        "Bantlar 20 SMA etrafında ±2 standart sapma. Sapma daralıyorsa volatilite "
+                        "düşüyor → bantlar sıkışıyor. Burak son 120 barın bant genişliği yüzdelik "
+                        "diliminde alt %20'ye geldiyse 'squeeze aktif' der."
+                    ),
+                },
+                {
+                    "title": "Sahne 2 — Yön bekleme",
+                    "body": (
+                        "Squeeze yön söylemez — sadece 'yakında büyük hareket' der. Burak iki "
+                        "tarafa da plan yazar: üst bant kırılım + hacim güçlü → bullish; alt bant "
+                        "kırılım + hacim güçlü → bearish. Yön piyasa kararıyla netleşir."
+                    ),
+                },
+                {
+                    "title": "Sahne 3 — Hedef projeksiyonu",
+                    "body": (
+                        "Kırılım gerçekleştiğinde hedef projeksiyon: squeeze sırasındaki en geniş "
+                        "bant genişliği kadar kırılım yönüne yansıtılır. Stop, bantın diğer tarafına "
+                        "kalır. Burak hacim teyidi olmadan kırılımı sahte sayar; bekler."
+                    ),
+                },
+            ],
+            "takeaway": (
+                "Bollinger squeeze bir 'sessizlik fırtınası' örüntüsüdür. Yön sinyali değil, "
+                "hareket sinyali. Daralma ne kadar uzun ve dar olursa, sonraki kırılım o kadar "
+                "büyüktür; hacim teyidi olmadan kırılım sahte adayıdır."
+            ),
+        },
+        "volume-pop": {
+            "character": "Murat",
+            "intro": (
+                f"Murat hacme bakan bir trader. {asset_name} grafiğinde son barlarda anormal "
+                "yüksek hacim var mı? Bu 'kim gerçekten taşıdı' sorusunun cevabı."
+            ),
+            "steps": [
+                {
+                    "title": "Sahne 1 — Anormal hacmi tespit et",
+                    "body": (
+                        "Murat son 20 barın ortalama hacmini hesaplar. Mevcut bar bunun 1.8x üstüne "
+                        "çıktıysa 'volume pop' aktif. 1.5-2x güçlü, 3x+ blow-off, 0.5x altı zayıf "
+                        "hareket — hacim oranı hareketin ağırlığını söyler."
+                    ),
+                },
+                {
+                    "title": "Sahne 2 — Yön ve mum yapısı",
+                    "body": (
+                        "Pop'un yönü mum yapısıyla okunur. Büyük yeşil + yüksek hacim = sağlam alıcı "
+                        "baskısı. Büyük kırmızı + yüksek hacim = sağlam satıcı baskısı. Doji + yüksek "
+                        "hacim = kararsızlık (climax adayı, dönüş öncüsü olabilir)."
+                    ),
+                },
+                {
+                    "title": "Sahne 3 — Akış teyidi",
+                    "body": (
+                        "Murat OBV ve CMF ile akış istikrarını doğrular. Pop bullish ve OBV "
+                        "yeni zirvedeyse trend güçlü. Pop bullish ama OBV LH ise akış divergence — "
+                        "sürpriz dönüş riski yüksek. Pop tek başına değil, akış bağlamıyla karar zemini."
+                    ),
+                },
+            ],
+            "takeaway": (
+                "Hacim hareketin ağırlığıdır. Anormal pop bir 'kim gerçekten taşıdı' sinyalidir "
+                "— ama yön mum yapısıyla, sürdürülebilirlik OBV/CMF akış teyidiyle okunur. "
+                "Tek başına pop 'olay var' der, 'karar' demez."
+            ),
+        },
+    })
     return teachings.get(technique, {})
 
 
@@ -922,6 +1557,13 @@ _TECHNIQUES = {
     "head-shoulders":             {"detect": _detect_hs,           "name": "Omuz-Baş-Omuz",         "default_asset": "BTC"},
     "double-bottom":              {"detect": _detect_double_bottom, "name": "İkili Dip / İkili Tepe", "default_asset": "BTC"},
     "triangle-breakout":          {"detect": _detect_triangle,     "name": "Üçgen Kırılımı",        "default_asset": "BTC"},
+    # Faz 2
+    "fibonacci-retracement":      {"detect": _detect_fibonacci_retracement, "name": "Fibonacci Geri Çekilme", "default_asset": "BTC"},
+    "rsi-divergence":             {"detect": _detect_rsi_divergence,        "name": "RSI Divergence",         "default_asset": "BTC"},
+    "macd-crossover":             {"detect": _detect_macd_crossover,        "name": "MACD Kesişimi",          "default_asset": "BTC"},
+    "golden-cross":               {"detect": _detect_golden_cross,          "name": "Golden / Death Cross",   "default_asset": "BTC"},
+    "bollinger-squeeze":          {"detect": _detect_bollinger_squeeze,     "name": "Bollinger Squeeze",      "default_asset": "BTC"},
+    "volume-pop":                 {"detect": _detect_volume_pop,            "name": "Volume Pop",             "default_asset": "BTC"},
 }
 
 SUPPORTED_TECHNIQUES = sorted(_TECHNIQUES)
