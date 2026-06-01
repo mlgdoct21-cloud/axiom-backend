@@ -1,0 +1,485 @@
+# AXIOM Teknik Analiz Akademisi — Sözlük (Türkçe sezgi sözlüğü)
+#
+# Bu dosya AXIOM TA Akademisi'nin terminoloji çapasıdır. İnsan-onaylı,
+# dondurulmuş içerik — runtime'da AI üretmez.
+#
+# İlke:
+# 1) Türkçe sezgi terimi BİRİNCİL; İngilizce parantez içinde referans olarak.
+# 2) Navigasyon vokabüleri (pusula/harita/sığlık) AXIOM TA'nın marka sesi —
+#    kavram navigasyon imgesine benziyorsa o bağı kur.
+# 3) Tanım kısa + sezgi cümlesi + (varsa) tipik yanılgı uyarısı.
+# 4) "Şunu al/sat" dili YASAK; "şöyle işler" dili kullan (SPK eğitim).
+
+metadata:
+  version: 1
+  language: tr
+  source_of_truth: "Statik insan-onaylı içerik"
+  brand_voice: navigation
+  disclaimer: "Bu içerik EĞİTİM amaçlıdır. Yatırım tavsiyesi değildir (SPK)."
+
+# ============================================================================
+# 1. YAPI — Grafiğin temel yapı taşları
+# ============================================================================
+yapi:
+  - slug: mum
+    tr: "Mum (Candlestick)"
+    intuition: "Bir periyottaki fiyat hareketini tek bir görsel paketle özetleyen yapı taşı."
+    one_liner: "Açılış, yüksek, düşük, kapanış (OHLC) → gövde + fitil görseli."
+
+  - slug: ohlc
+    tr: "OHLC (Open-High-Low-Close)"
+    intuition: "Bir periyodun dört temel sayısı: açılış, yüksek, düşük, kapanış."
+    one_liner: "TA'nın atomik veri birimi — tüm indikatörler bu dört sayı üzerine kurulur."
+
+  - slug: govde
+    tr: "Gövde (Body)"
+    intuition: "Mumun açılış ile kapanış arasındaki dolu alan."
+    one_liner: "Yeşil gövde = kapanış > açılış (boğa); kırmızı = tersi."
+    pitfall: "Küçük gövde 'hareketsizlik' değil, 'kararsızlık' demektir — fitil de okunmalı."
+
+  - slug: fitil
+    tr: "Fitil / Gölge (Wick / Shadow)"
+    intuition: "Mumun gövdesinden yukarı ve aşağı uzanan ince çizgi — denenip reddedilen seviyeler."
+    one_liner: "Uzun fitil 'sınama + reddetme' anlatır; piyasanın o yöne gitmediğini söyler."
+
+  - slug: dogu-mumu
+    tr: "Boğa / Ayı Mumu"
+    intuition: "Yeşil = boğa (alıcı kazandı), Kırmızı = ayı (satıcı kazandı)."
+    one_liner: "Mumun rengi periyot içindeki kazananı söyler; gövde büyüklüğü kazanma şiddetini."
+
+  - slug: trend
+    tr: "Trend"
+    intuition: "Fiyatın yapısal devamlılıkla bir yöne ilerlemesi — sadece 'yön' değil, 'yapı'."
+    one_liner: "Yükseliş = HH + HL serisi; düşüş = LH + LL serisi; yatay = ikisi de kırık."
+
+  - slug: higher-high
+    tr: "Yüksek-Yüksek (Higher High, HH)"
+    intuition: "Yeni zirvenin bir öncekinden yüksek olması — yükseliş trendinin imzası."
+    one_liner: "HH olmadan yükseliş trendi 'geçerli' kabul edilmez."
+
+  - slug: higher-low
+    tr: "Yüksek-Düşük (Higher Low, HL)"
+    intuition: "Yeni geri çekilmenin bir öncekinden yüksek noktada durması."
+    one_liner: "HL serisi alıcıların her dipte daha agresif olduğunu söyler."
+
+  - slug: lower-high
+    tr: "Alçak-Yüksek (Lower High, LH)"
+    intuition: "Yeni zirvenin bir öncekinden alçak kalması — düşüş trendinin imzası."
+    one_liner: "LH = satıcılar her ralliyi daha düşükten karşılar."
+
+  - slug: lower-low
+    tr: "Alçak-Düşük (Lower Low, LL)"
+    intuition: "Yeni dibin bir öncekinden alçak olması."
+    one_liner: "LL serisi düşüş trendinin yapısal devamlılığıdır."
+
+  - slug: swing-noktasi
+    tr: "Swing Noktası"
+    intuition: "Bir trend içinde belirgin tepe (swing high) veya dip (swing low)."
+    one_liner: "Bir bar etrafındaki N bar içinde en yüksek/en alçaksa pivot kabul edilir."
+    pitfall: "Pivot tanımı 'kaç bar?' parametresine bağlıdır — daha geniş pencere daha büyük swing'i ayıklar."
+
+  - slug: zaman-dilimi
+    tr: "Zaman Dilimi (Timeframe, TF)"
+    intuition: "Bir mumun temsil ettiği süre — günlük, 4 saatlik, 15 dakikalık vs."
+    one_liner: "Aynı varlık farklı TF'lerde farklı 'hikaye' anlatır; karar verilen TF de bilgidir."
+
+  - slug: mtf
+    tr: "Çoklu Zaman Dilimi (Multi-Timeframe Analysis, MTF)"
+    intuition: "Birden fazla TF'ı aynı anda inceleyerek 'üç dilim hizada' arama disiplini."
+    one_liner: "HTF (yüksek) yön verir, LTF (düşük) tetik üretir."
+
+  - slug: htf
+    tr: "Yüksek Zaman Dilimi (Higher Timeframe)"
+    intuition: "Uzun süreli yapıyı gösteren grafik (haftalık, günlük)."
+    one_liner: "HTF çatışma çıktığında ana yön HTF'ye verilir — 'HTF wins'."
+
+  - slug: ltf
+    tr: "Düşük Zaman Dilimi (Lower Timeframe)"
+    intuition: "Kısa süreli detayı gösteren grafik (1H, 15m, 5m)."
+    one_liner: "LTF tetik, giriş hassasiyeti ve stop yerleştirme için."
+
+  - slug: fiyat-aksiyonu
+    tr: "Fiyat Aksiyonu (Price Action)"
+    intuition: "Mum, fitil, hacim ve seviyelerden indikator kullanmadan okuma yapma disiplini."
+    one_liner: "İndikatörler türetilmiş; price action ham kaynak."
+
+  - slug: menzil
+    tr: "Menzil (Range)"
+    intuition: "Bir mumun yüksek-düşük farkı; o periyottaki oynaklığın özeti."
+    one_liner: "Ortalama menzilden 2x büyük mum 'karakter taşıyor' demektir."
+
+  - slug: hacim
+    tr: "Hacim (Volume)"
+    intuition: "Bir periyotta el değiştiren miktar — hareketin 'gerçekliğini' teyit eden veri."
+    one_liner: "Yüksek hacim + büyük hareket = trade'lendirildi; düşük hacim + hareket = şüpheli."
+
+  - slug: gurultu
+    tr: "Gürültü (Noise)"
+    intuition: "Anlamlı bilgi taşımayan küçük, hacimsiz, kritik seviye dışı hareket."
+    one_liner: "Disiplin: gürültüyü dinleme, sinyali dinle."
+
+# ============================================================================
+# 2. SEVİYELER — Destek/direnç, trend çizgisi, kanal
+# ============================================================================
+seviyeler:
+  - slug: destek
+    tr: "Destek (Support)"
+    intuition: "Aşağıdan gelen baskıyı durduran fiyat bölgesi — alıcıların yoğunlaştığı bant."
+    one_liner: "Tek bir çizgi değil bant olarak düşün — piksel hassasiyeti yanlış."
+
+  - slug: direnc
+    tr: "Direnç (Resistance)"
+    intuition: "Yukarıdan gelen ilerlemeyi durduran bölge — satıcı yoğunluğu."
+    one_liner: "Çoğu kez eski tepe seviyesi; aşıldığında polariteyle destek olur."
+
+  - slug: polarite
+    tr: "Polarite / Rol Değişimi (Polarity)"
+    intuition: "Delinen direnç destek olur, delinen destek direnç olur — fiyatın hafızası."
+    one_liner: "Eski direnç tepki üretiyorsa, yeni desteğin gerçek olduğu teyit edilir."
+
+  - slug: role-reversal
+    tr: "Rol Değişimi (Role Reversal)"
+    intuition: "Polarite'nin başka adı — seviyenin destek/direnç rolünün karşı tarafa geçmesi."
+    one_liner: "Kırılım sonrası retest'te eski seviyenin tepki üretmesi = polarite çalışıyor."
+
+  - slug: trend-cizgisi
+    tr: "Trend Çizgisi (Trendline)"
+    intuition: "İki veya daha fazla swing noktasını birleştiren ve trendin yapısal sınırını gösteren çizgi."
+    one_liner: "İki nokta hipotez, üçüncü temas çizgiyi 'canlı' yapar."
+    pitfall: "Sürekli yeniden çizilen trend çizgisi yok demektir — piyasa çizmeli, sen değil."
+
+  - slug: teyit
+    tr: "Teyit (Confirmation)"
+    intuition: "Bir sinyalin geçerli sayılabilmesi için aranan ek koşul (kapanış, hacim, retest)."
+    one_liner: "Teyitsiz sinyal hipotez, teyitli sinyal karar zemini."
+
+  - slug: kanal
+    tr: "Kanal (Channel)"
+    intuition: "Bir trend çizgisi + paraleli; fiyatın aktığı dar yatak."
+    one_liner: "Alt sınır destek, üst sınır direnç görevi görür."
+
+  - slug: yukselen-kanal
+    tr: "Yükselen Kanal (Ascending Channel)"
+    intuition: "İki paralel yukarı eğimli çizgi; yükseliş trendinin dar yatağı."
+    one_liner: "Alt sınırdan tepki = alıcı geri döndü; üst sınır = kar realizasyonu adayı."
+
+  - slug: alcalan-kanal
+    tr: "Alçalan Kanal (Descending Channel)"
+    intuition: "İki paralel aşağı eğimli çizgi; düşüş trendinin dar yatağı."
+    one_liner: "Üst sınırdan reddedilme = satıcı baskısı sürüyor."
+
+  - slug: range
+    tr: "Yatay Range (Sideways Range)"
+    intuition: "İki paralel yatay çizgi arasında fiyatın gidip geldiği sıkışma."
+    one_liner: "Range bittiğinde yön söylenir — bekleme modu."
+
+  - slug: kirilim
+    tr: "Kırılım (Breakout)"
+    intuition: "Fiyatın bir destek veya direncin üzerinde/altında kapanması."
+    one_liner: "Üç teyit kriteri: kapanış + hacim + retest."
+
+  - slug: sahte-kirilim
+    tr: "Sahte Kırılım (Fakeout / False Breakout)"
+    intuition: "Seviyenin fitille değildiği ama kapanışın geri döndüğü hareket — tuzak."
+    one_liner: "Disiplinli trader sahte kırılımda kaybolmaz çünkü kapanış teyidi bekler."
+
+  - slug: bull-trap
+    tr: "Boğa Tuzağı (Bull Trap)"
+    intuition: "Yukarı sahte kırılım — alıcılar tuzağa düşer, fiyat geri döner."
+    one_liner: "Direnç delindi sanıldı; aslında satıcılar geri tepti."
+
+  - slug: bear-trap
+    tr: "Ayı Tuzağı (Bear Trap)"
+    intuition: "Aşağı sahte kırılım — satıcılar tuzağa düşer, fiyat geri tepki üretir."
+    one_liner: "Destek delindi sanıldı; aslında alıcılar geri çekti."
+
+  - slug: retest
+    tr: "Geri Test (Retest)"
+    intuition: "Kırılım sonrası fiyatın eski seviyeye dönüp tepki vermesi."
+    one_liner: "Polarite çalışıyorsa retest tepki üretir — kırılımın 'gerçek olduğunun' imzası."
+
+  - slug: sinir-islemi
+    tr: "Sınır İşlemi (Range Trading)"
+    intuition: "Range içinde alt sınırdan al, üst sınırdan sat stratejisi."
+    one_liner: "Sınıra yakın dar stop disiplin gerektirir — range kırılırsa hızla çık."
+
+# ============================================================================
+# 3. FORMASYON — Klasik chart pattern'leri
+# ============================================================================
+formasyon:
+  - slug: ucgen
+    tr: "Üçgen (Triangle)"
+    intuition: "Fiyatın iki yakınlaşan çizgi arasına sıkıştığı formasyon ailesi."
+    one_liner: "Üç tip: yükselen, alçalan, simetrik. Hepsi 'sıkışma + kırılım' yapısı."
+
+  - slug: yukselen-ucgen
+    tr: "Yükselen Üçgen (Ascending Triangle)"
+    intuition: "Yatay üst direnç + yükselen alt dipler — alıcı baskısı artıyor."
+    one_liner: "Beklenti: yukarı kırılım. Klasik 'devam' formasyonu."
+
+  - slug: alcalan-ucgen
+    tr: "Alçalan Üçgen (Descending Triangle)"
+    intuition: "Yatay alt destek + alçalan tepeler — satıcı baskısı artıyor."
+    one_liner: "Beklenti: aşağı kırılım."
+
+  - slug: simetrik-ucgen
+    tr: "Simetrik Üçgen (Symmetric Triangle)"
+    intuition: "Hem tepeler hem dipler birbirine yaklaşır — belirsizlik formasyonu."
+    one_liner: "Ana trendin devamı yönünde kırılım istatistiksel olarak daha sık."
+
+  - slug: kirilim-hedefi
+    tr: "Kırılım Hedefi (Breakout Target)"
+    intuition: "Formasyonun en geniş yerinin yüksekliği, kırılım noktasından projeksiyon."
+    one_liner: "Garanti değil 'ölçülü hedef' (measured move) — hedef, durdurma değildir."
+
+  - slug: bayrak
+    tr: "Bayrak (Flag)"
+    intuition: "Güçlü trendin ardından kısa, ters eğimli paralel kanal — nefes molası."
+    one_liner: "Bayrak kısa (~5-15 mum); 20+ mum süren bayrak yapısını yitirir."
+
+  - slug: flama
+    tr: "Flama (Pennant)"
+    intuition: "Bayrağa benzer ama küçük simetrik üçgen şeklinde."
+    one_liner: "Sert hareket sonrası küçük üçgenleşme — devam beklentisi."
+
+  - slug: bayrak-diregi
+    tr: "Bayrak Direği (Flagpole)"
+    intuition: "Bayrak/flama formasyonundan önceki sert hareket."
+    one_liner: "Direğin uzunluğu kırılım sonrası hedef projeksiyonu için kullanılır."
+
+  - slug: projeksiyon
+    tr: "Projeksiyon (Measured Move)"
+    intuition: "Formasyon yüksekliğinin kırılım noktasından eklenmesi/çıkarılmasıyla hesaplanan hedef."
+    one_liner: "Ölçülü beklenti; geometrik tahmindir, garanti değil."
+
+  - slug: dikdortgen
+    tr: "Dikdörtgen (Rectangle)"
+    intuition: "İki paralel yatay çizgi arasında konsolidasyon."
+    one_liner: "Kırılım yönü devam mı dönüş mü olduğunu belirler — formasyonun kendisi nötr."
+
+  - slug: yukselen-kama
+    tr: "Yükselen Kama (Rising Wedge)"
+    intuition: "İki yukarı eğimli yakınlaşan çizgi — momentum azalan yükseliş."
+    one_liner: "Karşı-sezgisel: yükselen kama AYI sinyalidir; aşağı kırılım beklenir."
+
+  - slug: alcalan-kama
+    tr: "Alçalan Kama (Falling Wedge)"
+    intuition: "İki aşağı eğimli yakınlaşan çizgi — momentum azalan düşüş."
+    one_liner: "Karşı-sezgisel: alçalan kama BOĞA sinyalidir; yukarı kırılım beklenir."
+
+  - slug: momentum-zayıflama
+    tr: "Momentum Zayıflaması"
+    intuition: "Fiyat aynı yönde devam ediyor ama her yeni hareketin gücü azalıyor."
+    one_liner: "Klasik divergence sinyalleri ve kama formasyonlarının altyapısı."
+
+  - slug: omuz-bas-omuz
+    tr: "Omuz-Baş-Omuz (Head and Shoulders, H&S)"
+    intuition: "Üç tepe: ortadaki en yüksek (baş), iki yandaki daha alçak (omuzlar). Klasik yükseliş→düşüş dönüşü."
+    one_liner: "Boyun çizgisi (iki ara dipten geçen) aşağı kırılınca formasyon onaylanır."
+
+  - slug: ters-omuz-bas-omuz
+    tr: "Ters Omuz-Baş-Omuz (Inverse H&S)"
+    intuition: "Üç dip: ortadaki en derin, iki yandaki daha sığ. Düşüş→yükseliş dönüşü."
+    one_liner: "Boyun çizgisi yukarı kırılınca formasyon onaylanır."
+
+  - slug: boyun-cizgisi
+    tr: "Boyun Çizgisi (Neckline)"
+    intuition: "H&S formasyonundaki iki ara dip (veya tepe) arasından geçen yatay/eğimli çizgi."
+    one_liner: "Kırılım noktası; formasyonun tamamlanma onayı."
+
+  - slug: formasyon-hedefi
+    tr: "Formasyon Hedefi"
+    intuition: "Baş ile boyun çizgisi arasındaki mesafe, kırılım noktasından projeksiyon."
+    one_liner: "Ölçülü hedef — H&S'in klasik fiyat projeksiyon mantığı."
+
+  - slug: ikili-tepe
+    tr: "İkili Tepe (Double Top)"
+    intuition: "Aynı seviyeye iki kez ulaşıp ikisinde de geçemeyen formasyon."
+    one_liner: "İki ara dip = boyun çizgisi; aşağı kırılınca formasyon tamamlanır."
+
+  - slug: ikili-dip
+    tr: "İkili Dip (Double Bottom)"
+    intuition: "Aynı dipten iki kez döndükten sonra ara tepeyi kırma."
+    one_liner: "Düşüş→yükseliş dönüşünün klasik sinyali."
+
+  - slug: boyun-cizgisi-double
+    tr: "Boyun Çizgisi (Double Top/Bottom)"
+    intuition: "İki tepe (veya iki dip) arasındaki ara seviye."
+    one_liner: "Bu seviye kırılınca formasyon onaylanır."
+
+  - slug: uclu-tepe
+    tr: "Üçlü Tepe (Triple Top)"
+    intuition: "Aynı bölgeyi üç kez deneyip üç kez geri tepilme."
+    one_liner: "İkili tepenin daha güçlü versiyonu — üç başarısız deneme."
+
+  - slug: uclu-dip
+    tr: "Üçlü Dip (Triple Bottom)"
+    intuition: "Aynı dipten üç kez dönüş."
+    one_liner: "İkili dipten daha güçlü dönüş hipotezi."
+
+  - slug: v-donus
+    tr: "V-Dönüşü (V Reversal)"
+    intuition: "Sert düşüş + tek mum içinde keskin tepki — capitulation klasiği."
+    one_liner: "Hipotez güçlü ama trend dönüşü için sonraki mumların teyidi gerekli."
+
+  - slug: capitulation
+    tr: "Capitulation (Teslimiyet)"
+    intuition: "Düşüşün son aşaması: panik satışları, yüksek hacim, uzun alt fitilli mum."
+    one_liner: "Dönüş habercisi olabilir ama tek başına dönüş demek değildir."
+
+  - slug: dead-cat-bounce
+    tr: "Ölü Kedi Sıçraması (Dead Cat Bounce)"
+    intuition: "Düşüşün ortasında geçici, kısa süreli tepki yükselişi — kalıcı değil."
+    one_liner: "V-dönüşle karıştırılır; sonraki mumların eski seviyeleri geri alıp almadığına bakılır."
+
+  - slug: yuvarlanan-dip
+    tr: "Yuvarlanan Dip (Rounding Bottom)"
+    intuition: "Aylar süren, yumuşak kavis şeklinde dönüş — V'nin tam tersi yapı."
+    one_liner: "Yavaş, dramatik değil ama daha sağlam dönüş yapısı."
+
+# ============================================================================
+# 4. MUM DESENLERİ — Candlestick patterns
+# ============================================================================
+mum_desenleri:
+  - slug: doji
+    tr: "Doji"
+    intuition: "Açılış ve kapanışın neredeyse aynı olduğu mum — karar anı, kararsızlık."
+    one_liner: "Tek başına karar değildir; konum + sonraki mum onay verir."
+
+  - slug: dragonfly-doji
+    tr: "Yusufçuk Doji (Dragonfly Doji)"
+    intuition: "Uzun alt fitil + üst fitil yok denecek kadar küçük + gövdesiz."
+    one_liner: "Dipte boğa sinyali — aşağıdan keskin tepki anlatır."
+
+  - slug: gravestone-doji
+    tr: "Mezar Taşı Doji (Gravestone Doji)"
+    intuition: "Uzun üst fitil + alt fitil yok + gövdesiz."
+    one_liner: "Tepede ayı sinyali — yukarı denendi, reddedildi."
+
+  - slug: long-legged-doji
+    tr: "Uzun Bacaklı Doji (Long-Legged Doji)"
+    intuition: "Hem üst hem alt uzun fitil + minik gövde — aşırı kararsızlık."
+    one_liner: "Büyük hareket öncesi sıkışma — yön sonraki mumlarla netleşir."
+
+  - slug: cekic
+    tr: "Çekiç (Hammer)"
+    intuition: "Küçük gövde + uzun alt fitil + üst fitil yok. Düşüş trendinin sonunda dönüş sinyali."
+    one_liner: "Aşağı itildi, alıcılar tabandan geri çıkardı — boğa habercisi."
+
+  - slug: asilan-adam
+    tr: "Asılan Adam (Hanging Man)"
+    intuition: "Çekiçle aynı şekil ama yükseliş trendinin tepesinde — ayı sinyali."
+    one_liner: "Aynı görünüm, farklı konum, ters anlam. Konum belirleyici."
+
+  - slug: ters-cekic
+    tr: "Ters Çekiç (Inverted Hammer)"
+    intuition: "Küçük gövde + uzun üst fitil + alt fitil yok. Düşüş sonunda dönüş ihtimali."
+    one_liner: "Yukarı denendi; tek başına zayıf, ertesi mum güçlü yeşil olursa onay."
+
+  - slug: shooting-star
+    tr: "Vurulan Yıldız (Shooting Star)"
+    intuition: "Ters çekiçle aynı şekil ama yükseliş tepesinde — ayı sinyali."
+    one_liner: "Yukarı denendi reddedildi; tepe yorgunluğu işareti."
+
+  - slug: bullish-engulfing
+    tr: "Boğa Yutan (Bullish Engulfing)"
+    intuition: "Küçük kırmızı + büyük yeşil mum; yeşil gövde kırmızıyı tam yutar."
+    one_liner: "Düşüş trendinin sonunda klasik güçlü dönüş sinyali."
+
+  - slug: bearish-engulfing
+    tr: "Ayı Yutan (Bearish Engulfing)"
+    intuition: "Küçük yeşil + büyük kırmızı; kırmızı gövde yeşili yutar."
+    one_liner: "Yükseliş tepesinde klasik dönüş sinyali."
+
+  - slug: yutan-formasyon
+    tr: "Yutan Formasyon (Engulfing Pattern)"
+    intuition: "İkili mum dönüş formasyonlarının en güçlülerinden — gövde yutması."
+    one_liner: "Sadece gövde yutar; fitil yutması sayılmaz."
+
+  - slug: morning-star
+    tr: "Sabah Yıldızı (Morning Star)"
+    intuition: "Üçlü mum boğa dönüşü: büyük kırmızı + küçük gövdeli kararsızlık + büyük yeşil."
+    one_liner: "Üçüncü yeşil mum ilk kırmızının yarısından fazlasını geri alırsa klasik."
+
+  - slug: evening-star
+    tr: "Akşam Yıldızı (Evening Star)"
+    intuition: "Üçlü mum ayı dönüşü: büyük yeşil + küçük kararsızlık + büyük kırmızı."
+    one_liner: "Yükseliş tepesinde üç-adımlı dönüş hikâyesi."
+
+  - slug: sabah-yildizi
+    tr: "Sabah Yıldızı — Sezgisel"
+    intuition: "Gece bittiğinde sabah yıldızı doğar — düşüş bittiğinde tepki gelir."
+    one_liner: "Üç sahne: panik + kararsızlık + tepki."
+
+  - slug: aksam-yildizi
+    tr: "Akşam Yıldızı — Sezgisel"
+    intuition: "Gün bittiğinde akşam yıldızı doğar — yükseliş bittiğinde dönüş gelir."
+    one_liner: "Üç sahne: coşku + kararsızlık + reddetme."
+
+# ============================================================================
+# 5. FIBONACCI — Geometri ve oran
+# ============================================================================
+fibonacci:
+  - slug: fibonacci-retracement
+    tr: "Fibonacci Geri Çekilme (Fibonacci Retracement)"
+    intuition: "Bir trend hareketinin doğal geri çekilme oranları (0.236, 0.382, 0.5, 0.618, 0.786)."
+    one_liner: "0.5 ve 0.618 en sık reaksiyon üreten 'altın bölge' kabul edilir."
+
+  - slug: fibonacci-extension
+    tr: "Fibonacci Uzantı (Fibonacci Extension)"
+    intuition: "Geri çekilme bittikten sonraki hedef seviyeleri (1.272, 1.618, 2.618)."
+    one_liner: "Yükseliş trendinde retracement sonrası hedef projeksiyonu için kullanılır."
+
+  - slug: altin-oran
+    tr: "Altın Oran (0.618 / 1.618)"
+    intuition: "Doğada ve matematikte tekrar eden oran; TA'da en güçlü Fibonacci seviyesi."
+    one_liner: "Düşüş 0.618'e yakın durduysa, geri tepki olasılığı yapısal olarak yüksektir."
+
+  - slug: swing-high
+    tr: "Swing High (Tepe Pivot)"
+    intuition: "Fibonacci çiziminde başlangıç noktası — yerel zirve."
+    one_liner: "Düzeltme 0% bu seviyede başlar; 100% tam geri çekilme bu seviyeyi tarif eder."
+
+  - slug: swing-low
+    tr: "Swing Low (Dip Pivot)"
+    intuition: "Fibonacci çiziminde bitiş noktası — yerel dip."
+    one_liner: "Düzeltme 100% bu seviyede tamamlanır."
+
+# ============================================================================
+# 6. İNDİKATÖRLER — Faz 2 hazırlık (temel terimler)
+# ============================================================================
+indikatorler:
+  - slug: rsi
+    tr: "RSI (Göreceli Güç Endeksi)"
+    intuition: "Son N periyottaki kazanç/kayıp oranını 0-100 arası ölçekleyen momentum indikatörü."
+    one_liner: ">70 aşırı alım, <30 aşırı satım — ama trendde uzun süre kalabilir."
+
+  - slug: macd
+    tr: "MACD (Moving Average Convergence Divergence)"
+    intuition: "Kısa ve uzun EMA farkı + signal line + histogram — trend ve momentum birleşimi."
+    one_liner: "MACD ile signal kesişimi sinyal üretir; histogram momentum hızını gösterir."
+
+  - slug: ema
+    tr: "EMA (Exponential Moving Average)"
+    intuition: "Yakın geçmişe ağırlık veren hareketli ortalama."
+    one_liner: "Trend yönü için SMA'dan daha hızlı tepki verir; gecikme azaltır."
+
+  - slug: sma
+    tr: "SMA (Simple Moving Average)"
+    intuition: "Son N periyodun fiyat ortalaması — saf, ağırlıksız."
+    one_liner: "Yumuşak, geç tepki — uzun-vade trend için tercih edilir."
+
+  - slug: bollinger
+    tr: "Bollinger Bantları (Bollinger Bands)"
+    intuition: "Orta bant (SMA20) + üst/alt sapma bandı (±2σ). Volatilite zarfı."
+    one_liner: "Bant sıkışması (squeeze) volatilite patlaması öncesi sinyal verir."
+
+  - slug: atr
+    tr: "ATR (Average True Range)"
+    intuition: "Son N mumun ortalama menzili — volatilite ölçümü."
+    one_liner: "Stop-loss yerleştirmenin temel parametresi: 1.5-2 ATR mesafeli stop klasiktir."
+
+  - slug: divergence
+    tr: "Divergence (Uyumsuzluk)"
+    intuition: "Fiyat yeni zirve/dip yaparken indikator (RSI, MACD) yapmaması."
+    one_liner: "Klasik 'momentum tükeniyor' sinyali — özellikle tepe/dip dönüşlerinde önemli."

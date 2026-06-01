@@ -1,0 +1,1189 @@
+# AXIOM Teknik Analiz Akademisi — Müfredat (Faz 1: M1-M5)
+#
+# 5 modül, 20 ders. Türkçe sezgi dili + navigasyon marka vokabüleri
+# (pusula/harita/sığlık — opsiyondaki horology'nin TA muadili).
+# Worked example her derste: kripto (BTC/ETH) + ABD hisse (AAPL/SPY) + bazen BIST (ASELS).
+#
+# Kullanım:
+# - services/academy_service.py bu dosyayı YAML olarak yükler (track=ta).
+# - ta_glossary.yaml ile birlikte çalışır (glossary_refs slug bağı).
+# - tier_required: free | premium | advance
+# - Free kullanıcı M1 + M5L1 tadımlık + glossary tamamı + diğerleri için
+#   "M2-M5 🔒 Premium" teaser görür.
+# - "Şunu al/sat" dili YASAK; "şu olur, şöyle yorumlanır" dili (SPK eğitim).
+# - Sayı/fiyat veren cümle YOK — sayılar runtime'da academy_ta_context.py ile
+#   "bugünkü canlı bağlam rozeti" olarak enjekte edilir.
+
+metadata:
+  version: 1
+  language: tr
+  source_of_truth: "Statik insan-onaylı içerik"
+  brand_voice: navigation
+  disclaimer: "Bu içerik EĞİTİM amaçlıdır. Yatırım tavsiyesi değildir (SPK)."
+  navigation_glossary:
+    chart: "Harita — fiyatın yol günlüğü"
+    compass: "Pusula — yön göstergesi (momentum, RSI)"
+    shoal: "Sığlık — destek/direnç bölgesi"
+    channel: "Kanal — fiyatın aktığı dar yatak"
+    crosswind: "Karşı rüzgar — divergence (fiyat-indikator uyumsuzluğu)"
+    swell: "Şişme — momentum yükselişi"
+    harbor: "Liman — fiyat hedefi"
+
+# ============================================================================
+# MODÜL 1 — Teknik Analizin Diliyle Tanışma
+# Mum, trend, zaman dilimi, fiyat aksiyonu
+# ============================================================================
+modules:
+  - id: M1
+    slug: temel-yapi
+    title: "Teknik Analizin Dilini Öğren — Mum, Trend, Zaman"
+    tagline: "Pusulayı kalibre et — harita okumaya başlamadan önce."
+    tier_required: free
+    summary: |
+      Teknik analizin alfabesi: mum (candlestick), trend (yön), zaman dilimi
+      (timeframe). Bu modül seni bir karta bakıp "bu yukarı gidiyor mu, aşağı
+      mı, yoksa yana mı?" sorusunu kendin yanıtlayabilecek noktaya getirir.
+      Bir formasyonu adlandırmadan önce yapıyı görmeyi öğretir.
+    duration_min: 22
+    lessons:
+
+      - id: M1L1
+        slug: mum-nedir
+        title: "Mum Nedir? — Dört Sayının Hikayesi"
+        learning_objective: "Bir mumun OHLC anatomisini ve gövde/fitil dilbilimini sezgisel okumak."
+        body: |
+          Bir gün boyunca bir varlığın fiyatı sürekli değişir — alıcılar ve
+          satıcılar dakikada bir el değiştirir. Mum (candlestick), bu kaotik
+          akışı tek bir görsel paketle özetler.
+
+          Her mumun dört sayısı vardır: Açılış (Open), Yüksek (High), Düşük
+          (Low), Kapanış (Close). Bu dörtlüye OHLC denir. Mumun gövdesi
+          açılış ile kapanış arasındadır; fitil (gölge) ise o periyotta nereye
+          kadar gidilip nereye dönüldüğünü gösterir.
+
+          Diyelim ki Selin BTC'nin günlük grafiğine bakıyor. Bugünkü mumda
+          uzun bir alt fitil var, küçük yeşil gövde. Selin "fiyat aşağı
+          itildi, ama alıcılar geri çıkardı — günü yeşil kapattılar" diye
+          okur. Sayısal değerler değil, mumun şekli ve rengi konuşur.
+
+          Yeşil/boğa mumu kapanış > açılış demektir. Kırmızı/ayı mumu
+          tersidir. Uzun fitil = "denendi, reddedildi". Küçük gövde =
+          "kararsızlık". Bir tek mumun bile bir tonu vardır.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC günlük grafiğinde uzun bir alt fitili olan küçük yeşil mum.
+              Selin "panik satış geldi ama dipten alındı; reddedildi" diye
+              okur. Ertesi gün yeni bir yeşil mum daha gelirse, sahaya
+              alıcıların döndüğü teyit olur.
+          - asset: us_equity
+            symbol: AAPL
+            scenario: |
+              AAPL günlüğünde, kazanç sonrası açılış sert yukarı, gün boyu
+              eridi, gövdesi açılışa yakın ve uzun üst fitil. "Coşkuyla
+              alındı, ama satıcılar bastırdı" — üst fitil tepe denemesinin
+              reddedildiğini söyler.
+        navigation_link: chart
+        navigation_note: "Harita üzerindeki ilk işaret: mum. Yön anlamadan önce işareti tanı."
+        quiz:
+          question: "Bir mumda uzun bir alt fitil, küçük yeşil gövde ve neredeyse hiç üst fitil yok. Bu nasıl okunur?"
+          options:
+            - text: "Satıcılar baskın; düşüş devam edecek."
+              correct: false
+              feedback: "Hayır — uzun alt fitil + yeşil gövde 'denendi, alıcılar geri aldı' sinyalidir."
+            - text: "Aşağı itildi ama alıcılar geri çıkardı; reddedilmiş bir düşüş."
+              correct: true
+              feedback: "Doğru. Uzun alt fitil 'rejection wick' adıyla bilinir; altı sınamayı reddetmek demektir."
+            - text: "Piyasa durağan; hiçbir şey olmadı."
+              correct: false
+              feedback: "Hayır — fitil hareketi gösterir. Hareketsizlik küçük gövdeli ama küçük fitilli bir mumla olur (doji)."
+        glossary_refs: [mum, ohlc, govde, fitil, dogu-mumu]
+
+      - id: M1L2
+        slug: trend-dilbilgisi
+        title: "Trendin Dilbilgisi — HH, HL, LH, LL"
+        learning_objective: "Bir trendi yapısal olarak tanımlamak: yüksek-yüksek (HH) ve düşük-yüksek (HL)."
+        body: |
+          Trend "fiyat yukarı gidiyor" demekten daha disiplinlidir. Bir
+          yükseliş trendi şu yapıyı taşır: her yeni zirve bir öncekinden
+          yüksektir (Higher High — HH) ve her geri çekilme bir öncekinden
+          yüksek bir noktada kesilir (Higher Low — HL). HH + HL döngüsü
+          kırılana kadar yükseliş "geçerli"dir.
+
+          Düşüş trendi simetriktir: Lower High (LH) ve Lower Low (LL). Her
+          tepe öncekinden alçak, her dip öncekinden alçak.
+
+          Diyelim ki Burak ETH'in haftalık grafiğine bakıyor. Son üç tepe
+          birbirinden yüksek, son üç dip birbirinden yüksek. Burak "yapı
+          sağlam, yükseliş trendi geçerli" der. Birinin yüksek-yüksek
+          serisinde bir "tepe önceki tepenin altında kaldı" sinyali görse,
+          yapısal bir uyarı yakalardı — trend halen yukarı diye okuyabilirdi
+          ama bir "uyarı sinyali" zihninde yanardı.
+
+          Trend bir "yön" değil, "yapısal devamlılık"tır. Yapı kırılınca
+          (HL'nin altına ineriz), trend dönüş şüphesi başlar.
+        worked_examples:
+          - asset: crypto
+            symbol: ETH
+            scenario: |
+              ETH 4H grafiğinde son 3 zirve sırasıyla daha yüksek; aralardaki
+              geri çekilmeler hep son dipten yukarıda durdu. HH/HL yapısı
+              temiz — yükseliş geçerli. Bir HL altına kırılma olursa "uyarı".
+          - asset: bist
+            symbol: ASELS
+            scenario: |
+              ASELS günlüğünde son tepe öncekinin altında (LH) ve son dip de
+              öncekinin altında (LL) kalırsa — alıcı baskısı zayıflamış,
+              düşüş trendi dilbilgisine geçilmiştir.
+        navigation_link: compass
+        navigation_note: "Pusula iğnesi: HH/HL = kuzey (yukarı), LH/LL = güney (aşağı), karışık = pusula şaşırmış (yatay)."
+        quiz:
+          question: "Bir grafikte son 3 tepe sırasıyla 100, 105, 110. Aralardaki dipler 90, 95, 98. Trend nedir?"
+          options:
+            - text: "Düşüş trendi — dipler hâlâ düşük."
+              correct: false
+              feedback: "Hayır — 90→95→98 dipleri yükseliyor (HL serisi)."
+            - text: "Yükseliş trendi — HH ve HL serisi sağlam."
+              correct: true
+              feedback: "Doğru. Hem zirveler hem dipler yükseliyor — yükseliş yapısı geçerli."
+            - text: "Trendsiz piyasa."
+              correct: false
+              feedback: "Tersine — bu sınıflandırmanın 'sözlük tanımı' bir yükseliş trendidir."
+        glossary_refs: [trend, higher-high, higher-low, lower-high, lower-low]
+
+      - id: M1L3
+        slug: zaman-dilimi
+        title: "Zaman Dilimi Hiyerarşisi — Hangi Saat, Hangi Karar"
+        learning_objective: "Yatırım ufkuna göre uygun zaman dilimini seçmek ve çoklu zaman dilimi (MTF) sezgisini kazanmak."
+        body: |
+          Bir grafik tek başına anlamlı değildir — hangi zaman diliminde
+          baktığın kararı şekillendirir. 1 dakikalık grafiğin "trendi"
+          günlük grafiğin "gürültüsüdür".
+
+          Genel hiyerarşi: Aylık (M) → Haftalık (W) → Günlük (D) → 4 Saat
+          (4H) → 1 Saat (1H) → 15 Dakika → 5 Dakika.
+
+          Diyelim ki Deniz orta-vadeli pozisyon kuruyor. Haftalık grafikte
+          ana yönü görüyor (HTF — Higher Time Frame). Günlük grafikte giriş
+          bölgesini netleştiriyor. 4H grafikte tetiği arıyor (LTF — Lower
+          Time Frame). Üç zaman dilimi de aynı yönü gösteriyorsa, ona "üç
+          dilim hizada" denir — daha güvenli bir setup.
+
+          Acemilerin en sık hatası: çok kısa zaman diliminde takılıp her
+          mumda strateji değiştirmektir. Bir 5 dakikalık grafiğin söylediği
+          her şey, bir haftalık grafiğin söylediği bir şeyi geçersiz kılmaz.
+          "Daha yüksek zaman dilimi daha büyük söze sahiptir" (HTF wins).
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC haftalıkta yükseliş trendi (HH/HL), günlükte de yükseliş,
+              4H'de bir geri çekilme. Üç dilim hizada — geri çekilmenin
+              alım fırsatı olma ihtimali yükselir.
+          - asset: us_equity
+            symbol: SPY
+            scenario: |
+              SPY günlükte LH/LL düşüş, 5 dakikalıkta tepki yükselişi. 5
+              dakikalık "yükseliş" günlüğün ana yönünü silmez. HTF
+              kazanır — tepki yükselişi muhtemelen geçicidir.
+        navigation_link: chart
+        navigation_note: "Önce karadan denizi gör (HTF), sonra dümeni çevir (LTF). Tersine yaparsan fırtınada kalırsın."
+        quiz:
+          question: "Haftalık grafik düşüş, 4H grafik yükseliş tepkisi gösteriyor. Hangisi doğru?"
+          options:
+            - text: "4H yükselişi haftalık düşüşü iptal eder."
+              correct: false
+              feedback: "Hayır — düşük zaman dilimi yüksek zaman dilimini bastırmaz."
+            - text: "HTF (haftalık) ana yöndür; 4H büyük olasılıkla bir tepki, dönüş değil."
+              correct: true
+              feedback: "Doğru. Yüksek zaman dilimi söze sahiptir — bu kural MTF disiplininin temelidir."
+            - text: "İki dilim çatıştığı için işlem yapılamaz."
+              correct: false
+              feedback: "Yapılabilir — ama HTF yönünde işlem disiplinli yaklaşımdır."
+        glossary_refs: [zaman-dilimi, mtf, htf, ltf]
+
+      - id: M1L4
+        slug: fiyat-aksiyonu-vs-gurultu
+        title: "Fiyat Aksiyonu vs Gürültü — Neye Bakmaya Değer?"
+        learning_objective: "Önemli fiyat hareketlerini gürültüden ayırt etmek; hacim ve menzil okumayı kavramak."
+        body: |
+          Her küçük titreşim önemli değildir. Fiyat aksiyonu (price action)
+          okumanın özü, "bu hareket bir karakter taşıyor mu, yoksa rastgele
+          gürültü mü?" sorusudur.
+
+          Üç filtre kullanılır:
+          1) Menzil (range): mum eskilerden belirgin biçimde büyük mü?
+          2) Hacim (volume): hareket hacimle teyit ediliyor mu?
+          3) Konum (location): hareket önemli bir seviyede mi oluyor
+             (eski tepe/dip, ana ortalama)?
+
+          Diyelim ki Can SPY günlüğüne bakıyor. Ortalama mum menzili 1%
+          civarındayken bugün 3% kırmızı bir mum geldi ve hacim ortalamadan
+          iki kat yukarıda. Bu "karakterli" bir hareket — gürültü değil.
+          Ana yön üzerinde gerçek bir bilgi taşır.
+
+          Aynı SPY'de, küçük menzilli, normal hacimli, hiçbir kritik
+          seviyede olmayan iki kırmızı mum: gürültü olabilir. Tepki vermeye
+          değmez. Disiplin, "her mum konuşur" değil, "konuşmaya değer mumu
+          dinle"dir.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC 4H'de ortalama menzilin 3 katı bir yeşil mum, hacim
+              ortalamadan belirgin yüksek, önceki dirence çarptı. Üç filtre
+              de tam — bu mum konuşuyor. Direnç testinin sonucu önemli.
+          - asset: us_equity
+            symbol: AAPL
+            scenario: |
+              AAPL 1H'de küçük gövdeli, düşük hacimli, ortalama bant içinde
+              salınan 6-7 mum. Yön sinyali değil — sadece konsolidasyon
+              gürültüsü. Bu pencerede karar üretmek pahalıya patlar.
+        navigation_link: shoal
+        navigation_note: "Her dalga fırtına değildir. Sığlık (kritik seviye) + büyük dalga (menzil) + akıntı (hacim) — üçü hizalandığında dümeni çevir."
+        quiz:
+          question: "Bir mum normal menzili, ortalama hacmi var ve kritik bir seviyede değil. Doğru tutum?"
+          options:
+            - text: "Hemen pozisyon aç."
+              correct: false
+              feedback: "Hayır — üç filtre de boş, hareket karakter taşımıyor."
+            - text: "Daha iyi bir kurulum bekle."
+              correct: true
+              feedback: "Doğru. Disiplinli trader 'konuşmayan' mumu dinlemez."
+            - text: "Eski pozisyonu kapat."
+              correct: false
+              feedback: "Bu mum size 'pozisyon kapat' anlamı taşımıyor; sebep yok."
+        glossary_refs: [fiyat-aksiyonu, menzil, hacim, gurultu]
+
+  # ============================================================================
+  # MODÜL 2 — Destek, Direnç, Trend Çizgileri
+  # Premium
+  # ============================================================================
+  - id: M2
+    slug: destek-direnc-trend
+    title: "Destek, Direnç ve Trend Çizgileri — Fiyatın Hafızası"
+    tagline: "Sığlıkları öğren — gemin nereye çarpacağını önceden gör."
+    tier_required: premium
+    summary: |
+      Fiyat boş bir denizde yüzmez — eski dönüş noktaları "hafıza"dır.
+      Destek/direnç çizmeyi, trend çizgisi disiplinini, kanal yapımını ve
+      kırılım vs sahte kırılım ayrımını öğreten modül.
+    duration_min: 26
+    lessons:
+
+      - id: M2L1
+        slug: destek-direnc-cizmek
+        title: "Destek ve Direnç — Fiyatın Bellek Bölgeleri"
+        learning_objective: "Yatay destek/direnç bölgelerini, dönüş noktalarından sezgisel olarak çizmek."
+        body: |
+          Destek = aşağıdan gelen baskıyı durduran bölge (alıcılar burada
+          yoğunlaşır). Direnç = yukarıdan gelen ilerlemeyi durduran bölge
+          (satıcılar burada yoğunlaşır). Bunlar tek bir çizgi değil, "bant"
+          gibi düşünülür; piksel hassasiyetinde değil.
+
+          Diyelim ki Emre BTC günlüğüne bakıyor. Son altı ayda fiyat üç ayrı
+          tarihte aynı bölgeden döndü. Bu bölge "hafıza"ya alınmıştır. Fiyat
+          dördüncü kez buraya geldiğinde piyasa katılımcıları "burada bir
+          şey olur" diye bekler — ya geri tepecek (test başarılı) ya da
+          delinecek (kırılım).
+
+          Bir kural: kaç kez test edilmişse o kadar güçlü değildir, kaç kez
+          test edilmişse o kadar "delinmeye yakın"dır. Her test biraz alıcı
+          (veya satıcı) yorar. Üç-dört testten sonra kırılım olasılığı
+          yükselir. Çok temiz, hiç delinmemiş seviyeler en güçlüsüdür.
+
+          Bir başka kural: destek delinince direnç olur, direnç delinince
+          destek olur (rol değişimi — polarite). Eski direnç şimdi destek
+          gibi davranıyorsa, yapı sağlam demektir.
+        worked_examples:
+          - asset: crypto
+            symbol: ETH
+            scenario: |
+              ETH son üç ayda aynı yatay banttan üç kez döndü. Dördüncü test
+              geliyor — Emre bekler. Bant tutarsa "test başarılı" (sıçrayış);
+              delinirse polarite — eski destek şimdi direnç olarak çalışacak.
+          - asset: us_equity
+            symbol: SPY
+            scenario: |
+              SPY tüm zamanların zirvesini iki kez teste tabi tuttu. Üçüncü
+              denemede kırılırsa, polarite gereği o eski direnç bir sonraki
+              geri çekilmede destek görevi görür. Bu, yapısal "trend
+              devamı" sinyalidir.
+        navigation_link: shoal
+        navigation_note: "Bellek bölgesi = sığlık. Kaptan haritada üç kez aynı yerde rotayı düzeltmişse, o sığlık çiziliyor demektir."
+        quiz:
+          question: "BTC 60.000 seviyesinden üç kez döndü, dördüncü test geliyor. Hangisi en olasıdır?"
+          options:
+            - text: "Bölge kesin tutar, tepki garantili."
+              correct: false
+              feedback: "Hiçbir destek 'garanti' tutmaz; her test alıcıyı yorar."
+            - text: "Test başarılı olabilir veya kırılır; her testle kırılım olasılığı artar."
+              correct: true
+              feedback: "Doğru. S/R bantları tekrarla zayıflar; ilk testte güçlü, dördüncüde kırılgan."
+            - text: "Üç testten sonra seviye anlamsızdır."
+              correct: false
+              feedback: "Hayır — anlam taşır ama kırılganlığı artar."
+        glossary_refs: [destek, direnc, polarite, role-reversal]
+
+      - id: M2L2
+        slug: trend-cizgisi-disiplini
+        title: "Trend Çizgisi Çizme Disiplini — İki Nokta Yeterli mi?"
+        learning_objective: "Geçerli bir trend çizgisini doğru çizmek; sahte trend çizgilerinden kaçınmak."
+        body: |
+          Bir trend çizgisi çizmek için en az iki swing noktası gerekir —
+          ama iki nokta yalnızca "hipotez"dir. Bir çizgi ancak üçüncü bir
+          temas onayladığında geçerli kabul edilir.
+
+          Yükseliş trend çizgisi yükselen diplerin altından geçer (HL
+          bağlantı). Düşüş trend çizgisi alçalan tepelerin üstünden geçer
+          (LH bağlantı).
+
+          Diyelim ki Zeynep AAPL günlüğüne bakıyor. İki dipten çizdiği
+          çizgi üçüncü dipte de tepki üretti — çizgi "canlı". Dördüncü
+          temas geldiğinde piyasa bu çizgiyi izliyor; kırılırsa olay olur.
+
+          Kötü trend çizgisi: kıl payı dokunmuş, fitil delmiş, sürekli "açı
+          değiştirilmiş" çizgi. Bir çizgi sürekli yeniden çiziliyorsa, o
+          çizgi yok demektir. Bir kural: çizgiyi sen değil piyasa çizmeli;
+          dönüşler senin çizgine uyuyorsa çizgi geçerli, sen çizgine uyduruyorsan
+          çizgi sahte.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC günlüğünde son 6 ayın üç dibi tek bir yükselen çizgi
+              üzerinde — çizgi sağlam. Şu an dördüncü temas başlıyor; tepki
+              gelirse trend ayakta, kırılırsa orta-vadeli yön soru işareti.
+          - asset: bist
+            symbol: THYAO
+            scenario: |
+              THYAO haftalıkta düşüş trendi; üç tepe alçalan çizgi üzerinde.
+              Çizgiye kapanış üstü olursa, yapısal kırılım sinyali — düşüş
+              trend hipotezi sorgulanır.
+        navigation_link: chart
+        navigation_note: "Üç sabit yıldız bir yön verir. İki yıldız hipotez, üç yıldız rota."
+        quiz:
+          question: "Bir trend çizgisi iki dipten geçiyor; henüz üçüncü tepki yok. Statüsü?"
+          options:
+            - text: "Geçerli — iki nokta çizgi tanımlar."
+              correct: false
+              feedback: "Geometrik olarak doğru ama trading'de iki nokta sadece hipotezdir; üçüncü temas onay verir."
+            - text: "Hipotez — üçüncü tepki gelene kadar geçerliliği teyitsiz."
+              correct: true
+              feedback: "Doğru. Üçüncü tepki çizgiyi 'piyasaca onaylanmış' yapar."
+            - text: "Tamamen geçersiz."
+              correct: false
+              feedback: "Geçersiz değil — sadece henüz teyitsiz hipotez."
+        glossary_refs: [trend-cizgisi, swing-noktasi, teyit]
+
+      - id: M2L3
+        slug: kanallar
+        title: "Kanallar — Fiyatın Aktığı Yatak"
+        learning_objective: "Yükselen, yatay ve alçalan kanalları tespit etmek; üst/alt sınırlardan beklentiyi okumak."
+        body: |
+          Bir trend çizgisi tek başına yarım hikâyedir — paraleli çizilince
+          bir kanal doğar. Kanal, fiyatın "akmaya alıştığı yatak"tır. Alt
+          sınır destek vazifesi görür, üst sınır direnç.
+
+          Yükselen kanal: yükselen HL'leri bağlayan alt çizgi + paralel üst.
+          Alçalan kanal: alçalan LH'leri bağlayan üst çizgi + paralel alt.
+          Yatay kanal (range): iki paralel yatay çizgi.
+
+          Diyelim ki Selin SPY 4H'sine bakıyor. Yükselen bir kanal var,
+          fiyat şu an alt sınıra yaklaşıyor. Selin "kanal tutarsa alt sınırdan
+          tepki gelir, kırılırsa trend yapı bozulur" diye iki senaryoya
+          hazırlanır. Bir karara değil iki olasılığa hazırlık — TA'nın özü
+          budur.
+
+          Kanal "ileride ne olacak"ı söylemez; "şu an nasıl davranıyor"u
+          söyler. Alt sınırdan sıçrayışlar trend yönünde işlemlere zemin
+          olur, üst sınır temasları kâr realizasyon sinyali olabilir.
+        worked_examples:
+          - asset: crypto
+            symbol: ETH
+            scenario: |
+              ETH günlüğünde aylık ölçekte yükselen kanal. Şu an üst sınıra
+              dokundu — tepki normal beklenti, sıçrayış başarısız olur ve
+              kanal üstü kapanış gelirse "ivme kanal-dışı" demektir.
+          - asset: us_equity
+            symbol: QQQ
+            scenario: |
+              QQQ 1H'de yatay kanal (sıkışma). Alt sınırdan sıçrayışlar
+              alıcı, üst sınırdan ise satıcı tepkisi rejimini oluşturuyor.
+              Bir tarafa "temiz kapanış" + hacim teyidi = trend doğuyor.
+        navigation_link: channel
+        navigation_note: "Kanal = gemin akıntıyla uyumlu yolu. Akıntıdan çıkmak isteyen büyük çaba ister; akıntı içinde kürek çekmek kolay."
+        quiz:
+          question: "Yatay kanaldaki bir varlık alt sınıra dokundu. Trader Selin nasıl davranır?"
+          options:
+            - text: "Mutlak alım emri açar."
+              correct: false
+              feedback: "Hayır — kanal kırılırsa zarar büyür. Mutlak değil koşullu davranılır."
+            - text: "İki senaryoya hazırlanır: kanal tutarsa tepki, kırılırsa yapısal sinyal."
+              correct: true
+              feedback: "Doğru. TA disiplini iki yönlü senaryo planlamasıdır."
+            - text: "Görmezden gelir."
+              correct: false
+              feedback: "Hayır — kritik bir sınır; ya tutar ya kırılır, ikisi de yorumlanır."
+        glossary_refs: [kanal, yukselen-kanal, alcalan-kanal, range]
+
+      - id: M2L4
+        slug: kirilim-vs-sahte-kirilim
+        title: "Kırılım mı, Sahte Kırılım mı? — Teyit Disiplini"
+        learning_objective: "Geçerli kırılımı sahte kırılımdan ayırmak: kapanış, hacim, geri test."
+        body: |
+          Bir kırılım (breakout) bir seviyenin aşıldığı andır — ama her
+          aşma kırılım sayılmaz. Acemilerin %70'i sahte kırılımlara
+          yakalanır.
+
+          Üç teyit kriteri vardır:
+          1) Kapanış — bir mumun seviyenin üzerinde KAPANMASI gerekir;
+             intra-bar fitilin değmesi yetmez.
+          2) Hacim — kırılım hacmi ortalama hacmin belirgin üzerinde
+             olmalı (genelde 1.5-2x).
+          3) Geri test (retest) — fiyat kırdığı seviyeye geri dönüp ondan
+             tepki alıyorsa, polarite çalışıyor demektir; kırılım gerçek.
+
+          Diyelim ki Murat ASELS günlüğüne bakıyor. Direnç delinmiş, gövde
+          üstte kapanmış, hacim 2x. Murat üç filtreden ikisini gördü —
+          geri testi bekler. Fiyat eski dirence dönüp ondan tepki alarak
+          devam ederse, kırılım gerçek. Eğer eski dirence dönerken altına
+          inerse, sahte kırılım (bull trap) demekti.
+
+          Sahte kırılım imzaları: uzun fitilli mum (gövde aşağıda kalmış),
+          düşük hacim, kapanış seviyenin altına dönmüş. Bunlar görüldüğünde
+          "tuzak" diye etiketlenir.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC önceki tepeyi günlük kapanışla geçti, hacim 1.8x. Geri test
+              gelirse ve tepe artık destek gibi çalışırsa — gerçek kırılım.
+              Geri test başarısız olur ve fiyat eski tepenin altına dönerse
+              — klasik bull trap.
+          - asset: us_equity
+            symbol: AAPL
+            scenario: |
+              AAPL günlüğünde direnç fitille değildi ama gövde dirençin altında
+              kapandı — sahte kırılım imzası. Sonraki gün satıcılar geri döndü;
+              fiyat hızla geri tepki üretti. Teyit olmayan kırılım = kırılım yok.
+        navigation_link: shoal
+        navigation_note: "Sığlığı geçmek, sığlığın gerisinde demir atmaktır. Yalnızca burnun değmesi 'geçtim' demek değildir."
+        quiz:
+          question: "Direnç fitille delindi ama gövde altta kapandı. Hacim normal. Yorum?"
+          options:
+            - text: "Kırılım gerçek; alım fırsatı."
+              correct: false
+              feedback: "Hayır — fitil değmesi + zayıf hacim + gövde altta = sahte kırılım imzası."
+            - text: "Sahte kırılım belirtileri var; teyit yok."
+              correct: true
+              feedback: "Doğru. Üç teyit kriterinden hiçbiri tam değil; tuzak şüphesi yüksek."
+            - text: "Veri yetersiz."
+              correct: false
+              feedback: "Tersine — üç kriter tam yorumlanabilir; teyit yok demek bilgi vermek demektir."
+        glossary_refs: [kirilim, sahte-kirilim, bull-trap, bear-trap, retest]
+
+  # ============================================================================
+  # MODÜL 3 — Devam Formasyonları (Continuation)
+  # Premium
+  # ============================================================================
+  - id: M3
+    slug: devam-formasyonlari
+    title: "Devam Formasyonları — Trend İçinde Nefes"
+    tagline: "Trendin durduğunu sanma — sadece nefes alıyor."
+    tier_required: premium
+    summary: |
+      Trend bittiğini söyleyen değil, trendin devam ettiğini söyleyen
+      formasyonlar: üçgenler, bayrak/flama, dikdörtgen, kama. Hepsi
+      "duraklamadan sonra ana yön" hikâyesi anlatır.
+    duration_min: 24
+    lessons:
+
+      - id: M3L1
+        slug: ucgenler
+        title: "Üçgenler — Sıkışmanın Üç Yüzü"
+        learning_objective: "Yükselen, alçalan ve simetrik üçgenleri ayırmak; kırılım yönü beklentisini doğru kurmak."
+        body: |
+          Üçgenler, fiyatın bir noktaya doğru sıkıştığı formasyonlardır.
+          Üç çeşittir:
+
+          1) Yükselen üçgen: yatay üst direnç + yükselen alt dipler.
+             Alıcılar her geri çekilmede daha yüksekten alıyor; satıcılar
+             aynı yerden satıyor. Beklenti: yukarı kırılım.
+          2) Alçalan üçgen: yatay alt destek + alçalan tepeler. Satıcılar
+             her ralliyi daha düşükten karşılıyor; destek aynı yerde.
+             Beklenti: aşağı kırılım.
+          3) Simetrik üçgen: alçalan tepeler + yükselen dipler.
+             Belirsizlik — ana trendin devamı yönünde kırılım istatistiksel
+             olarak daha sık.
+
+          Diyelim ki Burak BTC 4H'de bir yükselen üçgen görüyor. Yatay
+          tepe sabit, dipler yukarı yürüyor. Burak "sıkışma yukarı yönde
+          çözülecek" hipotezini kurar. Üçgen tamamlanmadan girmek (acele)
+          ya da kırılım yokken işlem yapmak hata olur.
+
+          Kırılım hedefi: üçgenin en geniş yerinin yüksekliği, kırılım
+          noktasından projeksiyon olarak eklenir. Mesela 1000$ genişliğinde
+          üçgen, 50000$'da kırılırsa hedef 51000$ olarak hesaplanır.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC 4H'de yükselen üçgen, yatay tepe 70000$ civarı, dipler
+              68000→69000→69500. Üçgen sıkışıyor — yukarı kırılım hipotezi.
+              Kırılım hedefi: 70000 + (70000-68000) = 72000$.
+          - asset: us_equity
+            symbol: SPY
+            scenario: |
+              SPY günlüğünde alçalan üçgen, yatay alt destek, tepe alçalıyor.
+              Aşağı kırılım hipotezi — desteğin altında günlük kapanış +
+              hacim teyidi geldiğinde formasyon "tamamlandı" sayılır.
+        navigation_link: harbor
+        navigation_note: "Üçgen = limana yaklaşan gemi; ya hızlı yanaşır (kırılım) ya rotayı değiştirir (formasyon iptali)."
+        quiz:
+          question: "Yatay üst direnç ve yükselen alt dipler. Bu nedir, hangi yönde beklenti?"
+          options:
+            - text: "Alçalan üçgen — aşağı kırılım."
+              correct: false
+              feedback: "Hayır — yatay altın altta olduğu alçalan üçgenin tam tersi yapıda."
+            - text: "Yükselen üçgen — yukarı kırılım beklentisi."
+              correct: true
+              feedback: "Doğru. Alıcılar her diple güçlenir, satıcılar aynı seviyede yorulur — yukarı çıkış olası."
+            - text: "Simetrik üçgen — yön belirsiz."
+              correct: false
+              feedback: "Hayır — simetrikte hem tepeler hem dipler birbirine yaklaşır."
+        glossary_refs: [ucgen, yukselen-ucgen, alcalan-ucgen, simetrik-ucgen, kirilim-hedefi]
+
+      - id: M3L2
+        slug: bayrak-flama
+        title: "Bayrak ve Flama — Kısa Nefesler"
+        learning_objective: "Trend içi kısa konsolidasyonları tanıyıp devam beklentisi kurmak."
+        body: |
+          Bayrak ve flama, güçlü bir hareketten (bayrak direği) sonra
+          gelen kısa konsolidasyonlardır — trend bir nefes alır, sonra
+          devam eder.
+
+          Bayrak: paralel iki çizgi (bir kanal gibi), ana trendin TERS
+          yönünde hafif eğimli. Yükseliş içinde gelen bayrak hafif aşağı
+          eğimlidir.
+
+          Flama (pennant): küçük bir simetrik üçgen, bayrak direğinin
+          ardından. Tepeler ve dipler birbirine yaklaşır.
+
+          Diyelim ki Can ETH 1H'de hızlı bir yükseliş gördü, ardından 8-10
+          mumluk bir aşağı eğimli paralel kanal oluşmaya başladı. Can "bu
+          bayrak — ana yön yukarı, kısa nefes, kırılım büyük olasılıkla
+          aynı yönde devam eder" diye okur.
+
+          Önemli kural: bayrak/flama KISA olur. 20+ mum süren bir formasyon
+          bayrak değildir — başka bir yapıya dönüşmüştür (genelde range).
+          Bayrak direğinin uzunluğu, kırılım sonrası hedef projeksiyonu
+          olarak kullanılır.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC sert yukarı hareket → 6 mumluk hafif aşağı eğimli kanal
+              (bayrak). Üst sınır kırılırsa, bayrak direği boyu kırılım
+              noktasından projeksiyon yapılır.
+          - asset: us_equity
+            symbol: NVDA
+            scenario: |
+              NVDA güçlü kazanç sonrası hareket + 5 mumluk simetrik üçgenleşme
+              (flama). Üst sınır kırılırsa devam beklentisi; üst kırılmaz ve
+              alt delinirse formasyon iptal — yön belirsiz.
+        navigation_link: swell
+        navigation_note: "Bayrak = büyük dalganın ardından kısa duraklama. Dalga geri gelmez ama nefes alır."
+        quiz:
+          question: "Sert yükseliş sonrası 8 mumluk hafif aşağı eğimli paralel kanal. Bu nedir?"
+          options:
+            - text: "Trend dönüşü — düşüş başlıyor."
+              correct: false
+              feedback: "Hayır — kısa süreli, paralel kanal trend dönüşü değil, devam formasyonudur (bayrak)."
+            - text: "Bayrak — ana trend devam etmeye eğilimli."
+              correct: true
+              feedback: "Doğru. Bayrak ters eğimli paralel + ana trendin devamı = klasik."
+            - text: "Yatay konsolidasyon (range)."
+              correct: false
+              feedback: "Range'da çizgiler yataydır; burada eğim var."
+        glossary_refs: [bayrak, flama, bayrak-diregi, projeksiyon]
+
+      - id: M3L3
+        slug: dikdortgen
+        title: "Dikdörtgen — Yatay Sıkışma"
+        learning_objective: "Yatay konsolidasyon (range) ve sınır işlemi mantığını anlamak."
+        body: |
+          Dikdörtgen formasyonu, iki paralel yatay çizgi arasında fiyatın
+          birkaç kez gidip geldiği bir sıkışmadır. Alıcılar ve satıcılar
+          aynı bantta dengededir.
+
+          Bu formasyon devam veya dönüş olabilir — kırılım yönü kararı
+          verir. Önceki trend yönünde kırılım gelirse "devam"; ters yönde
+          gelirse "dönüş" sinyalidir.
+
+          Diyelim ki Deniz QQQ günlüğüne bakıyor. Önceki trend yukarı;
+          son 3 haftadır fiyat iki yatay çizgi arasında dolaşıyor. Deniz
+          "bekleme modu" der. Üst sınır + kapanış + hacim teyidi alırsa
+          devam (yukarı); alt sınır kırılırsa olası dönüş.
+
+          Range içinde işlem yapanlar "alt sınırdan al, üst sınırdan sat"
+          stratejisini kullanır — ama her test kırılma riski taşır. Disiplin:
+          sınırlara değer veriyorsan, sınırlara dar stop koy. Range bittiğinde
+          biten yönüne göre durum yeniden değerlendirilir.
+        worked_examples:
+          - asset: crypto
+            symbol: ETH
+            scenario: |
+              ETH günlüğünde 3000-3300 yatay range, 4 haftadır. Üst kırılırsa
+              ana trende (yukarı) devam beklentisi; alt kırılırsa orta-vadeli
+              dönüş şüphesi.
+          - asset: bist
+            symbol: GARAN
+            scenario: |
+              GARAN haftalıkta yatay range; alt sınırdan sıçramalar artık zayıf
+              kalıyor (her tepki daha küçük). Bu "asimetrik dağılım" sinyali —
+              aşağı kırılım olasılığı yükseliyor.
+        navigation_link: harbor
+        navigation_note: "Dikdörtgen = limanın iki rıhtımı arasında bekleyen gemi. Bir gün rıhtımlardan birinden çıkmak zorunda."
+        quiz:
+          question: "Dikdörtgen formasyonu için doğru olan hangisi?"
+          options:
+            - text: "Her zaman trendin devamıdır."
+              correct: false
+              feedback: "Hayır — kırılım yönüne göre devam veya dönüş olabilir."
+            - text: "Kırılım yönü devam mı dönüş mü olduğunu belirler."
+              correct: true
+              feedback: "Doğru. Dikdörtgenin asıl bilgisi kırılımdadır; formasyonun kendisi nötr."
+            - text: "Kırılım yönü tahmin edilemez."
+              correct: false
+              feedback: "Önceki trend ve hacim profili ipuçları verir; kör bir tahmin değil."
+        glossary_refs: [dikdortgen, range, sinir-islemi]
+
+      - id: M3L4
+        slug: kama
+        title: "Kama — Yükselen ve Alçalan"
+        learning_objective: "Yükselen kama (ayı sinyali) ve alçalan kama (boğa sinyali) ayrımını anlamak."
+        body: |
+          Kama (wedge), iki yakınlaşan çizginin AYNI YÖNE eğimli olduğu
+          formasyondur. İkisi de yukarı eğimliyse "yükselen kama" (rising
+          wedge), ikisi de aşağıysa "alçalan kama" (falling wedge).
+
+          Karşı-sezgisel kısım: yükselen kama AYI sinyalidir, alçalan kama
+          BOĞA sinyalidir. Neden? Yükselen kamada her yeni zirve bir
+          öncekinden yüksek ama momentum azalıyor — alıcılar zorlanıyor,
+          formasyon sonunda aşağı kırılım olası.
+
+          Diyelim ki Selin AAPL günlüğünde bir yükselen kama görüyor. Üst
+          ve alt çizgi her ikisi de yukarı eğimli ama hacim azalıyor. Selin
+          "bu yapıda kırılım büyük olasılıkla aşağı" hipotezini kurar. Alt
+          çizgi kırıldığında ve hacim onayladığında, "kama tamamlandı" der.
+
+          Alçalan kama tam tersi: düşüşte ama momentum azalıyor — satıcılar
+          yoruluyor, yukarı kırılım olası. Bu yüzden bir düşüş trendinde
+          alçalan kama "dönüş habercisi" olarak okunur.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC 4H'de yükselen kama, hacim azalıyor. Alt çizgi kırılır
+              + hacim teyidi gelirse — aşağı yönlü çözüm. Yükselen kamanın
+              klasik finalidir.
+          - asset: us_equity
+            symbol: META
+            scenario: |
+              META günlüğünde düşüş trendi içinde alçalan kama. Üst çizgi
+              kırılırsa, momentum kaymış demektir; dönüş hipotezi devreye
+              girer.
+        navigation_link: crosswind
+        navigation_note: "Yükselen kama = rüzgar kesiliyor ama yelken hâlâ açık. Yelken inmeden gemi yön kaybeder."
+        quiz:
+          question: "Yükselen kama formasyonu hangi yönde kırılım beklenir?"
+          options:
+            - text: "Yukarı — formasyon yönü yukarı eğimli."
+              correct: false
+              feedback: "Karşı-sezgisel kısım: yükselen kama ayı sinyalidir, aşağı kırılım beklenir."
+            - text: "Aşağı — momentum azalan yükseliş; satıcılar üstün gelir."
+              correct: true
+              feedback: "Doğru. 'Hareket yukarı ama soluğu kesik' — finalde aşağı kırılım klasiktir."
+            - text: "Belirsiz — hem yukarı hem aşağı olabilir."
+              correct: false
+              feedback: "Yükselen kamada tarihsel olarak aşağı kırılım belirgin biçimde daha sıktır."
+        glossary_refs: [yukselen-kama, alcalan-kama, momentum-zayıflama]
+
+  # ============================================================================
+  # MODÜL 4 — Dönüş Formasyonları (Reversal)
+  # Premium
+  # ============================================================================
+  - id: M4
+    slug: donus-formasyonlari
+    title: "Dönüş Formasyonları — Trendin Sonunu Görmek"
+    tagline: "Pusula yön değiştiriyor — formasyon ilk sinyali verir."
+    tier_required: premium
+    summary: |
+      Bir trendin bittiğini ve yeni bir trendin başladığını söyleyen klasik
+      formasyonlar: Omuz-Baş-Omuz (H&S), ikili tepe/dip, üçlü tepe/dip,
+      V-dönüşü. Her birinin yapısal teyidi, hedef projeksiyonu ve risk
+      seviyesi vardır.
+    duration_min: 26
+    lessons:
+
+      - id: M4L1
+        slug: omuz-bas-omuz
+        title: "Omuz-Baş-Omuz — Klasik Dönüş"
+        learning_objective: "H&S ve ters H&S formasyonlarını tanımak; boyun çizgisi ve hedef projeksiyonunu hesaplamak."
+        body: |
+          Omuz-Baş-Omuz (Head and Shoulders, H&S), yükseliş trendinin
+          sonunu işaret eden en bilinen formasyondur. Üç tepe: ortadaki en
+          yüksek (baş), iki yandaki daha alçak ve birbirine yakın
+          (omuzlar). Tepeleri ayıran iki dip "boyun çizgisi"ni (neckline)
+          tanımlar.
+
+          Diyelim ki Emre BTC haftalıkta üç tepe görüyor: ilki 65k, ortası
+          73k (baş), üçüncüsü 67k (sağ omuz). Boyun çizgisi 60k civarında.
+          Emre "yapı klasik H&S" der ama formasyon henüz tamamlanmamış —
+          boyun çizgisi kırılmadan formasyon onaylanmaz.
+
+          Boyun çizgisi günlük kapanışla aşağı delindiğinde formasyon
+          tamamlanır. Hedef: baş ile boyun çizgisi arasındaki mesafe,
+          kırılım noktasından aşağı doğru projeksiyon (örn. 73k-60k =
+          13k → hedef 60k-13k = 47k).
+
+          Ters H&S yapı olarak ayna görüntüsüdür: yükseliş başlangıcının
+          klasiği. Üç dip (orta en derin), iki tepe boyun çizgisini
+          tanımlar. Boyun çizgisi yukarı delinince formasyon tamamlanır.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC haftalıkta H&S oluşuyor: sol omuz 65k, baş 73k, sağ omuz
+              67k, boyun çizgisi 60k. Boyun çizgisi kırılırsa hedef
+              projeksiyon ~47k. Tutarsa formasyon iptal.
+          - asset: us_equity
+            symbol: TSLA
+            scenario: |
+              TSLA günlüğünde ters H&S — düşüş trendinin sonunda. Sağ omuz
+              tamamlanmak üzere; boyun çizgisi yukarı kırılırsa yükseliş
+              trendi başlangıcının klasik sinyali.
+        navigation_link: compass
+        navigation_note: "Pusula iğnesi titremeye başladı (omuz), bir kez son zirve denemesi (baş), sonra geri (omuz). Yönün değişeceğinin sahnelenmiş hâli."
+        quiz:
+          question: "H&S formasyonu nasıl 'onaylanır'?"
+          options:
+            - text: "Sağ omuz oluşur oluşmaz onaylanır."
+              correct: false
+              feedback: "Hayır — sağ omuz potansiyel formasyon; boyun çizgisi kırılmadan onay yoktur."
+            - text: "Boyun çizgisinin aşağı kırılmasıyla."
+              correct: true
+              feedback: "Doğru. Kırılım + kapanış + hacim teyidi formasyonu canlandırır."
+            - text: "Üçüncü tepe ilk tepenin altında olduğunda."
+              correct: false
+              feedback: "Bu yapısal koşul gereklidir ama tek başına onay değildir."
+        glossary_refs: [omuz-bas-omuz, ters-omuz-bas-omuz, boyun-cizgisi, formasyon-hedefi]
+
+      - id: M4L2
+        slug: ikili-tepe-dip
+        title: "İkili Tepe ve İkili Dip — Reddedilen Ekstremler"
+        learning_objective: "Double top/double bottom formasyonlarını tanımak ve neden 'iki başarısız deneme'nin dönüş anlamına geldiğini anlamak."
+        body: |
+          İkili tepe (double top), bir varlığın aynı seviyeye iki kez
+          ulaşıp ikisinde de geçemeyişidir. İlk tepede satıcılar fiyatı
+          kırdı; geri çekilmeden sonra alıcılar yeniden zirveye ulaştırdı
+          ama satıcılar yine üstün geldi. İki başarısız deneme = yapısal
+          uyarı.
+
+          Boyun çizgisi: iki tepe arasındaki dipten geçer. Bu seviye aşağı
+          kırılınca formasyon tamamlanır.
+
+          Diyelim ki Selin AAPL günlüğüne bakıyor. AAPL son 6 ayda iki kez
+          aynı seviyeye yaklaştı ve ikisinde de geri çekildi. İkinci tepenin
+          ardından gelen geri çekilme şu an iki tepe arasındaki dibe doğru
+          ilerliyor. Selin "boyun çizgisi aşağı delinirse double-top
+          tamamlanır" der; hedef = iki tepe ile dip arasındaki yükseklik
+          kadar aşağı projeksiyon.
+
+          İkili dip (double bottom) ayna görüntüsüdür: aynı dipten iki kez
+          dönüş + iki dip arasındaki tepenin yukarı kırılması. Düşüş
+          trendinin sonu, yükselişin başlangıcının klasik sinyalidir.
+
+          Önemli detay: iki tepe/dip TAM aynı seviyede olmaz — birbirine
+          yakın olması yeterlidir. Bant olarak düşün, piksel olarak değil.
+        worked_examples:
+          - asset: crypto
+            symbol: ETH
+            scenario: |
+              ETH 4 ay arayla iki kez 4000$'ı denedi, ikisinde de döndü.
+              İki tepe arası dip 3500$. Şu an fiyat 3500$'a yaklaşıyor —
+              kırılırsa double-top tamamlanır, hedef ~3000$.
+          - asset: us_equity
+            symbol: BAC
+            scenario: |
+              BAC günlüğünde düşüş trendi içinde iki kez aynı dipten döndü.
+              İki dip arası tepe yukarı kırılırsa double-bottom tamamlanır
+              — yükseliş trendi başlangıcı hipotezi devreye girer.
+        navigation_link: shoal
+        navigation_note: "İki gemi aynı kayalığa çarptı — üçüncü gemi rotayı değiştirir. İki başarısız deneme yön değişimini söyler."
+        quiz:
+          question: "AAPL aynı seviyeye iki kez ulaşıp iki kez döndü. Şu an iki tepe arasındaki dibe doğru gidiyor. Doğru yorum?"
+          options:
+            - text: "Double-top zaten tamamlandı, formasyon devreye girdi."
+              correct: false
+              feedback: "Hayır — boyun çizgisi henüz kırılmadı; potansiyel double-top."
+            - text: "Potansiyel double-top; boyun çizgisi (iki tepe arası dip) kırılırsa formasyon tamamlanır."
+              correct: true
+              feedback: "Doğru. Potansiyel ile tamamlanmış formasyon arasındaki disiplin TA'nın özüdür."
+            - text: "İki tepe arasında range kuruluyor."
+              correct: false
+              feedback: "Range tanımı yatay paralel iki çizgi; burada tepe seviyeleri sabit ama dip henüz tanımlanmamış."
+        glossary_refs: [ikili-tepe, ikili-dip, boyun-cizgisi-double]
+
+      - id: M4L3
+        slug: uclu-tepe-dip
+        title: "Üçlü Tepe ve Üçlü Dip — Daha Güçlü Teyit"
+        learning_objective: "Triple top/triple bottom'un ikili'den farkını ve neden daha sağlam bir dönüş sinyali olduğunu anlamak."
+        body: |
+          Üçlü tepe (triple top) ve üçlü dip (triple bottom), ikili'nin bir
+          üst versiyonudur. Aynı bölge üç kez denenmiş ve üç kez geri tepilmiş
+          demektir. Üç başarısız deneme, dönüş hipotezini daha güçlü kılar
+          ama formasyonun "tamamlanması" yine boyun çizgisi kırılımına bağlıdır.
+
+          Diyelim ki Burak NVDA haftalıkta üç tepeyi de aynı seviyede gördü.
+          İki kez "double top tamamlanmak üzere" dedi ama her seferinde
+          boyun çizgisi tutmadı; fiyat geri çıktı. Şimdi üçüncü test başarısız
+          — boyun çizgisi yine sınanıyor. Bu kez kırılırsa, üç başarısız
+          deneme arkadan gelen yapısal çöküntüye işaret eder.
+
+          Üçlü dip aynısı tersine: üç kez aynı dipten dönüş + iki ara tepenin
+          (boyun çizgisi) yukarı kırılması.
+
+          Kritik fark: triple top genellikle düz bir range gibi başlar ve
+          ancak boyun çizgisi kırıldığında formasyon olarak okunur. Yani
+          formasyonun varlığı bile retrospektiftir; yalnızca tamamlandığında
+          netleşir.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC haftalıkta üç kez 75k bölgesini denedi, üçünde de döndü.
+              İki ara dip 68k civarında. 68k aşağı kırılırsa triple-top
+              tamamlanır; hedef projeksiyon ~61k (7k yükseklik × aşağı).
+          - asset: us_equity
+            symbol: MSFT
+            scenario: |
+              MSFT günlüğünde üç kez aynı dipten döndü; iki ara tepe 420$
+              civarında. 420$ yukarı kırılırsa triple-bottom — sağlam bir
+              dönüş sinyali, hedef projeksiyon yukarı.
+        navigation_link: shoal
+        navigation_note: "Üç başarısız geçiş = sığlık kayalık. Yön değişmemekte ısrar artık zarar getirir."
+        quiz:
+          question: "Triple top'un double top'tan ana farkı nedir?"
+          options:
+            - text: "Triple top her zaman daha derin düşüş yaratır."
+              correct: false
+              feedback: "Hedef projeksiyon mantığı aynı; düşüş derinliği yapısaldır, isim sayısı değil."
+            - text: "Üç başarısız deneme dönüş hipotezini daha güçlü kılar, ama tamamlanma yine boyun çizgisi kırılımına bağlı."
+              correct: true
+              feedback: "Doğru. Sinyal gücü artar, ama 'tamamlanma' kriteri değişmez."
+            - text: "Üçlü tepe dönüş değil devam formasyonudur."
+              correct: false
+              feedback: "Hayır — üçlü tepe klasik dönüş formasyonudur."
+        glossary_refs: [uclu-tepe, uclu-dip]
+
+      - id: M4L4
+        slug: v-donusu
+        title: "V-Dönüşü ve Yuvarlanan Dip — Hızlı ve Yavaş Dönüş"
+        learning_objective: "Hızlı dönüş (V) ve yavaş dönüş (yuvarlanan dip — rounding bottom) yapılarını tanımak."
+        body: |
+          Tüm dönüşler formasyonlu değildir. İki uç versiyon vardır: hızlı
+          V-dönüşü ve yavaş yuvarlanan dip.
+
+          V-dönüşü: sert bir düşüş + tek mum içinde tabandan keskin tepki
+          (capitulation candle — teslimiyet mumu). Genelde panik satışlardan
+          sonra alıcıların ani devreye girmesi. Riski: teyitsiz girersen
+          tepki "ölü kedi sıçraması" (dead cat bounce) olabilir.
+
+          V-dönüş için teyit: hacim patlaması + sonraki birkaç mumun düşüş
+          öncesi seviyeleri geri alması.
+
+          Diyelim ki Murat ETH 1H'de bir V-dönüşü görüyor. Sert kırmızı mum
+          ardından eşit-büyüklük yeşil mum, hacim normalin 3 katı. Murat
+          "tabandan tepki var ama düşüş yapısı sağlam; trend dönüşü için
+          ek teyit gerekli" der.
+
+          Yuvarlanan dip: aylar süren, yumuşak bir kavis şeklinde dönüş.
+          Satıcılar gücünü kaybeder, fiyat yatay-eğimli kavislenmeye başlar.
+          Hacim profili kavisin alt kısmında düşük, dönüşle birlikte artar.
+          V'den çok daha az dramatik ama daha sağlam bir dönüş yapısı.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC 4H'de capitulation: sert düşüş + 3x hacim + uzun alt fitil.
+              Bu V-dönüş ihtimali ama trend dönüşü için ek teyit gerekli;
+              sonraki birkaç mum eski destek seviyesini geri almalı.
+          - asset: us_equity
+            symbol: INTC
+            scenario: |
+              INTC haftalıkta 6 aydır yatay-yumuşak kavis. Hacim dip
+              kısmında düşük, yukarı kırılım yaklaştıkça artıyor. Yuvarlanan
+              dip klasiği — sağlam, yavaş ama güvenli dönüş yapısı.
+        navigation_link: swell
+        navigation_note: "V-dönüş = fırtınada bir anlık güneş. Yuvarlanan dip = ufukta yavaş yavaş berraklaşan hava. İkincisi gemiye daha güvenli."
+        quiz:
+          question: "Sert kırmızı mum + uzun alt fitil + 3x hacim. V-dönüş için yeterli mi?"
+          options:
+            - text: "Evet, hepsi tam — formasyon tamamlandı."
+              correct: false
+              feedback: "Hayır — capitulation mumu sinyaldir, ama trend dönüşü için sonraki birkaç mumun teyidi gerekir."
+            - text: "Sinyal güçlü ama trend dönüşü için ek teyit (eski seviyelerin geri alınması) gerekli."
+              correct: true
+              feedback: "Doğru. Tek mum hipotez; trend yapısının değişmesi onay verir."
+            - text: "V-dönüş yapısı oluşmuyor."
+              correct: false
+              feedback: "Tersine — capitulation V-dönüşün klasik habercisidir; sadece teyit eksik."
+        glossary_refs: [v-donus, capitulation, dead-cat-bounce, yuvarlanan-dip]
+
+  # ============================================================================
+  # MODÜL 5 — Mum Formasyonları (Candlestick Patterns)
+  # M5L1 free tadımlık, gerisi premium
+  # ============================================================================
+  - id: M5
+    slug: mum-formasyonlari
+    title: "Mum Formasyonları — Tek Mumdan Üç Muma"
+    tagline: "Bir mum bir cümle, üç mum bir paragraf."
+    tier_required: premium
+    summary: |
+      Mum desenleri (candlestick patterns) Japon pirinç tüccarlarının 17.
+      yüzyıldan kalma sözlüğüdür. Doji, çekiç, yutan, yıldız — her biri
+      bir psikolojik anlatım taşır. Tek mum bir ipucu, ikili mum daha güçlü,
+      üçlü mum klasik teyittir.
+    duration_min: 22
+    lessons:
+
+      - id: M5L1
+        slug: doji-ailesi
+        title: "Doji Ailesi — Kararsızlığın Simgesi"
+        learning_objective: "Doji türlerini (klasik, gravestone, dragonfly, long-legged) tanımak ve neden 'karar anı' sinyali olduklarını anlamak."
+        tier_required: free
+        body: |
+          Doji, açılışın ve kapanışın neredeyse aynı olduğu mumdur — gövde
+          yok denecek kadar küçük. Anlamı: alıcılar ve satıcılar gün
+          (veya periyot) içinde mücadele etti, kimse galip gelemedi. Bu bir
+          "karar anı" mumudur — özellikle güçlü bir trendden sonra
+          görüldüğünde dönüş habercisi olabilir.
+
+          Doji türleri:
+          1) Klasik doji: gövdesi yok, üst ve alt fitiller benzer
+             uzunlukta. Saf kararsızlık.
+          2) Dragonfly (yusufçuk): uzun alt fitil, üst fitil yok denecek
+             kadar küçük. Aşağıdan keskin tepki — boğa sinyali (özellikle
+             dipte).
+          3) Gravestone (mezar taşı): uzun üst fitil, alt fitil yok. Yukarı
+             denendi, reddedildi — ayı sinyali (özellikle tepede).
+          4) Long-legged doji: hem üst hem alt uzun. Aşırı kararsızlık —
+             büyük hareket öncesi sıkışma.
+
+          Diyelim ki Ayşe BTC günlüğüne bakıyor. Uzun bir yükseliş trendi
+          sonrası bir gravestone doji belirdi. Ayşe "alıcılar yukarı zorladı
+          ama satıcılar fiyatı tabana itti — yorgunluk sinyali" der. Tek
+          başına alım/satım kararı vermez; sonraki mumu bekler. Sonraki
+          mum aşağı yönlü güçlü kapanış yaparsa, dönüş hipotezi onay alır.
+
+          Önemli kural: doji TEK BAŞINA karar değildir; konum (trendin neresi)
+          + sonraki mum (teyit) ile anlam kazanır.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC haftalık yükseliş sonrası bir long-legged doji. Hem yukarı
+              hem aşağı denendi, ikisi de reddedildi. Sonraki haftada ne
+              olur — düşüş kapanışı dönüş, devam kapanışı trend devam.
+          - asset: us_equity
+            symbol: AAPL
+            scenario: |
+              AAPL günlüğünde sert düşüş sonrası dragonfly doji. Uzun alt
+              fitil "dipten alındı" mesajı; sonraki mum yeşil kapanışla
+              gelirse, kısa-vadeli dönüş hipotezi devreye girer.
+        navigation_link: compass
+        navigation_note: "Pusula iğnesi titriyor — yön belirsiz. Bir sonraki sabit işaret iğnenin nereye yöneleceğini söyler."
+        quiz:
+          question: "Yükseliş trendinin tepesinde bir gravestone doji belirdi. Doğru tutum?"
+          options:
+            - text: "Hemen satış yap — dönüş kesin."
+              correct: false
+              feedback: "Hayır — doji tek başına karar değildir; sonraki mum teyit eder."
+            - text: "Yorgunluk sinyali; sonraki mumun teyidini bekle."
+              correct: true
+              feedback: "Doğru. Doji + tepe konumu = uyarı; sonraki mum karar verir."
+            - text: "Anlamsız — doji önemsizdir."
+              correct: false
+              feedback: "Tersine — doji konumla anlam kazanır; trend tepesinde önemlidir."
+        glossary_refs: [doji, dragonfly-doji, gravestone-doji, long-legged-doji]
+
+      - id: M5L2
+        slug: cekic-asilan-adam
+        title: "Çekiç ve Asılan Adam — Aynı Şekil, İki Anlam"
+        learning_objective: "Çekiç (hammer — boğa) ve asılan adam (hanging man — ayı) farkını ve neden konumlarının her şeyi belirlediğini anlamak."
+        body: |
+          Çekiç ve asılan adam, GÖRÜNÜM olarak aynıdır: küçük gövde, uzun
+          alt fitil (gövdenin en az 2 katı), üst fitil yok denecek kadar
+          küçük. Ama konuma göre tam ters anlamları vardır.
+
+          Çekiç (hammer): düşüş trendinin SONUNDA bu mum belirir.
+          Anlamı: "Aşağı itildi, alıcılar dipten geri çıkardı." Boğa
+          sinyali — kısa-vadeli dönüş habercisi.
+
+          Asılan adam (hanging man): yükseliş trendinin SONUNDA aynı
+          şekilli mum. Anlamı: "Bugün dahi tabanı sınadı, alıcı zayıflıyor."
+          Ayı sinyali — dönüş şüphesi.
+
+          Diyelim ki Zeynep ETH 4H'sine bakıyor. Düşüş trendi içinde küçük
+          gövdeli, uzun alt fitilli yeşil mum belirdi — çekiç. Zeynep
+          "tabandan tepki var, ama dönüş için bir sonraki mum yeşil
+          kapanışla gelmeli" der. Sonraki mum güçlü yeşil kapanırsa,
+          çekiç teyit alır.
+
+          Aynı mum ETH 4H yükseliş trendinin tepesinde olsaydı, anlamı
+          "asılan adam" olurdu — alıcılar zayıflıyor. Tek mum, iki anlam,
+          tek belirleyici: konum.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC günlük düşüş trendi içinde küçük gövdeli + uzun alt fitilli
+              mum. Çekiç hipotezi. Sonraki gün yeşil kapanış + hacim teyidi
+              = klasik dönüş başlangıcı.
+          - asset: us_equity
+            symbol: TSLA
+            scenario: |
+              TSLA yükselişin tepesinde aynı şekil — asılan adam. Sonraki
+              mum kırmızı kapanırsa, dönüş hipotezi devreye girer; yeşil
+              olursa trend devam eder.
+        navigation_link: compass
+        navigation_note: "Çekiç tabanda demir gibi sağlam; asılan adam zirvede iple sallanıyor. Konum, demirle ipin farkını söyler."
+        quiz:
+          question: "Yükseliş trendinin tepesinde küçük gövdeli, uzun alt fitilli mum. Bu nedir?"
+          options:
+            - text: "Çekiç — yükseliş devam edecek."
+              correct: false
+              feedback: "Çekiç düşüş trendinin SONUNDA dönüş sinyalidir; tepede aynı şekil farklı anlam taşır."
+            - text: "Asılan adam — yükseliş yorgunluğu, dönüş şüphesi."
+              correct: true
+              feedback: "Doğru. Aynı şekil + farklı konum = farklı anlam. TA'nın klasik öğretisi."
+            - text: "Doji — kararsızlık."
+              correct: false
+              feedback: "Doji'de gövde yoktur; burada küçük ama belirgin bir gövde var."
+        glossary_refs: [cekic, asilan-adam, ters-cekic, shooting-star]
+
+      - id: M5L3
+        slug: yutan-formasyon
+        title: "Yutan Formasyon (Engulfing) — Tek Mum İki Mumu Yer"
+        learning_objective: "Boğa ve ayı yutan formasyonlarını tanımak ve neden ikili mum desenleri arasındaki en güçlü dönüş sinyallerinden biri olduğunu anlamak."
+        body: |
+          Yutan formasyon (engulfing), iki mumdan oluşur ve klasik dönüş
+          sinyallerinin en güçlülerindendir.
+
+          Boğa yutan (bullish engulfing): birinci mum kırmızı, ikinci mum
+          yeşil, ikincinin GÖVDESI birincinin gövdesini tam olarak yutar
+          (açılışı altta, kapanışı üstte). Düşüş trendinin sonunda belirirse
+          güçlü dönüş habercisi.
+
+          Ayı yutan (bearish engulfing): birinci yeşil, ikinci kırmızı,
+          ikinci gövde birinciyi yutar. Yükseliş trendinin tepesinde dönüş
+          habercisi.
+
+          Diyelim ki Can SPY günlüğüne bakıyor. Düşüş trendinde küçük
+          kırmızı mum + ertesi gün büyük yeşil mum, açılış öncekinin
+          altında, kapanış öncekinin üstünde. Can "boğa yutan — momentum
+          aniden alıcılar tarafına geçti" der. Tek bir gün içinde günlük
+          karakter değişti.
+
+          Önemli detay: yutma GÖVDE bazındadır, fitil değil. İkinci mumun
+          gövdesi birincinin gövdesini kapatmalıdır. Hacim ikinci mumda
+          belirgin yüksekse, sinyal daha güçlüdür.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC günlük düşüş trendinde küçük kırmızı + ertesi büyük yeşil
+              gövdenin öncekini yutması. Hacim 1.8x. Boğa yutan teyitli —
+              dönüş hipotezi devreye giriyor.
+          - asset: us_equity
+            symbol: AAPL
+            scenario: |
+              AAPL haftalık yükselişin tepesinde küçük yeşil + sonraki
+              büyük kırmızı gövde yutması. Ayı yutan klasiği — orta-vadeli
+              dönüş şüphesi başlar.
+        navigation_link: swell
+        navigation_note: "Yutan mum = büyük bir dalganın küçük tekneyi yutması. Önceki günün karakteri yok edildi."
+        quiz:
+          question: "Düşüş trendinde küçük kırmızı + büyük yeşil (ikinci yutuyor) + 1.8x hacim. Doğru yorum?"
+          options:
+            - text: "Bullish engulfing klasiği — güçlü dönüş sinyali."
+              correct: true
+              feedback: "Doğru. Konum + yutma + hacim teyidi tam. Klasik boğa yutan."
+            - text: "Bearish engulfing."
+              correct: false
+              feedback: "Hayır — ayı yutanda ikinci mum kırmızı olur."
+            - text: "Doji."
+              correct: false
+              feedback: "Doji tek mum + gövdesizdir; burada iki mum + büyük gövdeli yeşil."
+        glossary_refs: [bullish-engulfing, bearish-engulfing, yutan-formasyon]
+
+      - id: M5L4
+        slug: yildizlar
+        title: "Sabah Yıldızı ve Akşam Yıldızı — Üçlü Mum Dönüşleri"
+        learning_objective: "Üçlü mum formasyonlarını (morning star, evening star) tanımak ve neden 'üç adımlı dönüş hikâyesi' olduğunu anlamak."
+        body: |
+          Sabah yıldızı (morning star) ve akşam yıldızı (evening star) üç
+          mumdan oluşan klasik dönüş formasyonlarıdır. Adlarını gökyüzü
+          metaforundan alır: gece (düşüş) bittiğinde sabah yıldızı doğar.
+
+          Sabah yıldızı (boğa dönüşü):
+          1. Mum: büyük kırmızı — düşüş trendinde belirgin satış.
+          2. Mum: küçük gövdeli (genelde aşağı boşlukla açar) — kararsızlık.
+          3. Mum: büyük yeşil — alıcı geri döndü, birincinin yarısından
+             fazlasını geri aldı.
+
+          Akşam yıldızı (ayı dönüşü) ayna:
+          1. Mum: büyük yeşil — yükseliş trendi.
+          2. Mum: küçük gövdeli (yukarı boşluk) — kararsızlık.
+          3. Mum: büyük kırmızı — satıcı geri döndü.
+
+          Diyelim ki Selin AAPL günlüğünde bir sabah yıldızı görüyor.
+          Önceki büyük kırmızı mum, gün içinde gap-down ile küçük gövde,
+          ertesi gün büyük yeşil mum tüm düşüşü yarıdan fazla geri aldı.
+          Selin "üç adımlı dönüş hikâyesi tamamlandı" der. Hacim üçüncü
+          mumda yüksekse sinyal kuvvetlenir.
+
+          Bu formasyonlar tek mumlara göre daha güvenilirdir çünkü üç gün
+          süren bir psikolojik dönüş senaryosunu sahnelerler: panik → kararsızlık
+          → tepki.
+        worked_examples:
+          - asset: crypto
+            symbol: BTC
+            scenario: |
+              BTC günlük düşüş trendi içinde: büyük kırmızı + küçük doji
+              benzeri + büyük yeşil (kırmızının yarısından fazla geri aldı).
+              Sabah yıldızı tamamlandı — kısa-vadeli dönüş hipotezi güçlü.
+          - asset: us_equity
+            symbol: NVDA
+            scenario: |
+              NVDA günlük yükseliş tepesinde: büyük yeşil + küçük gövdeli
+              kararsızlık + büyük kırmızı yarıdan fazla yedi. Akşam yıldızı
+              — dönüş şüphesi belirginleşir.
+        navigation_link: harbor
+        navigation_note: "Üç sahne: gece (düşüş), şafak (kararsızlık), sabah (yeniden yükseliş). Hikâye tamamlandığında pusula döner."
+        quiz:
+          question: "Morning star formasyonunun ÜÇÜNCÜ mumunun temel özelliği nedir?"
+          options:
+            - text: "Küçük gövdeli + doji benzeri kararsızlık."
+              correct: false
+              feedback: "Bu ikinci mumun özelliğidir."
+            - text: "Büyük yeşil + ilk kırmızının yarısından fazlasını geri alan kapanış."
+              correct: true
+              feedback: "Doğru. Üçüncü mum dönüş hikâyesinin imzasıdır."
+            - text: "Büyük kırmızı + güçlü satış."
+              correct: false
+              feedback: "Bu ilk mumun özelliğidir; düşüş trendini sahneye koyar."
+        glossary_refs: [morning-star, evening-star, sabah-yildizi, aksam-yildizi]

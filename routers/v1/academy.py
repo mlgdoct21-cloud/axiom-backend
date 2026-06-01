@@ -23,6 +23,8 @@ from core.logger import get_logger
 from core.security import get_current_user
 from services.auth import AuthService
 from services import academy_service
+from services import academy_ta_service
+from services import academy_ta_example
 
 logger = get_logger("academy_router")
 
@@ -174,6 +176,91 @@ async def get_live_example_endpoint(
     from services import academy_live_example
     data = await academy_live_example.get_live_example(strategy, asset)
     response.headers["Cache-Control"] = "private, max-age=60"
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Teknik Analiz Akademisi (track=ta) — paralel content endpoint'leri
+# ---------------------------------------------------------------------------
+
+
+@router.get("/ta-curriculum")
+async def get_ta_curriculum(
+    response: Response,
+    authorization: Optional[str] = Header(default=None),
+):
+    """TA Akademisi tier-aware modül listesi. M1 free, M5L1 free tadımlık."""
+    tier = await _peek_tier(authorization)
+    response.headers["Cache-Control"] = _PRIVATE_CACHE
+    return academy_ta_service.get_curriculum_summary(tier)
+
+
+@router.get("/ta-modules/{module_id}")
+async def get_ta_module(
+    module_id: str,
+    response: Response,
+    authorization: Optional[str] = Header(default=None),
+):
+    tier = await _peek_tier(authorization)
+    data = academy_ta_service.get_module(module_id, tier)
+    if not data:
+        raise HTTPException(status_code=404, detail="ta module not found")
+    response.headers["Cache-Control"] = _PRIVATE_CACHE
+    return data
+
+
+@router.get("/ta-lessons/{lesson_id}")
+async def get_ta_lesson(
+    lesson_id: str,
+    response: Response,
+    authorization: Optional[str] = Header(default=None),
+):
+    tier = await _peek_tier(authorization)
+    data = academy_ta_service.get_lesson(lesson_id, tier)
+    if not data:
+        raise HTTPException(status_code=404, detail="ta lesson not found")
+    response.headers["Cache-Control"] = _PRIVATE_CACHE
+    return data
+
+
+@router.get("/ta-glossary")
+async def get_ta_glossary(response: Response):
+    response.headers["Cache-Control"] = _PUBLIC_CACHE
+    return academy_ta_service.get_glossary()
+
+
+@router.get("/ta-glossary/search")
+async def search_ta_glossary(
+    response: Response,
+    q: str = Query(..., min_length=1, max_length=64),
+    limit: int = Query(8, ge=1, le=20),
+):
+    response.headers["Cache-Control"] = "private, max-age=60"
+    return {"query": q, "results": academy_ta_service.search_glossary(q, limit=limit)}
+
+
+@router.get("/ta-glossary/{slug}")
+async def get_ta_glossary_term(slug: str, response: Response):
+    data = academy_ta_service.get_glossary_term(slug)
+    if not data:
+        raise HTTPException(status_code=404, detail="ta term not found")
+    response.headers["Cache-Control"] = _PUBLIC_CACHE
+    return data
+
+
+@router.get("/ta-example/{technique}")
+async def get_ta_example_endpoint(
+    technique: str,
+    response: Response,
+    asset: str = Query("BTC", min_length=2, max_length=8),
+):
+    """TA 'Gerçek Örnek' — bir teknik için canlı OHLC + formasyon tespiti.
+
+    Binance (kripto) + FMP (US hisse) gerçek piyasa verisi; indikator/formasyon
+    deterministik. Gemini yok. Fail-soft: available=False döner.
+    """
+    data = academy_ta_example.build_ta_example(technique, asset)
+    response.headers["Cache-Control"] = "private, max-age=120"
     return data
 
 
