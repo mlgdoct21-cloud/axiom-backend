@@ -256,6 +256,12 @@ async def process_start_command(chat_id, user_id, username, start_payload: str =
     if start_payload == "upgrade_premium":
         await process_upgrade_command(chat_id, user_id)
         return
+    # 2026-06-01: Dashboard "Giriş Yap" butonu t.me/<bot>?start=login açar.
+    # Welcome'ı atla, direkt magic link gönder — kullanıcı manuel /login
+    # yazmak zorunda kalmasın (mobile UX).
+    if start_payload == "login":
+        await process_login_command(chat_id, user_id, username)
+        return
 
     welcome_msg = (
         "🚀 <b>Axiom'a Hoş Geldin</b>\n\n"
