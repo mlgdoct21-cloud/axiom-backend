@@ -65,7 +65,7 @@ def generate_summary_sync(news_title: str, news_link: str, company_context: dict
     }
 
     headers = {"Content-Type": "application/json"}
-    MODEL = "gemini-2.0-flash"
+    MODEL = "gemini-2.5-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={GEMINI_API_KEY}"
 
     for attempt in range(5):  # 5 deneme
@@ -586,7 +586,7 @@ def _call_gemini_batch(model: str, prompt_text: str, max_tokens: int, timeout_se
 #   ~1000-3000 haber/gün üretiyor). Her cycle'da 429 alıp 40s bekliyorduk.
 #   2.5-flash-lite primary yapıldı çünkü 6-7x daha bol quota + yeterince kaliteli.
 _PRIMARY_MODEL = os.getenv("AXIOM_GEMINI_PRIMARY", "gemini-2.5-flash-lite")
-_FALLBACK_MODEL = os.getenv("AXIOM_GEMINI_FALLBACK", "gemini-2.0-flash")
+_FALLBACK_MODEL = os.getenv("AXIOM_GEMINI_FALLBACK", "gemini-2.5-flash")
 
 
 def get_model_status() -> dict:
