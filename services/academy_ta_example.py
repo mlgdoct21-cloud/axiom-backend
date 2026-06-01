@@ -171,56 +171,81 @@ def _detect_engulfing(bars: list[dict], cfg: dict) -> dict:
     rsi14 = ti.rsi(closes, 14)
     ema20 = ti.ema(closes, 20)
 
-    # Son 30 mumda yutan formasyon ara (en yenisini al)
+    # Son 120 barda TÜM yutan formasyonları topla (sadece sonuncusu DEĞİL).
+    # Kullanıcı grafikte her oluşumun konumunu görebilmeli; eğitim modal'ı
+    # tek bir snapshot değil, tarihçedeki tüm örnekleri sergiler.
     n = len(bars)
-    found = None
-    for i in range(n - 1, max(n - 30, 1), -1):
+    found_list: list[dict] = []
+    scan_from = max(n - 120, 1)
+    for i in range(scan_from, n):
         prev, curr = bars[i - 1], bars[i]
         if ti.is_bullish_engulfing(prev, curr):
-            found = {"i": i, "side": "bullish", "label": "Boğa Yutan"}
-            break
-        if ti.is_bearish_engulfing(prev, curr):
-            found = {"i": i, "side": "bearish", "label": "Ayı Yutan"}
-            break
+            found_list.append({"i": i, "side": "bullish", "label": "Boğa Yutan"})
+        elif ti.is_bearish_engulfing(prev, curr):
+            found_list.append({"i": i, "side": "bearish", "label": "Ayı Yutan"})
 
     decimals = cfg["round"]
     current = bars[-1]["c"]
     annotations = []
-    metrics = []
+    metrics: list[dict] = []
     trend = _trend_label(bars)
 
-    if found:
-        bar = bars[found["i"]]
-        prev_bar = bars[found["i"] - 1]
-        # Hacim teyidi (eğer hacim varsa)
-        recent_vols = [b["v"] for b in bars[max(0, found["i"] - 20):found["i"]] if b.get("v", 0) > 0]
-        avg_vol = sum(recent_vols) / len(recent_vols) if recent_vols else 0
-        cur_vol = bar.get("v", 0)
-        vol_x = (cur_vol / avg_vol) if avg_vol > 0 else 0
+    if found_list:
+        # Tüm oluşumlar için marker (yutulan + yutan mumlar)
+        for f in found_list:
+            i = f["i"]
+            bar = bars[i]
+            prev_bar = bars[i - 1]
+            # Yutulan mumu işaretle (küçük etiket)
+            annotations.append({
+                "type": "pattern",
+                "i": i - 1,
+                "side": f["side"],
+                "label": "Yutulan",
+                "price_open": prev_bar["o"],
+                "price_close": prev_bar["c"],
+            })
+            # Yutan mumu işaretle (ana etiket)
+            annotations.append({
+                "type": "pattern",
+                "i": i,
+                "side": f["side"],
+                "label": f["label"],
+                "price_open": bar["o"],
+                "price_close": bar["c"],
+            })
 
-        bars_ago = n - 1 - found["i"]
-        annotations.append({
-            "type": "pattern",
-            "i": found["i"],
-            "side": found["side"],
-            "label": found["label"],
-            "price_open": bar["o"],
-            "price_close": bar["c"],
-        })
-        rsi_val = rsi14[found["i"]] if found["i"] < len(rsi14) else None
+        # Son oluşum için ayrıntılı metrik
+        last_f = found_list[-1]
+        last_bar = bars[last_f["i"]]
+        last_prev = bars[last_f["i"] - 1]
+        bars_ago = n - 1 - last_f["i"]
+        recent_vols = [b["v"] for b in bars[max(0, last_f["i"] - 20):last_f["i"]] if b.get("v", 0) > 0]
+        avg_vol = sum(recent_vols) / len(recent_vols) if recent_vols else 0
+        cur_vol = last_bar.get("v", 0)
+        vol_x = (cur_vol / avg_vol) if avg_vol > 0 else 0
+        rsi_val = rsi14[last_f["i"]] if last_f["i"] < len(rsi14) else None
+
+        bulls = sum(1 for f in found_list if f["side"] == "bullish")
+        bears = sum(1 for f in found_list if f["side"] == "bearish")
+
         metrics = [
-            {"label": "Tespit", "value": f"{found['label']} ({bars_ago} bar önce)"},
-            {"label": "Yutulan gövde", "value": f"{_fmt(prev_bar['o'], decimals)} → {_fmt(prev_bar['c'], decimals)}"},
-            {"label": "Yutan gövde", "value": f"{_fmt(bar['o'], decimals)} → {_fmt(bar['c'], decimals)}"},
-            {"label": "Hacim teyidi", "value": f"{vol_x:.1f}x ortalama" + (" (güçlü)" if vol_x >= 1.5 else " (zayıf)") if avg_vol > 0 else "—"},
-            {"label": "RSI(14)", "value": f"{rsi_val:.1f}" if rsi_val else "—"},
+            {"label": "Toplam oluşum (son 120 bar)", "value": f"{len(found_list)} adet ({bulls} boğa · {bears} ayı)"},
+            {"label": "Son oluşum", "value": f"{last_f['label']} ({bars_ago} bar önce)"},
+            {"label": "Yutulan gövde (son)", "value": f"{_fmt(last_prev['o'], decimals)} → {_fmt(last_prev['c'], decimals)}"},
+            {"label": "Yutan gövde (son)", "value": f"{_fmt(last_bar['o'], decimals)} → {_fmt(last_bar['c'], decimals)}"},
+            {"label": "Hacim teyidi (son)", "value": (f"{vol_x:.1f}x ortalama" + (" (güçlü)" if vol_x >= 1.5 else " (zayıf)")) if avg_vol > 0 else "—"},
+            {"label": "RSI(14) (son)", "value": f"{rsi_val:.1f}" if rsi_val else "—"},
             {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
             {"label": "Trend", "value": trend},
         ]
-        headline = f"{cfg['label']} günlükte {found['label']} tespit edildi ({bars_ago} bar önce)."
+        headline = (
+            f"{cfg['label']} grafiğinde son 120 barda {len(found_list)} yutan formasyon "
+            f"tespit edildi — son oluşum {bars_ago} bar önce ({last_f['label']})."
+        )
     else:
         metrics = [
-            {"label": "Tespit", "value": "Son 30 bar içinde yutan formasyon yok"},
+            {"label": "Tespit", "value": "Son 120 bar içinde yutan formasyon yok"},
             {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
             {"label": "RSI(14)", "value": f"{rsi14[-1]:.1f}" if rsi14[-1] else "—"},
             {"label": "Trend", "value": trend},
@@ -232,7 +257,7 @@ def _detect_engulfing(bars: list[dict], cfg: dict) -> dict:
         "metrics": metrics,
         "headline": headline,
         "indicators": {"ema20": ema20, "rsi14": rsi14},
-        "found": bool(found),
+        "found": bool(found_list),
     }
 
 
@@ -822,23 +847,46 @@ def _detect_macd_crossover(bars: list[dict], cfg: dict) -> dict:
     closes = ti.closes(bars)
     decimals = cfg["round"]
     m = ti.macd(closes, 12, 26, 9)
-    cross = ti.macd_crossover(m["line"], m["signal"], lookback=40)
     current = closes[-1]
 
+    # Son 120 barda TÜM MACD kesişimlerini tara
+    line = m["line"]
+    sig = m["signal"]
+    n = len(bars)
+    all_crosses: list[dict] = []
+    for i in range(max(1, n - 120), n):
+        s_now, s_prev = line[i], line[i - 1]
+        g_now, g_prev = sig[i], sig[i - 1]
+        if None in (s_now, s_prev, g_now, g_prev):
+            continue
+        if s_prev <= g_prev and s_now > g_now:
+            all_crosses.append({"i": i, "kind": "bullish",
+                                "zero_side": "above" if s_now > 0 else "below",
+                                "macd": s_now, "signal": g_now})
+        elif s_prev >= g_prev and s_now < g_now:
+            all_crosses.append({"i": i, "kind": "bearish",
+                                "zero_side": "above" if s_now > 0 else "below",
+                                "macd": s_now, "signal": g_now})
+
+    cross = all_crosses[-1] if all_crosses else None
+
     annotations = []
-    metrics = []
-    if cross:
-        bars_ago = len(bars) - 1 - cross["i"]
-        annotations.append({
-            "type": "marker",
-            "i": cross["i"],
-            "price": bars[cross["i"]]["c"],
-            "side": "low" if cross["kind"] == "bullish" else "high",
-            "label": f"{cross['kind'].title()} Cross",
-        })
-        # Sıfır çizgisi referansı
+    metrics: list[dict] = []
+    if all_crosses:
+        for c in all_crosses:
+            annotations.append({
+                "type": "marker",
+                "i": c["i"],
+                "price": bars[c["i"]]["c"],
+                "side": "low" if c["kind"] == "bullish" else "high",
+                "label": f"{c['kind'].title()} Cross",
+            })
+        bars_ago = n - 1 - cross["i"]
+        bulls = sum(1 for c in all_crosses if c["kind"] == "bullish")
+        bears = len(all_crosses) - bulls
         metrics = [
-            {"label": "Kesişim", "value": f"{cross['kind'].title()} ({bars_ago} bar önce)"},
+            {"label": "Toplam kesişim (son 120 bar)", "value": f"{len(all_crosses)} adet ({bulls} bull · {bears} bear)"},
+            {"label": "Son kesişim", "value": f"{cross['kind'].title()} ({bars_ago} bar önce)"},
             {"label": "Sıfır çizgisi", "value": "Üstünde (güçlü)" if cross["zero_side"] == "above" else "Altında (zayıf 'tepki' sinyali)"},
             {"label": "MACD line", "value": f"{cross['macd']:+.4f}" if abs(cross['macd']) < 10 else f"{cross['macd']:+.2f}"},
             {"label": "Signal line", "value": f"{cross['signal']:+.4f}" if abs(cross['signal']) < 10 else f"{cross['signal']:+.2f}"},
@@ -1002,53 +1050,60 @@ def _detect_volume_pop(bars: list[dict], cfg: dict) -> dict:
     current = closes[-1]
 
     n = len(bars)
-    # Son 30 barda hacim ortalamanın 1.8x üstüne çıkan ilk barı bul
-    found_bar = None
-    for i in range(n - 1, max(n - 30, 20), -1):
+    # Son 120 barda TÜM hacim popları (1.8x ortalamayı geçen) — eğitim için tarih
+    found_list: list[dict] = []
+    for i in range(max(20, n - 120), n):
         recent_vols = [b.get("v", 0.0) for b in bars[max(0, i - 20):i] if b.get("v", 0.0) > 0]
         if not recent_vols:
             continue
         avg = sum(recent_vols) / len(recent_vols)
         cur_v = bars[i].get("v", 0.0)
         if avg > 0 and cur_v / avg >= 1.8:
-            found_bar = {
+            found_list.append({
                 "i": i,
                 "vol": cur_v,
                 "avg": avg,
                 "ratio": cur_v / avg,
                 "bullish": bars[i]["c"] > bars[i]["o"],
                 "range_pct": (bars[i]["h"] - bars[i]["l"]) / bars[i]["o"] * 100 if bars[i]["o"] > 0 else 0,
-            }
-            break
+            })
 
     obv_series = ti.obv(bars)
     cmf_series = ti.cmf(bars, 20)
 
     annotations = []
-    metrics = []
-    if found_bar:
-        bar = bars[found_bar["i"]]
-        bars_ago = n - 1 - found_bar["i"]
-        annotations.append({
-            "type": "marker",
-            "i": found_bar["i"],
-            "price": bar["c"],
-            "side": "low" if found_bar["bullish"] else "high",
-            "label": f"Volume Pop ({found_bar['ratio']:.1f}x)",
-        })
-        side_text = "Yeşil (alıcı baskısı)" if found_bar["bullish"] else "Kırmızı (satıcı baskısı)"
+    metrics: list[dict] = []
+    found_bar = found_list[-1] if found_list else None
+    if found_list:
+        for f in found_list:
+            bar = bars[f["i"]]
+            annotations.append({
+                "type": "marker",
+                "i": f["i"],
+                "price": bar["c"],
+                "side": "low" if f["bullish"] else "high",
+                "label": f"Pop {f['ratio']:.1f}x",
+            })
+        last_f = found_list[-1]
+        bars_ago = n - 1 - last_f["i"]
+        bulls = sum(1 for f in found_list if f["bullish"])
+        bears = len(found_list) - bulls
+        side_text = "Yeşil (alıcı baskısı)" if last_f["bullish"] else "Kırmızı (satıcı baskısı)"
         metrics = [
-            {"label": "Tespit", "value": f"Hacim pop ({bars_ago} bar önce)"},
-            {"label": "Hacim oranı", "value": f"{found_bar['ratio']:.1f}x ortalama"},
-            {"label": "Mum yönü", "value": side_text},
-            {"label": "Mum menzili", "value": f"%{found_bar['range_pct']:.1f}"},
+            {"label": "Toplam pop (son 120 bar)", "value": f"{len(found_list)} adet ({bulls} yeşil · {bears} kırmızı)"},
+            {"label": "Son pop", "value": f"{last_f['ratio']:.1f}x — {bars_ago} bar önce"},
+            {"label": "Son mum yönü", "value": side_text},
+            {"label": "Son mum menzili", "value": f"%{last_f['range_pct']:.1f}"},
             {"label": "OBV (şimdi)", "value": f"{obv_series[-1]:,.0f}" if obv_series[-1] is not None else "—"},
             {"label": "CMF(20) (şimdi)", "value": f"{cmf_series[-1]:+.3f}" if cmf_series[-1] is not None else "—"},
             {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
             {"label": "Trend", "value": _trend_label(bars)},
         ]
-        teyit = "alıcı baskısı teyitli" if found_bar["bullish"] else "satıcı baskısı teyitli"
-        headline = f"{cfg['label']} grafiğinde hacim pop ({found_bar['ratio']:.1f}x, {bars_ago} bar önce) — {teyit}."
+        teyit = "alıcı baskısı teyitli" if last_f["bullish"] else "satıcı baskısı teyitli"
+        headline = (
+            f"{cfg['label']} son 120 barda {len(found_list)} hacim popu — "
+            f"son oluşum {last_f['ratio']:.1f}x ({bars_ago} bar önce, {teyit})."
+        )
     else:
         recent_vols = [b.get("v", 0.0) for b in bars[-21:-1] if b.get("v", 0.0) > 0]
         avg = sum(recent_vols) / len(recent_vols) if recent_vols else 0
