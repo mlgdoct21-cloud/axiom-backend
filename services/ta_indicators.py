@@ -728,3 +728,286 @@ def detect_ma_cross(
         if s_prev >= l_prev and s_now < l_now:
             return {"kind": "death", "i": i, "short": s_now, "long": l_now}
     return None
+
+
+# ---------------------------------------------------------------------------
+# Faz 3 — Pivot / ATR-stop / Range (Wyckoff) / Trend score (MTF) helpers
+# ---------------------------------------------------------------------------
+def classic_pivots(prev_high: float, prev_low: float, prev_close: float) -> dict:
+    """Klasik (Floor Trader) pivot seviyeleri — önceki periyodun H/L/C'sinden.
+
+    P = (H+L+C)/3
+    R1 = 2P - L,  R2 = P + (H-L),  R3 = H + 2(P-L)
+    S1 = 2P - H,  S2 = P - (H-L),  S3 = L - 2(H-P)
+
+    Günlük pivot için "önceki gün", haftalık için "önceki hafta" verilir.
+    """
+    if None in (prev_high, prev_low, prev_close):
+        return {}
+    h, l, c = float(prev_high), float(prev_low), float(prev_close)
+    p = (h + l + c) / 3.0
+    rng = h - l
+    return {
+        "P": p,
+        "R1": 2 * p - l,
+        "S1": 2 * p - h,
+        "R2": p + rng,
+        "S2": p - rng,
+        "R3": h + 2 * (p - l),
+        "S3": l - 2 * (h - p),
+    }
+
+
+def atr_stop(entry: float, atr_value: float, side: str = "long",
+             k: float = 1.5) -> Optional[dict]:
+    """ATR-temelli stop ve 1R/2R/3R hedefleri.
+
+    Long: stop = entry - k*ATR, hedefler entry'nin üstüne
+    Short: stop = entry + k*ATR, hedefler entry'nin altına
+
+    `risk_per_unit` mutlak fiyat farkı (1R) — pozisyon boyutlandırma için
+    "risk %'si / risk_per_unit" şeklinde kullanılır.
+    """
+    if entry is None or atr_value is None or atr_value <= 0:
+        return None
+    risk = k * atr_value
+    if side == "long":
+        stop = entry - risk
+        tps = [entry + n * risk for n in (1, 2, 3)]
+    else:
+        stop = entry + risk
+        tps = [entry - n * risk for n in (1, 2, 3)]
+    return {
+        "side": side,
+        "entry": entry,
+        "stop": stop,
+        "k": k,
+        "atr": atr_value,
+        "risk_per_unit": risk,
+        "tp1": tps[0],
+        "tp2": tps[1],
+        "tp3": tps[2],
+    }
+
+
+def position_size(account_size: float, risk_pct: float, risk_per_unit: float) -> Optional[dict]:
+    """Pozisyon boyutlandırma — sabit %R modeli.
+
+    units = (account * risk_pct/100) / risk_per_unit
+
+    `risk_pct` örn. 1.0 (= %1 risk), `risk_per_unit` = entry-stop mutlak farkı.
+    """
+    if not account_size or not risk_per_unit or risk_per_unit <= 0:
+        return None
+    risk_amount = account_size * (risk_pct / 100.0)
+    units = risk_amount / risk_per_unit
+    return {
+        "account_size": account_size,
+        "risk_pct": risk_pct,
+        "risk_amount": risk_amount,
+        "risk_per_unit": risk_per_unit,
+        "units": units,
+    }
+
+
+def detect_range(bars: list[dict], lookback: int = 60,
+                 tolerance_pct: float = 1.5) -> Optional[dict]:
+    """Range tespiti (Wyckoff'un 'A-B-C' bölgesi için).
+
+    Son `lookback` barın yüksek ve düşüklerini kümeler; üst sınır ile alt
+    sınır arasında fiyat en az `min_visits` kez salınıyorsa range kabul.
+
+    `tolerance_pct` band toleransı (üst sınırın %`tol` altına temas = test).
+    """
+    n = len(bars)
+    if n < lookback:
+        return None
+    seg = bars[-lookback:]
+    seg_highs = [b["high"] for b in seg]
+    seg_lows = [b["low"] for b in seg]
+    top = max(seg_highs)
+    bot = min(seg_lows)
+    if top <= bot:
+        return None
+    rng = top - bot
+    mid = (top + bot) / 2.0
+
+    tol = (tolerance_pct / 100.0) * mid
+    top_touches = sum(1 for h in seg_highs if h >= top - tol)
+    bot_touches = sum(1 for l in seg_lows if l <= bot + tol)
+    if top_touches < 2 or bot_touches < 2:
+        return None
+
+    closes_in_range = sum(
+        1 for b in seg if bot - tol <= b["close"] <= top + tol
+    )
+    if closes_in_range / len(seg) < 0.75:
+        return None
+
+    width_pct = (rng / mid) * 100.0
+    return {
+        "top": top,
+        "bot": bot,
+        "mid": mid,
+        "width": rng,
+        "width_pct": width_pct,
+        "top_touches": top_touches,
+        "bot_touches": bot_touches,
+        "lookback": lookback,
+    }
+
+
+def detect_wyckoff_spring(bars: list[dict], range_info: dict,
+                          scan_bars: int = 20) -> Optional[dict]:
+    """Wyckoff spring — range alt sınırının ALTINA fitil, gövde range içinde kapanış.
+
+    Range alt sınırının ~%`tolerance` altına düşüp tekrar içeri toparlandığı
+    son `scan_bars` içindeki mumu döndürür (klasik aksumulasyon Phase C).
+    """
+    if not range_info or not bars:
+        return None
+    bot = range_info["bot"]
+    top = range_info["top"]
+    n = len(bars)
+    start = max(0, n - scan_bars)
+    for i in range(n - 1, start - 1, -1):
+        b = bars[i]
+        if b["low"] < bot and bot <= b["close"] <= top:
+            penetration = (bot - b["low"]) / bot if bot > 0 else 0
+            return {
+                "kind": "spring",
+                "i": i,
+                "low": b["low"],
+                "close": b["close"],
+                "bot": bot,
+                "penetration_pct": penetration * 100.0,
+            }
+    return None
+
+
+def detect_wyckoff_upthrust(bars: list[dict], range_info: dict,
+                            scan_bars: int = 20) -> Optional[dict]:
+    """Wyckoff upthrust — range üst sınırının ÜSTÜNE fitil, gövde içeri kapanır.
+
+    Klasik distribüsyon Phase C'nin canlı izi.
+    """
+    if not range_info or not bars:
+        return None
+    bot = range_info["bot"]
+    top = range_info["top"]
+    n = len(bars)
+    start = max(0, n - scan_bars)
+    for i in range(n - 1, start - 1, -1):
+        b = bars[i]
+        if b["high"] > top and bot <= b["close"] <= top:
+            penetration = (b["high"] - top) / top if top > 0 else 0
+            return {
+                "kind": "upthrust",
+                "i": i,
+                "high": b["high"],
+                "close": b["close"],
+                "top": top,
+                "penetration_pct": penetration * 100.0,
+            }
+    return None
+
+
+def trend_score(bars: list[dict], short_p: int = 20, long_p: int = 50,
+                rsi_p: int = 14, min_bars: int = 12) -> Optional[dict]:
+    """Tek bir bar serisinden basit trend skoru (-3..+3).
+
+    +1 her biri için: kapanış > SMA(long), SMA(short) > SMA(long), son RSI > 55.
+    -1 her biri için: kapanış < SMA(long), SMA(short) < SMA(long), son RSI < 45.
+
+    Short/long SMA periyotları zaman dilimine göre ayarlanabilir
+    (örn. haftalık için 10/30, aylık için 5/10).
+    """
+    if len(bars) < min_bars:
+        return None
+    cls = closes(bars)
+    sma20 = sma(cls, short_p)
+    sma50 = sma(cls, long_p)
+    r = rsi(cls, rsi_p)
+    score = 0
+    last_close = cls[-1]
+    last_s20 = last_value(sma20)
+    last_s50 = last_value(sma50)
+    last_r = last_value(r)
+    components = {}
+    if last_s50 is not None:
+        components["close_vs_sma50"] = 1 if last_close > last_s50 else -1
+        score += components["close_vs_sma50"]
+    if last_s20 is not None and last_s50 is not None:
+        components["sma20_vs_sma50"] = 1 if last_s20 > last_s50 else -1
+        score += components["sma20_vs_sma50"]
+    if last_r is not None:
+        if last_r > 55:
+            components["rsi"] = 1
+        elif last_r < 45:
+            components["rsi"] = -1
+        else:
+            components["rsi"] = 0
+        score += components["rsi"]
+    if score >= 2:
+        verdict = "trend_up"
+    elif score <= -2:
+        verdict = "trend_down"
+    else:
+        verdict = "range"
+    return {
+        "score": score,
+        "verdict": verdict,
+        "close": last_close,
+        "sma20": last_s20,
+        "sma50": last_s50,
+        "rsi": last_r,
+        "components": components,
+    }
+
+
+def aggregate_period(bars: list[dict], factor: int) -> list[dict]:
+    """Aşağı zaman diliminden üst zaman dilimine OHLCV agregasyonu.
+
+    Hem o/h/l/c/v (kısa) hem open/high/low/close/volume (uzun) formatlarını
+    auto-detect eder; girişle aynı anahtarlarla çıkar.
+    """
+    if factor <= 1 or not bars:
+        return list(bars)
+    first = bars[0]
+    if "open" in first:
+        ok, hk, lk, ck, vk = "open", "high", "low", "close", "volume"
+    else:
+        ok, hk, lk, ck, vk = "o", "h", "l", "c", "v"
+    out = []
+    i = 0
+    n = len(bars)
+    while i < n:
+        grp = bars[i:i + factor]
+        if not grp:
+            break
+        out.append({
+            "time": grp[0].get("time") or grp[0].get("t"),
+            ok: grp[0][ok],
+            hk: max(b[hk] for b in grp),
+            lk: min(b[lk] for b in grp),
+            ck: grp[-1][ck],
+            vk: sum((b.get(vk) or 0) for b in grp),
+        })
+        i += factor
+    return out
+
+
+def _normalize_for_indicators(bars: list[dict]) -> list[dict]:
+    """Bars'ı indicator fonksiyonlarının beklediği `o/h/l/c/v` formatına çevirir."""
+    if not bars:
+        return bars
+    if "o" in bars[0]:
+        return bars
+    return [
+        {
+            "t": b.get("time") or b.get("t"),
+            "o": b.get("open"), "h": b.get("high"), "l": b.get("low"),
+            "c": b.get("close"), "v": b.get("volume") or 0,
+        }
+        for b in bars
+    ]

@@ -747,3 +747,141 @@ ileri_cerceve:
     tr: "Pusula Sinyali (AXIOM Marka)"
     intuition: "Birden çok indikatör (RSI + MACD + trend yapı) aynı yöne işaret ettiğinde 'pusula döndü' yorumu."
     one_liner: "Tek araç 'belki', üç araç 'rota değişiyor' — AXIOM navigasyon vokabülünden."
+
+  - slug: sos
+    tr: "SOS (Sign of Strength)"
+    intuition: "Wyckoff Phase D: spring sonrası fiyatın range üst sınırını güçlü hacimle kırıp yukarı hareket etmesi."
+    one_liner: "Akümülasyonun teyit anı — Phase E (trend) başlıyor."
+
+  - slug: lps
+    tr: "LPS (Last Point of Support)"
+    intuition: "Wyckoff Phase D'de SOS sonrası küçük geri çekilme; alıcılar geri döndüğünde teyiddir."
+    one_liner: "Klasik trader giriş tetiği genelde LPS sonrası gelen yukarı kapanıştır."
+
+  - slug: ar
+    tr: "AR (Automatic Rally)"
+    intuition: "Wyckoff Phase A: SC dibinden ilk kısa sıçrama; range üst sınırını kabaca tanımlar."
+    one_liner: "Düşüş trendinin durduğu ilk fiziksel kanıt — yapı kurulumu başlar."
+
+  - slug: sc
+    tr: "SC (Selling Climax)"
+    intuition: "Wyckoff Phase A: önceki düşüşün dibinde hacim patlamasıyla gelen panik satış."
+    one_liner: "Range alt sınırını belirler; akümulasyonun ilk taşı."
+
+  - slug: st
+    tr: "ST (Secondary Test)"
+    intuition: "Wyckoff Phase A: AR sonrası SC seviyesinin tekrar test edilmesi; satıcının gücü ölçülür."
+    one_liner: "ST hacmi SC'den düşükse Phase B'ye geçiş onaylanır."
+
+  - slug: single-print
+    tr: "Single Print"
+    intuition: "Market Profile/TPO'da tek harfli (örn. sadece 'D') seviye; fiyat oraya kısa süreliğine uğramış."
+    one_liner: "Gelecekte fiyat o seviyeye dönerse vakum gibi hızla geçer — likidite az."
+
+  - slug: ib
+    tr: "Initial Balance (IB)"
+    intuition: "Açılış sonrası ilk 60 dakikalık fiyat aralığı (Market Profile'ın ilk iki TPO penceresi)."
+    one_liner: "Gün rotasının ilk haritası; IB kırılımı trend günü adayı."
+
+# ============================================================================
+# 9. RİSK — Pozisyon boyutu, stop, R-multiple, drawdown (Faz 3)
+# ============================================================================
+risk:
+  - slug: pozisyon-boyutu
+    tr: "Pozisyon Boyutu (Position Size)"
+    intuition: "Belirli bir setup için kaç birim alacağın; sabit-%R modelinde stop mesafesinden türetilir."
+    one_liner: "units = (account × risk%) / (entry - stop). Risk sabit, boyut değişken."
+
+  - slug: stop-loss
+    tr: "Stop Loss"
+    intuition: "Pozisyonun otomatik kapatılacağı zararı sınırlayan fiyat seviyesi."
+    one_liner: "Yapısal seviye + ATR×1.5 yaygın; psikolojik 'belki dönecek' planın düşmanı."
+
+  - slug: take-profit
+    tr: "Take Profit (TP)"
+    intuition: "Önceden tanımlı kar realizasyon seviyesi; TP1/TP2/TP3 R cinsinden ifade edilir."
+    one_liner: "TP1 = +1R, TP2 = +2R, TP3 = +3R; kısmi kar realizasyonu disipline eder."
+
+  - slug: r-multiple
+    tr: "R-Multiple"
+    intuition: "Bir işlemin sonucunun ilk risk (1R) cinsinden çarpanı; +1.8R = TP2'ye yakın, -1R = stop."
+    one_liner: "İşlemleri R cinsinden ölçmek, stratejilerin gerçek edge'ini görmenin tek yolu."
+
+  - slug: risk-pct
+    tr: "Risk Yüzdesi (%R)"
+    intuition: "Her işlemde hesabın ne kadarının riske atıldığı; %0.5 - %2 yaygın aralık."
+    one_liner: "Sabit-%R, ardışık kayıpta otomatik küçülme — ruin teorisinin matematiksel zırhı."
+
+  - slug: risk-odul
+    tr: "Risk/Ödül Oranı"
+    intuition: "Potansiyel kazanç / potansiyel kayıp oranı; A+ setup için ≥1:2 (örnek: 1R risk, 2R+ hedef)."
+    one_liner: "1:1 altı setup uzun vadede kazanmaz; %50 hit-rate bile zarar eder."
+
+  - slug: a-plus-setup
+    tr: "A+ Setup"
+    intuition: "Confluence ≥3 bağımsız sinyal + risk-ödül ≥1:2 + üst zaman dilimi uyumu + veto yok."
+    one_liner: "Trader'ın gerçek edge'i sıradan setup'tan değil, A+ beklemekten doğar."
+
+  - slug: drawdown
+    tr: "Drawdown"
+    intuition: "Tepe değerden geçici düşüş yüzdesi; ardışık kayıplar normaldir, protokol gerekir."
+    one_liner: "-3R = risk yarıya, -10R = full pause + hata günlüğü incelemesi."
+
+  - slug: edge
+    tr: "Edge (Avantaj)"
+    intuition: "Uzun vadede beklenen pozitif R-multiple; hit-rate × avg-win - (1-hit) × avg-loss > 0."
+    one_liner: "Edge stratejide değil, planı uygulama disiplinin oranındadır."
+
+  - slug: hata-gunlugu
+    tr: "Hata Günlüğü (Trade Journal)"
+    intuition: "Her işlemin sonucu + post-mortem notu + Tip A (setup) / Tip B (yürütme) sınıflandırması."
+    one_liner: "Tip B hataları kovalanır; Tip A normaldir, R içinde sayılır."
+
+  - slug: islem-gunlugu
+    tr: "İşlem Günlüğü"
+    intuition: "Pre-trade checklist + giriş ekran görüntüsü + R hesabı + duygu notu."
+    one_liner: "Yazmadığın işlem analiz edilemez; analiz edilemeyen işlem geliştirilmez."
+
+  - slug: pre-trade-checklist
+    tr: "Pre-Trade Checklist"
+    intuition: "Pozisyon açmadan önce satır satır doğrulanan kalemler (MTF / confluence / risk / veto)."
+    one_liner: "Plan kâğıda dökülürse duygunun yeri kalmaz."
+
+  - slug: post-mortem
+    tr: "Post-Mortem"
+    intuition: "İşlem kapandıktan sonra plan + sonuç karşılaştırması + tekrarlanabilir ders."
+    one_liner: "Kazançtan da kayıptan da öğren — her ikisi de hipotez testi."
+
+  - slug: sabir
+    tr: "Sabır (A+ Setup Bekleme)"
+    intuition: "Setup gelmediğinde işlem yapmama disiplini; sermayeyi koruyan görünmez kazanç."
+    one_liner: "Boş hafta, kötü kararlardan kazanılmış haftadır."
+
+# ============================================================================
+# 10. KARAR AĞACI — Rejim, confluence, veto, AXIOM pusula sentezi (Faz 3)
+# ============================================================================
+karar_agaci:
+  - slug: rejim
+    tr: "Piyasa Rejimi"
+    intuition: "Trend / range / volatil — strateji seçimi rejime göre yapılır, tersi değil."
+    one_liner: "Rejim okumadan strateji uygulamak piyangoya dönüşür."
+
+  - slug: confluence
+    tr: "Confluence (Çakışma)"
+    intuition: "Bağımsız çerçevelerden gelen sinyallerin aynı fiyat veya yönde örtüşmesi."
+    one_liner: "Aynı aileden iki sinyal yarım confluence; farklı ailelerden üç sinyal A+ adayı."
+
+  - slug: veto
+    tr: "Veto Kuralı"
+    intuition: "Tek kritik karşı sinyal, confluence yüksek olsa bile setup'ı iptal eder."
+    one_liner: "Üst zaman dilimi zıt, makro pencere, kataliz haberi — klasik vetolar."
+
+  - slug: on-chain
+    tr: "On-Chain (Zincir Üstü)"
+    intuition: "Blockchain üzerinde gerçekleşen para hareketleri (netflow, whale, MVRV vb.)."
+    one_liner: "Kriptonun TA'sına paralel ikinci pusula; AXIOM Cockpit modülleri."
+
+  - slug: makro
+    tr: "Makro Pusula"
+    intuition: "VIX, DXY, faiz, takvim — piyasa rejimini şekillendiren üst düzey çerçeve."
+    one_liner: "TA mükemmel olsa bile FOMC penceresi açıkken küçük gidilir."

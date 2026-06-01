@@ -1074,6 +1074,362 @@ def _detect_volume_pop(bars: list[dict], cfg: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# DETECT — Teknik #13: Pivot Points (Faz 3 — advance)
+# ---------------------------------------------------------------------------
+def _detect_pivot_points(bars: list[dict], cfg: dict) -> dict:
+    closes = ti.closes(bars)
+    decimals = cfg["round"]
+    if len(bars) < 2:
+        return {
+            "annotations": [],
+            "metrics": [{"label": "Tespit", "value": "Yetersiz bar"}],
+            "headline": f"{cfg['label']} için yeterli geçmiş yok.",
+            "indicators": {"ema20": ti.ema(closes, 20) if closes else []},
+            "found": False,
+        }
+    prev = bars[-2]
+    piv = ti.classic_pivots(prev["h"], prev["l"], prev["c"])
+    current = closes[-1]
+    last_i = len(bars) - 1
+
+    levels = [
+        ("R3", piv["R3"], "high"),
+        ("R2", piv["R2"], "high"),
+        ("R1", piv["R1"], "high"),
+        ("P",  piv["P"],  "neutral"),
+        ("S1", piv["S1"], "low"),
+        ("S2", piv["S2"], "low"),
+        ("S3", piv["S3"], "low"),
+    ]
+
+    annotations = [
+        {
+            "type": "level",
+            "i": last_i,
+            "price": price,
+            "side": side,
+            "label": f"{name}: {_fmt(price, decimals)}",
+        }
+        for name, price, side in levels
+    ]
+
+    # Fiyatın pivot konumu
+    if current > piv["R1"]:
+        if current > piv["R2"]:
+            position = "R2 üzerinde — boğa esnekliği uçta"
+        else:
+            position = "R1 üzerinde — varsayılan yön boğa"
+    elif current < piv["S1"]:
+        if current < piv["S2"]:
+            position = "S2 altında — ayı esnekliği uçta"
+        else:
+            position = "S1 altında — varsayılan yön ayı"
+    elif current > piv["P"]:
+        position = "P üstünde — hafif boğa eğilim"
+    else:
+        position = "P altında — hafif ayı eğilim"
+
+    metrics = [
+        {"label": "Önceki H/L/C", "value": f"{_fmt(prev['h'], decimals)} / {_fmt(prev['l'], decimals)} / {_fmt(prev['c'], decimals)}"},
+        {"label": "P (Pivot)", "value": _fmt(piv["P"], decimals)},
+        {"label": "R1 / S1", "value": f"{_fmt(piv['R1'], decimals)} / {_fmt(piv['S1'], decimals)}"},
+        {"label": "R2 / S2", "value": f"{_fmt(piv['R2'], decimals)} / {_fmt(piv['S2'], decimals)}"},
+        {"label": "R3 / S3", "value": f"{_fmt(piv['R3'], decimals)} / {_fmt(piv['S3'], decimals)}"},
+        {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
+        {"label": "Konum", "value": position},
+        {"label": "Trend", "value": _trend_label(bars)},
+    ]
+    headline = (
+        f"{cfg['label']} klasik pivot çapaları — fiyat {position}. "
+        f"P={_fmt(piv['P'], decimals)}, R1={_fmt(piv['R1'], decimals)}, S1={_fmt(piv['S1'], decimals)}."
+    )
+
+    return {
+        "annotations": annotations,
+        "metrics": metrics,
+        "headline": headline,
+        "indicators": {"ema20": ti.ema(closes, 20)},
+        "found": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# DETECT — Teknik #14: Multi-Timeframe Snapshot (Faz 3 — advance)
+# ---------------------------------------------------------------------------
+def _detect_mtf_snapshot(bars: list[dict], cfg: dict) -> dict:
+    """Aylık / Haftalık / Günlük trend skorlarını üretir.
+
+    Günlük bars verili. Haftalık ~7d, aylık ~30d aggregate ediyoruz.
+    """
+    closes = ti.closes(bars)
+    decimals = cfg["round"]
+    current = closes[-1]
+
+    daily = bars
+    weekly = ti.aggregate_period(bars, 7)
+    monthly = ti.aggregate_period(bars, 30)
+
+    # Zaman dilimine göre ölçeklenmiş SMA/RSI periyotları
+    score_d = ti.trend_score(daily, short_p=20, long_p=50, rsi_p=14, min_bars=50)
+    score_w = ti.trend_score(weekly, short_p=10, long_p=20, rsi_p=14, min_bars=20)
+    score_m = ti.trend_score(monthly, short_p=3, long_p=6, rsi_p=6, min_bars=8)
+
+    parts = []
+    total = 0
+    aligned = 0
+    for name, s in (("Aylık", score_m), ("Haftalık", score_w), ("Günlük", score_d)):
+        if s is None:
+            parts.append(f"{name}: —")
+            continue
+        sign = "+" if s["score"] > 0 else ("" if s["score"] == 0 else "")
+        verdict_tr = {"trend_up": "boğa", "trend_down": "ayı", "range": "yatay"}.get(s["verdict"], s["verdict"])
+        parts.append(f"{name}: {sign}{s['score']} ({verdict_tr})")
+        total += s["score"]
+        if abs(s["score"]) >= 2:
+            aligned += 1
+
+    if score_m and score_w and score_d:
+        signs = [
+            1 if s["score"] >= 2 else (-1 if s["score"] <= -2 else 0)
+            for s in (score_m, score_w, score_d)
+        ]
+        pos = sum(1 for x in signs if x > 0)
+        neg = sum(1 for x in signs if x < 0)
+        if pos == 3:
+            verdict_overall = "TAM YELKEN BOĞA — üç zaman dilimi pozitif hizalı"
+        elif neg == 3:
+            verdict_overall = "TAM YELKEN AYI — üç zaman dilimi negatif hizalı"
+        elif pos == 2 and neg == 0:
+            verdict_overall = "İHTİYATLI BOĞA — iki pusula pozitif, biri nötr"
+        elif neg == 2 and pos == 0:
+            verdict_overall = "İHTİYATLI AYI — iki pusula negatif, biri nötr"
+        elif pos > 0 and neg > 0:
+            verdict_overall = "ÇELİŞKİ — pusulalar zıt; demir at"
+        else:
+            verdict_overall = "NÖTR — net yön yok"
+    else:
+        verdict_overall = "Yeterli haftalık/aylık veri yok"
+
+    metrics = [
+        {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
+        {"label": "Aylık skor", "value": f"{score_m['score']:+d} ({score_m['verdict']})" if score_m else "—"},
+        {"label": "Haftalık skor", "value": f"{score_w['score']:+d} ({score_w['verdict']})" if score_w else "—"},
+        {"label": "Günlük skor", "value": f"{score_d['score']:+d} ({score_d['verdict']})" if score_d else "—"},
+        {"label": "Toplam", "value": f"{total:+d} / 9"},
+        {"label": "Hizalama", "value": f"{aligned} / 3 zaman dilimi"},
+        {"label": "Sentez", "value": verdict_overall},
+        {"label": "Trend (günlük)", "value": _trend_label(bars)},
+    ]
+
+    # SMA50 günlük overlay
+    sma50 = ti.sma(closes, 50)
+    annotations = []
+    if sma50 and sma50[-1] is not None:
+        annotations.append({
+            "type": "level",
+            "i": len(bars) - 1,
+            "price": sma50[-1],
+            "side": "neutral",
+            "label": f"SMA50: {_fmt(sma50[-1], decimals)}",
+        })
+
+    headline = f"{cfg['label']} MTF taraması — {verdict_overall}."
+
+    return {
+        "annotations": annotations,
+        "metrics": metrics,
+        "headline": headline,
+        "indicators": {
+            "ema20": ti.ema(closes, 20),
+            "sma50": sma50,
+        },
+        "found": score_d is not None and score_w is not None and score_m is not None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# DETECT — Teknik #15: Wyckoff Range (spring / upthrust) (Faz 3 — advance)
+# ---------------------------------------------------------------------------
+def _detect_wyckoff_range(bars: list[dict], cfg: dict) -> dict:
+    closes_list = ti.closes(bars)
+    decimals = cfg["round"]
+    current = closes_list[-1]
+
+    # Range tespiti son 60 barda
+    norm_bars = [{"high": b["h"], "low": b["l"], "close": b["c"], "open": b["o"]} for b in bars]
+    rng = ti.detect_range(norm_bars, lookback=60, tolerance_pct=1.5)
+    annotations = []
+    if not rng:
+        # Range yoksa, kullanıcıya geniş 60-bar HL bandı göster (eğitsel)
+        seg = bars[-60:]
+        top = max(b["h"] for b in seg)
+        bot = min(b["l"] for b in seg)
+        metrics = [
+            {"label": "Tespit", "value": "Son 60 barda kalıcı yatay range yok"},
+            {"label": "60-bar Yüksek", "value": _fmt(top, decimals)},
+            {"label": "60-bar Düşük", "value": _fmt(bot, decimals)},
+            {"label": "Genişlik", "value": f"%{(top-bot)/((top+bot)/2)*100:.1f}"},
+            {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
+            {"label": "Trend", "value": _trend_label(bars)},
+        ]
+        annotations = [
+            {"type": "level", "i": len(bars) - 1, "price": top, "side": "high",
+             "label": f"60-bar Yüksek: {_fmt(top, decimals)}"},
+            {"type": "level", "i": len(bars) - 1, "price": bot, "side": "low",
+             "label": f"60-bar Düşük: {_fmt(bot, decimals)}"},
+        ]
+        headline = f"{cfg['label']} son 60 barda Wyckoff range yapısı yok — trendsel veya volatil rejim."
+        return {
+            "annotations": annotations,
+            "metrics": metrics,
+            "headline": headline,
+            "indicators": {"ema20": ti.ema(closes_list, 20)},
+            "found": False,
+        }
+
+    last_i = len(bars) - 1
+    annotations = [
+        {"type": "level", "i": last_i, "price": rng["top"], "side": "high",
+         "label": f"Range Üst: {_fmt(rng['top'], decimals)}"},
+        {"type": "level", "i": last_i, "price": rng["bot"], "side": "low",
+         "label": f"Range Alt: {_fmt(rng['bot'], decimals)}"},
+        {"type": "level", "i": last_i, "price": rng["mid"], "side": "neutral",
+         "label": f"Range Orta: {_fmt(rng['mid'], decimals)}"},
+    ]
+
+    spring = ti.detect_wyckoff_spring(norm_bars, rng, scan_bars=20)
+    upthrust = ti.detect_wyckoff_upthrust(norm_bars, rng, scan_bars=20)
+
+    event = None
+    if spring and upthrust:
+        # En yenisi
+        event = spring if spring["i"] >= upthrust["i"] else upthrust
+    elif spring:
+        event = spring
+    elif upthrust:
+        event = upthrust
+
+    if event:
+        bars_ago = last_i - event["i"]
+        kind_tr = "Spring (akümülasyon Phase C)" if event["kind"] == "spring" else "Upthrust (distribüsyon Phase C)"
+        annotations.append({
+            "type": "marker",
+            "i": event["i"],
+            "price": event.get("low") or event.get("high"),
+            "side": "low" if event["kind"] == "spring" else "high",
+            "kind": "bullish" if event["kind"] == "spring" else "bearish",
+            "label": kind_tr,
+        })
+        metrics = [
+            {"label": "Range Üst", "value": _fmt(rng["top"], decimals)},
+            {"label": "Range Alt", "value": _fmt(rng["bot"], decimals)},
+            {"label": "Genişlik", "value": f"%{rng['width_pct']:.1f}"},
+            {"label": "Üst temas", "value": f"{rng['top_touches']} kez"},
+            {"label": "Alt temas", "value": f"{rng['bot_touches']} kez"},
+            {"label": "Olay", "value": f"{kind_tr} ({bars_ago} bar önce)"},
+            {"label": "Penetrasyon", "value": f"%{event['penetration_pct']:.2f}"},
+            {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
+        ]
+        verdict_text = (
+            "Phase C → D'ye geçiş bekleniyor; SOS (Sign of Strength) teyidi aranır."
+            if event["kind"] == "spring"
+            else "Distribüsyon Phase C → SOW (Sign of Weakness) izlenir."
+        )
+        headline = f"{cfg['label']} {kind_tr} tespit edildi ({bars_ago} bar önce). {verdict_text}"
+    else:
+        metrics = [
+            {"label": "Range Üst", "value": _fmt(rng["top"], decimals)},
+            {"label": "Range Alt", "value": _fmt(rng["bot"], decimals)},
+            {"label": "Genişlik", "value": f"%{rng['width_pct']:.1f}"},
+            {"label": "Üst temas", "value": f"{rng['top_touches']} kez"},
+            {"label": "Alt temas", "value": f"{rng['bot_touches']} kez"},
+            {"label": "Spring/Upthrust", "value": "Son 20 barda yok"},
+            {"label": "Anlık fiyat", "value": _fmt(current, decimals)},
+            {"label": "Phase", "value": "B (yapı kurulumu) ihtimali"},
+        ]
+        headline = (
+            f"{cfg['label']} Wyckoff range yapısı aktif — Phase B (yapı kurma); "
+            f"spring/upthrust tetiği henüz yok."
+        )
+
+    return {
+        "annotations": annotations,
+        "metrics": metrics,
+        "headline": headline,
+        "indicators": {"ema20": ti.ema(closes_list, 20)},
+        "found": event is not None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# DETECT — Teknik #16: ATR Stop Planner (Faz 3 — advance)
+# ---------------------------------------------------------------------------
+def _detect_atr_stop_planner(bars: list[dict], cfg: dict) -> dict:
+    closes_list = ti.closes(bars)
+    decimals = cfg["round"]
+    current = closes_list[-1]
+
+    # ATR fonksiyonu o/h/l/c formatını bekliyor — raw bars'ı doğrudan ver
+    atr_series = ti.atr(bars, 14)
+    last_atr = ti.last_value(atr_series)
+    last_i = len(bars) - 1
+
+    if not last_atr or last_atr <= 0:
+        return {
+            "annotations": [],
+            "metrics": [{"label": "Tespit", "value": "ATR hesaplanamadı"}],
+            "headline": f"{cfg['label']} için ATR henüz hesaplanamadı.",
+            "indicators": {"ema20": ti.ema(closes_list, 20), "atr14": atr_series},
+            "found": False,
+        }
+
+    long_plan = ti.atr_stop(current, last_atr, side="long", k=1.5)
+    # Pozisyon boyutu örneği: hesap=$10000, risk=%1
+    ps = ti.position_size(10000.0, 1.0, long_plan["risk_per_unit"])
+
+    annotations = [
+        {"type": "level", "i": last_i, "price": long_plan["entry"], "side": "neutral",
+         "label": f"Giriş: {_fmt(long_plan['entry'], decimals)}"},
+        {"type": "level", "i": last_i, "price": long_plan["stop"], "side": "low",
+         "label": f"Stop (ATR×1.5): {_fmt(long_plan['stop'], decimals)}"},
+        {"type": "level", "i": last_i, "price": long_plan["tp1"], "side": "high",
+         "label": f"TP1 (+1R): {_fmt(long_plan['tp1'], decimals)}"},
+        {"type": "level", "i": last_i, "price": long_plan["tp2"], "side": "high",
+         "label": f"TP2 (+2R): {_fmt(long_plan['tp2'], decimals)}"},
+        {"type": "level", "i": last_i, "price": long_plan["tp3"], "side": "high",
+         "label": f"TP3 (+3R): {_fmt(long_plan['tp3'], decimals)}"},
+    ]
+
+    risk_per_unit = long_plan["risk_per_unit"]
+    atr_pct = (last_atr / current) * 100 if current > 0 else 0
+
+    metrics = [
+        {"label": "Anlık fiyat (entry)", "value": _fmt(current, decimals)},
+        {"label": "ATR(14)", "value": f"{_fmt(last_atr, decimals)} (%{atr_pct:.2f})"},
+        {"label": "Stop (k=1.5)", "value": _fmt(long_plan["stop"], decimals)},
+        {"label": "1R (risk/birim)", "value": _fmt(risk_per_unit, decimals)},
+        {"label": "TP1 (+1R)", "value": _fmt(long_plan["tp1"], decimals)},
+        {"label": "TP2 (+2R)", "value": _fmt(long_plan["tp2"], decimals)},
+        {"label": "TP3 (+3R)", "value": _fmt(long_plan["tp3"], decimals)},
+        {"label": "Örnek hesap ($10K @ %1)", "value": f"{ps['units']:.4f} birim (~${ps['risk_amount']:.0f} risk)"},
+        {"label": "Trend", "value": _trend_label(bars)},
+    ]
+    headline = (
+        f"{cfg['label']} canlı stop planlaması — entry {_fmt(current, decimals)}, "
+        f"ATR(14)={_fmt(last_atr, decimals)}, k=1.5 stop {_fmt(long_plan['stop'], decimals)}. "
+        f"TP1/2/3: {_fmt(long_plan['tp1'], decimals)} / {_fmt(long_plan['tp2'], decimals)} / {_fmt(long_plan['tp3'], decimals)}."
+    )
+
+    return {
+        "annotations": annotations,
+        "metrics": metrics,
+        "headline": headline,
+        "indicators": {"ema20": ti.ema(closes_list, 20), "atr14": atr_series},
+        "found": True,
+    }
+
+
+# ---------------------------------------------------------------------------
 # TEACHING — karakter + senaryo (her teknik için)
 # ---------------------------------------------------------------------------
 def _teaching(technique: str, found: bool, cfg: dict, label: str) -> dict:
@@ -1544,6 +1900,165 @@ def _teaching(technique: str, found: bool, cfg: dict, label: str) -> dict:
             ),
         },
     })
+    # Faz 3 — advance teknikler
+    teachings.update({
+        "pivot-points": {
+            "character": "Mehmet",
+            "intro": (
+                f"Mehmet kurumsal masaların gün başı rutinini gözlemler. {asset_name} "
+                "grafiğinde önceki periyodun H/L/C özetinden klasik pivotları üretiyor — sabah "
+                "kahvesiyle birlikte gün için 'hangi seviye önemli' sorusunun matematiksel cevabı."
+            ),
+            "steps": [
+                {
+                    "title": "Sahne 1 — Pivot çapaları çiziliyor",
+                    "body": (
+                        f"Pivot formülü öğretmeni Mehmet'e şunu söyledi: P = (H+L+C)/3. {asset_name} "
+                        "için dünkü kapanış, dünkü yüksek ve dünkü düşük artık çapa. R1 ve S1 ilk "
+                        "katmandaki direnç/destek; R2/S2 esneme tonu; R3/S3 uç noktalar."
+                    ),
+                },
+                {
+                    "title": "Sahne 2 — Fiyatın günlük konumu",
+                    "body": (
+                        "Fiyat P üzerindeyse günün varsayılan yönü boğa; ilk hedef R1. P altındaysa "
+                        "varsayılan yön ayı; ilk hedef S1. Mehmet 'pivot tek başına sinyal değil; "
+                        "fiyatın pivota nasıl yaklaştığı, nasıl tutunduğu önemli' der."
+                    ),
+                },
+                {
+                    "title": "Sahne 3 — Confluence izi",
+                    "body": (
+                        "Mehmet pivot seviyelerini Fibonacci ve klasik S/R ile karşılaştırır. Bir "
+                        "pivot başka çerçevelerle aynı fiyatta çakışıyorsa o seviye 'ağırlaşır'; "
+                        "kurumsal akış böyle ortak çapalarda gerçekleşir."
+                    ),
+                },
+            ],
+            "takeaway": (
+                "Pivot points, kurumsalın gün başı paylaştığı dilden bir parçadır. Tek başına "
+                "karar üretmez; ama confluence ve fiyatın seviyelere reaksiyonu okunduğunda "
+                "kalibrasyon çapasıdır. Yorum yok, formül var — bu mekaniğin gücü."
+            ),
+        },
+        "multi-timeframe-snapshot": {
+            "character": "Ayşe",
+            "intro": (
+                f"Ayşe karşı rüzgara yelken açtığını fark eden bir trader. Bu sefer {asset_name} "
+                "üzerinde aylık, haftalık ve günlük üç pusulayı aynı anda kalibre ediyor."
+            ),
+            "steps": [
+                {
+                    "title": "Sahne 1 — Üst rüzgar yönü (aylık/haftalık)",
+                    "body": (
+                        "Önce büyük rota: aylık trend skoru. SMA20 vs SMA50, kapanış vs SMA50, RSI — "
+                        "bu üç bileşen -3 ile +3 arası bir skor verir. Haftalık aynı formülle. Üst "
+                        "rüzgar pozitifse alt zaman dilimi tetikleri 'gerçek tetik' olabilir."
+                    ),
+                },
+                {
+                    "title": "Sahne 2 — Tetik zaman dilimi (günlük)",
+                    "body": (
+                        "Günlük skor üst pusulalarla aynı yöndeyse 'tam yelken'. İki pozitif, biri "
+                        "nötr ise 'ihtiyatlı yelken'. Çelişki varsa Ayşe demir atar — tetik gürültüden "
+                        "ayrılamaz olduğunda işlem yapılmaz."
+                    ),
+                },
+                {
+                    "title": "Sahne 3 — Sentez kararı",
+                    "body": (
+                        "Üç skor toplandığında genel rota çıkar. Aylık +3, haftalık +2, günlük +3 → "
+                        "tam yelken boğa. Aylık -2, haftalık +1, günlük +3 → çelişki, dikkat. AXIOM "
+                        "Pusula Sinyali bu mantığı sayısallaştırır; trader kuralı uygular."
+                    ),
+                },
+            ],
+            "takeaway": (
+                "MTF disiplini gürültü ile gerçek tetiği ayırır. Tek zaman dilimi 'belki', üç zaman "
+                "dilimi 'rota'. Üst pusula yönüyle çelişen tetikler yok sayılır; bu kural %50 hit "
+                "rate'i bile uzun vadede pozitif R'ye dönüştürür."
+            ),
+        },
+        "wyckoff-range": {
+            "character": "Zeynep",
+            "intro": (
+                f"Zeynep yatay sıkışmaları seven bir swing trader. {asset_name} grafiğinde Wyckoff "
+                "akümülasyon/distribüsyon haritasının izlerini arıyor — Composite Man'in sessiz hikayesi."
+            ),
+            "steps": [
+                {
+                    "title": "Sahne 1 — Range tespiti",
+                    "body": (
+                        "Zeynep son 60 barda fiyatın bir üst ve alt sınır arasında salındığını "
+                        "doğrular: en az 2 üst temas + en az 2 alt temas + barların %75'i bant "
+                        "içinde kapanıyor. Bu Wyckoff'un Phase A/B aşaması — yapı kuruluyor."
+                    ),
+                },
+                {
+                    "title": "Sahne 2 — Spring veya upthrust izi",
+                    "body": (
+                        "Range alt sınırının altına kısa süreliğine inip içeri toparlanan mum = spring "
+                        "(akümülasyon Phase C). Range üst sınırının üstüne fitil çıkarıp gövde içeri "
+                        "kapanan mum = upthrust (distribüsyon Phase C). Bu mum Composite Man'in 'son "
+                        "satıcıyı temizleme' veya 'son alıcıyı kandırma' hareketidir."
+                    ),
+                },
+                {
+                    "title": "Sahne 3 — Phase D teyit beklentisi",
+                    "body": (
+                        "Spring sonrası Zeynep SOS (Sign of Strength) bekler — range üst sınırının "
+                        "güçlü hacimle kırılması. Upthrust sonrası SOW (Sign of Weakness) — alt "
+                        "sınırın aşağı kırılması. Tetik geldiğinde önceki range_width kadar projeksiyon "
+                        "hedeftir."
+                    ),
+                },
+            ],
+            "takeaway": (
+                "Wyckoff, range içindeki sessizliğin altındaki niyeti okumaktır. Spring tek başına "
+                "long sinyali değildir; Phase D'de SOS ile teyit gerekir. Hikayeyi sabırla okuyan "
+                "trader, kırılım anını piyangoya bırakmaz."
+            ),
+        },
+        "atr-stop-planner": {
+            "character": "Burak",
+            "intro": (
+                f"Burak setup'tan önce risk planını her zaman yazılı yapar. {asset_name} için "
+                "ATR-temelli stop ve TP1/TP2/TP3 hedeflerini matematiksel olarak kalibre ediyor."
+            ),
+            "steps": [
+                {
+                    "title": "Sahne 1 — ATR rejim haritası",
+                    "body": (
+                        "ATR(14) son 14 barın gerçek menzilini ortalar — piyasanın 'normal nefes "
+                        "alma' büyüklüğü. ATR fiyat oranı (% ATR) volatilite rejimini söyler: %1 sakin, "
+                        "%3+ tetikte. Stop yüzde yerine ATR×k ile kalibre edilirse rejim körü olmaz."
+                    ),
+                },
+                {
+                    "title": "Sahne 2 — Stop ve R-multiple",
+                    "body": (
+                        "Burak entry = anlık fiyat, stop = entry - 1.5×ATR (long). 1R = entry - stop. "
+                        "TP1/2/3 = entry + 1R/2R/3R. Bu disiplinde ne kazandığı ve ne kaybettiği R "
+                        "cinsinden ölçülür; uzun vadede edge'i mutlak para birimi gizlemez."
+                    ),
+                },
+                {
+                    "title": "Sahne 3 — Pozisyon boyutlandırma",
+                    "body": (
+                        "Sabit-%R modelinde her işlem için account'un sabit bir yüzdesi (%1 yaygın) "
+                        "riske atılır. units = (account × risk%) / risk_per_unit. Stop yakınsa pozisyon "
+                        "büyür, uzaksa küçülür; risk her zaman sabit. Burak $10K hesap × %1 = $100 "
+                        "risk ile setup başına kaç birim alacağını saniyede hesaplar."
+                    ),
+                },
+            ],
+            "takeaway": (
+                "Risk planı yazılırsa, duygunun yeri kalmaz. ATR rejimi kalibre eder, %R sabit-edge'i "
+                "korur, R-multiple uzun vadeli istatistiği görünür kılar. Edge stratejide değil, planı "
+                "uygulama disiplininin oranındadır."
+            ),
+        },
+    })
     return teachings.get(technique, {})
 
 
@@ -1564,6 +2079,11 @@ _TECHNIQUES = {
     "golden-cross":               {"detect": _detect_golden_cross,          "name": "Golden / Death Cross",   "default_asset": "BTC"},
     "bollinger-squeeze":          {"detect": _detect_bollinger_squeeze,     "name": "Bollinger Squeeze",      "default_asset": "BTC"},
     "volume-pop":                 {"detect": _detect_volume_pop,            "name": "Volume Pop",             "default_asset": "BTC"},
+    # Faz 3 — advance
+    "pivot-points":               {"detect": _detect_pivot_points,          "name": "Pivot Points (Klasik)",  "default_asset": "BTC"},
+    "multi-timeframe-snapshot":   {"detect": _detect_mtf_snapshot,          "name": "MTF Pusula Sentezi",     "default_asset": "BTC"},
+    "wyckoff-range":              {"detect": _detect_wyckoff_range,         "name": "Wyckoff Range & Spring", "default_asset": "BTC"},
+    "atr-stop-planner":           {"detect": _detect_atr_stop_planner,      "name": "ATR Stop Planlayıcı",    "default_asset": "BTC"},
 }
 
 SUPPORTED_TECHNIQUES = sorted(_TECHNIQUES)

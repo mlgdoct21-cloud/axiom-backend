@@ -2445,3 +2445,1086 @@ modules:
               correct: false
               feedback: "POC kendi başına dönüş noktası değil; magnet ve dinamik destek/direnç."
         glossary_refs: [volume-profile, poc, value-area, lvn, hvn]
+
+# ============================================================================
+# MODÜL 10 — Çoklu Zaman Dilimi · Risk · İşlem Planı (Faz 3 — advance)
+# MTF disiplini, pivot çapaları, ATR-temelli stop, R-multiple, pre/post-trade.
+# ============================================================================
+  - id: M10
+    slug: mtf-risk-plan
+    title: "Çoklu Zaman Dilimi, Risk ve İşlem Planı — Kaptan Defteri"
+    tagline: "Aynı haritayı 3 farklı ölçekte oku — sonra kendi rotanı kalibre et."
+    tier_required: advance
+    summary: |
+      Aynı varlığı haftalık/günlük/saatlik olarak hizalamayı, klasik
+      pivot çapalarını okuma, ATR'yi stop mesafesine çevirmeyi ve sabit
+      %R modeliyle pozisyon boyutlamayı öğreniyorsun. Modül, bir
+      işlem planını "girmeden önce" yazmanın disiplinini kazandırır:
+      pre-trade checklist + günlük + post-mortem.
+    duration_min: 30
+    lessons:
+
+      - id: M10L1
+        slug: coklu-zaman-dilimi
+        title: "Çoklu Zaman Dilimi (MTF) — Üç Pusulayı Hizala"
+        learning_objective: "Üst-orta-alt zaman dilimleri arasında trend uyumunu (top-down) okumak."
+        tier_required: advance
+        body: |
+          Diyelim ki Ayşe BTC'nin 1-saatlik mumlarına bakıp boğa görüyor:
+          kapanış SMA50 üzerinde, RSI 60. Pozisyon açıyor. Sonra günlük
+          grafiğe geçiyor — meğer fiyat günlük SMA50'nin ALTINDA, RSI 42.
+          Saatlik "yukarı" derken, günlük "düşüş trendinde rölatif sıçrama"
+          diyordu. Ayşe karşı rüzgara yelken açtığını işlemi alırken görmedi.
+
+          MTF (Multi-Timeframe) disiplini bu hatayı önler. Top-down
+          (yukarıdan aşağı) yaklaşım üç adım:
+
+          1) Çapa zaman dilimi (haftalık/günlük) — büyük rota.
+             Trend ne? Yön ne? Major destek/direnç nerede?
+
+          2) Orta zaman dilimi (4-saat/günlük) — taktik bölge.
+             Çapa trendiyle uyumlu setup var mı? Hangi seviye?
+
+          3) Tetik zaman dilimi (1-saat / 15-dakika) — giriş tetiği.
+             Mum / formasyon / divergence — ama yalnızca üst iki uyumluysa.
+
+          Kural: Üst zaman diliminin yönüyle çelişen tetikleri yok say.
+          Bu "tetik gürültüden ayır" disiplinini öğretir.
+
+          AXIOM Pusula Sinyali bu mantığı somutlaştırır: her zaman dilimine
+          basit trend skoru (-3..+3) ata; üçü de pozitifse "tam yelken",
+          ikisi pozitif biri nötr ise "ihtiyatlı yelken", çelişki varsa
+          "kıyıya dön".
+
+          Pratik formül (her timeframe için):
+          • Kapanış > SMA50 → +1
+          • SMA20 > SMA50 → +1
+          • RSI > 55 → +1 (RSI < 45 → -1)
+          Bileşik skor üst → orta → tetik sırasıyla okunur. Düşük zaman
+          dilimi yüksek olana itaat eder; tersi sadece pozisyon kapatma
+          için geçerlidir.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              Haftalık: kapanış SMA50 üstünde, +2 skor. Günlük: SMA20 >
+              SMA50 ve RSI 58 → +3. 4-saat: +1 (kararsız). Üç pusula da
+              yeşil → Ayşe günlük seviyede long setup'a güvenir; 4-saat
+              tetik mumunu bekler.
+          - asset: ABD Hissesi
+            symbol: AAPL
+            scenario: |
+              Haftalık AAPL: -1 (kapanış SMA50 altında). Günlük: -2.
+              4-saat: +2 (rölatif sıçrama). Selin "saatlik boğa gibi
+              görünüyor ama haftalık ayı" der; üst rüzgar negatif olduğu
+              için bu setup'a girmez, sadece kısa swing düşünür.
+        navigation_link: compass
+        navigation_note: "MTF, üç pusulayı aynı anda izlemektir. Üçü aynı yönü gösteriyorsa rota güçlüdür; çelişki varsa demir alma."
+        quiz:
+          question: "MTF disiplini hangi temel kuralı vurgular?"
+          options:
+            - text: "Düşük zaman dilimi tetiği, üst zaman dilimi yönüyle uyumlu olmalı; uyumsuzsa tetik yok sayılır."
+              correct: true
+              feedback: "Doğru. Top-down disiplin gürültüyü filtreler."
+            - text: "Yalnızca tek bir zaman dilimine bakmak yeterlidir."
+              correct: false
+              feedback: "Tek zaman dilimi rölatif setup'larda yanıltır."
+            - text: "Düşük zaman dilimi her zaman üst zaman dilimini ezer."
+              correct: false
+              feedback: "Tam tersi — düşük zaman dilimi üste itaat eder."
+        glossary_refs: [mtf, pusula-sinyali, trend]
+
+      - id: M10L2
+        slug: pivot-points-capalar
+        title: "Pivot Points — Önceki Periyodun Çapa Seviyeleri"
+        learning_objective: "Klasik (Floor Trader) pivot formülünü ve P/R1-R3/S1-S3'ün günlük tradede çapa rolünü anlamak."
+        tier_required: advance
+        body: |
+          Diyelim ki Mehmet sabah piyasaya bakıyor. "Bugün hangi seviye
+          önemli?" diye soruyor. Pivot points, bu soruya önceki periyodun
+          özetinden bir matematiksel cevap verir.
+
+          Klasik (Floor Trader) pivot formülü:
+          P = (Önceki Yüksek + Önceki Düşük + Önceki Kapanış) / 3
+
+          Yedi temel seviye:
+          • P  → pivot (orta çapa)
+          • R1 = 2P - Düşük  → birinci direnç
+          • S1 = 2P - Yüksek → birinci destek
+          • R2 = P + (H - L) → ikinci direnç
+          • S2 = P - (H - L) → ikinci destek
+          • R3 = H + 2(P - L) → üçüncü direnç (uç boğa)
+          • S3 = L - 2(H - P) → üçüncü destek (uç ayı)
+
+          Pivot seviyelerinin gücü:
+          1) Self-fulfilling — kurumsal masaların büyük çoğunluğu pivot
+             izler; aynı seviyelere bakan çok kişi olunca seviye çalışır.
+          2) Mekanik — yorum yok, formül var; her sabah otomatik üretilir.
+          3) Tarihsiz — önceki günün özetidir; sabit zincir gibi davranır.
+
+          Periyot seçimi:
+          • Günlük pivot → intraday (1-saat ve altı) için en yaygın.
+          • Haftalık pivot → swing (günlük zaman dilimi) için iyi çapa.
+          • Aylık pivot → uzun pozisyonlar için makro çapa.
+
+          Pratik okuma:
+          • Fiyat P üstünde → günün varsayılan yönü boğa; R1 ilk hedef.
+          • Fiyat P altında → varsayılan yön ayı; S1 ilk hedef.
+          • Açılış doğrudan R2/R3'te → aşırı esnek; mean-reversion adayı.
+          • Pivot diğer çerçevelerle (Fibonacci, klasik S/R) çakışıyorsa
+            → confluence güçlenir, seviye "ağır" olur.
+
+          Kritik: Pivot tek başına sinyal değil; bağlam içinde okunur.
+          Trend günlerinde fiyat pivot serisinde "merdiven" gibi çıkar
+          (P → R1 → R2). Range günlerinde P etrafında "yelpaze" oluşur.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              Dün BTC H=72500, L=70000, C=71800. Bugünkü pivotlar:
+              P = (72500+70000+71800)/3 ≈ 71433
+              R1 = 2*71433 - 70000 = 72866
+              S1 = 2*71433 - 72500 = 70366
+              Bugün BTC P üstünde açılırsa, varsayılan yön boğa; R1 (~72.9K)
+              ilk hedef. P altında dipsa, S1 (~70.4K) çapa olur.
+          - asset: ABD Hissesi
+            symbol: SPY
+            scenario: |
+              SPY dün H=585, L=580, C=584. P≈583, R1≈586, S1≈581. Bugün
+              piyasa öncesi 585'te açılıyor — fiyat zaten P üstünde, R1'e
+              yakın. Mehmet "ilk testin nasıl olacağı önemli" diye R1
+              kırılım/red mumunu bekler.
+        navigation_link: harbor
+        navigation_note: "Pivot, gün başı kaptanın çapa attığı liman koordinatlarıdır. P merkez, R/S kıyı şeritleri — rotanı buna göre çiz."
+        quiz:
+          question: "Klasik pivot point formülünde P (pivot) nedir?"
+          options:
+            - text: "Önceki periyodun H, L ve C'sinin ortalaması: P = (H+L+C)/3."
+              correct: true
+              feedback: "Doğru. Klasik (Floor Trader) formül budur."
+            - text: "Önceki periyodun açılış ile kapanış ortalaması."
+              correct: false
+              feedback: "Hayır; açılış klasik pivot formülüne girmez."
+            - text: "Bugünkü açılış fiyatı."
+              correct: false
+              feedback: "Pivot dünden hesaplanır, bugün değil."
+        glossary_refs: [pivot-points, capa-seviyeler, confluence]
+
+      - id: M10L3
+        slug: risk-yonetimi-r-multiple
+        title: "Risk Yönetimi — ATR Stop, %R Boyutlama, R-Multiple"
+        learning_objective: "ATR-temelli stop, sabit-%R pozisyon boyutu ve R-multiple kavramıyla uzun-vadeli edge'i korumak."
+        tier_required: advance
+        body: |
+          Diyelim ki Zeynep iki ardışık işlem yapıyor. İlkinde $5000
+          riske attı, ikincide $200. Birinci tutmadı: -$5000. İkinci
+          tuttu: +$400. Net: -$4600. Setup analizleri doğruydu — sorun
+          pozisyon boyutuydu. Risk yönetimi olmadan en iyi sinyal seti
+          bile uzun vadede yıkıma götürür.
+
+          Sabit-%R modelinin disiplini:
+
+          1) Her işlemde hesap büyüklüğünün sabit bir yüzdesini riske at
+             (%0.5 - %2 yaygın). 1R = bu sabit risk miktarı.
+
+          2) Stop mesafesi setup'a göre değişir; ama risk miktarı değişmez.
+             Pozisyon büyüklüğü stop mesafesinden TÜRETİLİR:
+             units = (account × risk%) / (entry - stop)
+
+          3) Hedefler R cinsinden ifade edilir.
+             TP1 = entry + 1×R (long)
+             TP2 = entry + 2×R
+             TP3 = entry + 3×R
+             Bir setup +2R tuttuysa "iyi", -1R kestiyse "normal".
+
+          ATR-temelli stop:
+          Sabit yüzde stop (örn. "%2 stop") rejim körüdür — düşük
+          volatilitede gereksiz uzak, yüksek volatilitede gereksiz yakın.
+          ATR (Average True Range) stop'u rejime göre normalize eder:
+
+          stop_distance = k × ATR(14)
+          • k = 1.5 → sıkı (yakın stop, sık çıkar ama küçük zarar)
+          • k = 2.5 → gevşek (daha çok dayanır ama R büyür)
+
+          Long örnek:
+          • entry = 100, ATR(14) = 2.0, k = 1.5 → stop = 100 - 3 = 97
+          • TP1 = 103, TP2 = 106, TP3 = 109
+          • Account $10000, risk %1 → risk_amount = $100
+          • units = $100 / $3 = ~33.3 birim
+
+          R-Multiple günlüğü:
+          Her işlemi R cinsinden kaydet:
+          "+1.8R" (TP2'ye yakın çıkış), "-1R" (stop), "+0.3R" (erken çıkış).
+          50 işlem sonunda toplam R, hit-rate ve avg-R-per-trade'i hesapla.
+          Edge gerçekse pozitif birikim; değilse stratejiyi gözden geçir.
+
+          Kuralın altın çerçevesi: zarar olmasın değil, asla bir setup
+          1R'den fazla kaybetmesin.
+        worked_examples:
+          - asset: Kripto
+            symbol: ETH
+            scenario: |
+              ETH 4-saat: range içinde long setup, entry $3500, ATR(14)=$45.
+              k=1.5 → stop = $3500 - $67.5 ≈ $3432. Risk_per_unit ≈ $68.
+              Account $20K, risk %1 → $200 / $68 = ~2.94 ETH. TP1 $3568,
+              TP2 $3635, TP3 $3702. Zeynep planı yazıp ekranı kapatır —
+              tetiklendiğinde uygular.
+          - asset: ABD Hissesi
+            symbol: AAPL
+            scenario: |
+              AAPL günlük entry $190, ATR(14)=$3. k=2 (swing) → stop $184,
+              risk_per_unit=$6. Account $50K, risk %0.75 → $375 / $6 = ~62
+              hisse. Mehmet TP1 $196, TP2 $202'ye R-multiple ile bölünmüş
+              kar realizasyonu planlar.
+        navigation_link: crosswind
+        navigation_note: "Risk, rüzgar gücünün kalibre edildiği yelken metresidir. Aynı kayık her seferinde aynı yelken alanını kullanırsa, fırtına gelse bile devrilmez."
+        quiz:
+          question: "Sabit-%R modelinde pozisyon büyüklüğü neye göre değişir?"
+          options:
+            - text: "Stop mesafesine — risk miktarı sabit kalır, units = (account × risk%) / (entry - stop)."
+              correct: true
+              feedback: "Doğru. Stop yakınsa pozisyon büyür, uzaksa küçülür; R sabit."
+            - text: "Sezgiye göre — büyük setup'ta daha çok at."
+              correct: false
+              feedback: "Bu kural-bazlı disiplinin tersine, duygusal hatadır."
+            - text: "Daima hesap büyüklüğünün %10'u kadar birim al."
+              correct: false
+              feedback: "%10 risk uzun vadede ruin teorisine götürür."
+        glossary_refs: [pozisyon-boyutu, stop-loss, take-profit, r-multiple, atr, risk-odul, risk-pct]
+
+      - id: M10L4
+        slug: islem-plani-ve-gunluk
+        title: "İşlem Planı ve Günlük — Pre-Trade · Post-Mortem Disiplini"
+        learning_objective: "Pre-trade checklist + işlem günlüğü + post-mortem üçlüsünü trader rutini olarak içselleştirmek."
+        tier_required: advance
+        body: |
+          Diyelim ki Burak'ın setup'ları %55 hit-rate veriyor ama bir
+          yıl sonu hesabı zarar. Sebep: planlamadığı işlemlerde olağan-dışı
+          kayıplar yaşadı. "Anlık karar"lar onu fonlamasından emen şeydi.
+          Plan, "duyguyu kâğıda dökmek"tir.
+
+          İşlem Planının üç katmanı:
+
+          1) Pre-Trade Checklist (girişten ÖNCE)
+             ☐ MTF üst zaman dilimi yönü uyumlu mu?
+             ☐ Üst-orta-tetik zaman dilimleri için skorlar?
+             ☐ Setup hangi modülün stratejisi? (S/R / formasyon / Fib /
+                divergence / volume / Wyckoff)
+             ☐ Entry, stop, TP1/TP2/TP3 yazılı mı?
+             ☐ Risk %? Position size?
+             ☐ Olumsuz senaryoda "vazgeçirici sinyal" ne? (örn. günlük
+                kapanış stop altında)
+             ☐ Confluence (en az 2 bağımsız sinyal) mevcut mu?
+             ☐ Veto sinyali (üst zaman dilimi divergence, makro reaksiyon)
+                yok mu?
+
+          2) İşlem Günlüğü (giriş ANINDA)
+             • Tarih, sembol, zaman dilimi
+             • Setup adı + neden bu işlem A+ kategoride?
+             • Entry, stop, TP, R hesabı
+             • Ekran görüntüsü (mum + indikatör)
+             • Beklenen sürüş süresi
+             • Duygu / dış faktör (yorgun muyum? piyasa öncesi haberi var mı?)
+
+          3) Post-Mortem (kapanış SONRASI)
+             • Sonuç: +/-X R
+             • Plan + hisseden çıkış uyuştu mu?
+             • Plan dışı bir şey yaptım mı? Sebebi?
+             • Setup'ın hatası mı? Yürütmenin mi?
+             • Tekrarlanabilir ders ne?
+
+          Aylık sentez:
+          • 30 işlem sonunda hit-rate?
+          • Avg R per trade?
+          • En sık post-mortem kötü-yürütme nedeni? (FOMO, erken stop
+            kaldırma, plan dışı pozisyon büyütme)
+          • Bir sonraki ay için tek bir disiplin hedefi belirle (örn.
+            "stop kaldırmayacağım — sadece breakeven'a çekeceğim").
+
+          A+ setup beklemek:
+          Her sinyal alınmaz. Confluence + risk-ödül ≥ 1:2 + üst zaman
+          dilimi uyumu olan setup'a A+ denir. Bir hafta hiç A+ gelmezse
+          "trade etmemek" en doğru karardır.
+
+          AXIOM Karar Ağacı (M12'de derinleşir):
+          1) Çerçeve seç (rejim) → 2) Strateji seç → 3) Risk planla →
+          4) Pre-trade checklist → 5) Tetik bekle → 6) Post-mortem.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              Burak BTC için günlük A+ setup yazdı: "Haftalık +2,
+              günlük +3, fiyat 0.618 Fib + günlük POC çakışmasında.
+              Entry $70K, stop $68K (ATR×1.5), TP1 $73K, TP2 $76K,
+              risk %1." Tetik 4-saatte bullish engulfing geldi; plan
+              uygulandı. Post-mortem: TP1 tuttu (+1.5R), kalan TP2'ye
+              breakeven stop ile bırakıldı.
+          - asset: ABD Hissesi
+            symbol: AAPL
+            scenario: |
+              AAPL post-mortem: "Setup planı +2R hedefliyordu; ben
+              +1.1R'da çıktım. Sebep: FOMO içeriği geldi, panikledim.
+              Setup doğruydu; yürütme erken. Bir sonraki ay disiplin
+              hedefim: TP1'e ulaşmadan asla manuel kapatma yapmayacağım."
+        navigation_link: chart
+        navigation_note: "Plan, kaptanın yol günlüğüdür. Yazılmayan rota tekrar edilemez; tekrar edilemeyen rota düzeltilemez."
+        quiz:
+          question: "A+ setup hangi koşulları sağlar?"
+          options:
+            - text: "Confluence (≥2 bağımsız sinyal) + risk-ödül ≥1:2 + üst zaman dilimi uyumu."
+              correct: true
+              feedback: "Doğru. Bu üç koşul bir A+ setup'ı tanımlar."
+            - text: "Yalnızca bir göstergede aşırı satım sinyali."
+              correct: false
+              feedback: "Tek sinyal A+ değildir; confluence olmadan setup zayıf."
+            - text: "Piyasa fiyatı düştüğünde panik alımı yapmak."
+              correct: false
+              feedback: "Panik alımı planın tam zıttı."
+        glossary_refs: [a-plus-setup, pre-trade-checklist, post-mortem, islem-gunlugu, confluence]
+
+# ============================================================================
+# MODÜL 11 — Wyckoff · Elliott · Market Profile (Faz 3 — advance)
+# Akümülasyon/distribüsyon faz okuma, dalga teorisi, TPO/Volume Profile.
+# ============================================================================
+  - id: M11
+    slug: ileri-cerceve
+    title: "İleri Çerçeveler — Wyckoff, Elliott, Market Profile"
+    tagline: "Akümülasyon hikayesini oku; dalgayı say; profilin hafızasını gör."
+    tier_required: advance
+    summary: |
+      Akümülasyon/distribüsyon faz okuma (Wyckoff), dalga teorisi
+      (Elliott Impulse + Correction), Market Profile/TPO ve Heikin-Ashi
+      görselleme alternatifleri. Bu modül, sıradan formasyon
+      okumasından "kurumsal hikayeyi okuma"ya geçiş yapar.
+    duration_min: 30
+    lessons:
+
+      - id: M11L1
+        slug: wyckoff-akumulasyon-dagitim
+        title: "Wyckoff — Akümülasyon ve Dağıtım Fazları"
+        learning_objective: "Wyckoff range mantığı, A-E fazları, spring/upthrust gibi temel olayları okumak."
+        tier_required: advance
+        body: |
+          Diyelim ki BTC üç aydır $60K - $72K arasında yatay sıkışık. Bir
+          yandan paniğe satanlar, öbür yandan biriktiren büyük adresler.
+          Wyckoff bu hikayenin haritasıdır: "Composite Man" (kurumsal
+          niyet) bir varlığı süreç içinde nasıl emer ve sonra fiyatı nasıl
+          itelekler — beş faz halinde.
+
+          Akümülasyon (Phase A → E):
+
+          • Phase A — Durdurma: Önceki düşüş trendi durur. Selling
+            Climax (SC) hacim patlamasıyla dip kurar; Automatic Rally
+            (AR) kısa sıçrama, Secondary Test (ST) SC seviyesini test eder.
+            Range artık tanımlandı: üst=AR tepesi, alt=SC dibi.
+
+          • Phase B — Yapı kurma: Fiyat range içinde salınır. Composite
+            Man burada gerçek pozisyon biriktirir. Aylar sürebilir; sıkıcı.
+
+          • Phase C — Spring: Range alt sınırının kısa süreliğine
+            ALTINA inip içeri toparlanır. "Son satıcıyı temizleme"
+            hareketi. Hacim yüksek olabilir; mum gövdesi range içine
+            kapanır. Spring, akümülasyonun sonunu işaret eder.
+
+          • Phase D — Yukarı Hareket (Sign of Strength / SOS): Spring'den
+            sonra fiyat AR seviyesini hızla geçer. Hacim güçlü.
+            Last Point of Support (LPS) küçük geri çekilmedir; SOS
+            seviyesinin üstüne tekrar çıkış teyiddir.
+
+          • Phase E — Trend: Range artık sırt; fiyat yukarı doğru
+            trend başlar.
+
+          Dağıtım (Distribution) tam tersi: UTAD (Upthrust After
+          Distribution) = upthrust olayı, sonrasında SOW (Sign of Weakness)
+          ile aşağı kırılım.
+
+          Spring tanımı (canlı tespit edebileceğimiz kısım):
+          • Range üst=top, alt=bot.
+          • Mumun düşüğü bot'un altına iner (örn. %0.5 - %2 penetrasyon).
+          • Aynı mumun kapanışı range içine geri döner (bot ≤ close ≤ top).
+          → Wyckoff terminolojisinde "spring kabaca pozitif test".
+
+          Upthrust tersi: high > top, close ≤ top.
+
+          Yorum disiplini:
+          • Spring tek başına long sinyali değildir; Phase D'de SOS'la
+            teyit gerekir.
+          • Range içinde "spring olabilir" izi varsa, üst kırılım hedefi
+            spring'in tersi yönüne en az range_width kadar bir extension'dır.
+
+          AXIOM canlı tekniği (M11L1):
+          Son 60 bar içinde yatay sıkışma + spring (veya upthrust) izi
+          tespit edilirse "Wyckoff range adayı" rozeti gösterilir.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC 4-saatte 50 bardan beri $68.5K - $71.5K aralığında
+              sıkıştı (yatay range). Dün gece bir 4-saat mumu $68K'a
+              indi ve $69.2K'da kapandı — spring adayı. Önümüzdeki günler
+              SOS bekleniyor: $71.5K üzerine hacimli kapanış akümülasyonun
+              Phase D'ye geçişini teyit eder.
+          - asset: ABD Hissesi
+            symbol: AAPL
+            scenario: |
+              AAPL haftalarca $185 - $192 arasında sıkıştı. Bir günde fiyat
+              $194 testine çıkıp $191'de kapandı — UTAD/upthrust adayı.
+              Mehmet long pozisyonunu temkinli azaltır; ayı senaryosu
+              ağırlaşıyor.
+        navigation_link: chart
+        navigation_note: "Wyckoff, range içindeki sessizliğin altındaki saklı niyeti okumaktır. Spring son kıyıdaki taş, SOS açık denize çıkıştır."
+        quiz:
+          question: "Wyckoff spring ne anlama gelir?"
+          options:
+            - text: "Range alt sınırının kısa süreliğine altına iniş + içeri toparlanma; akümülasyonun Phase C tipik olayı."
+              correct: true
+              feedback: "Doğru. Spring, son satıcıyı temizleme hareketidir."
+            - text: "Range üst sınırından kalıcı kırılım."
+              correct: false
+              feedback: "Kalıcı yukarı kırılım SOS/Phase D'dir; spring değil."
+            - text: "Aşağı yönlü güçlü düşüş trendi."
+              correct: false
+              feedback: "Spring kendi başına düşüş değil; geçici testtir."
+        glossary_refs: [wyckoff, composite-man, spring, upthrust, sos, lps, ar, sc, st]
+
+      - id: M11L2
+        slug: elliott-dalga-teorisi
+        title: "Elliott Dalga Teorisi — 5 İmpuls, 3 Düzeltme"
+        learning_objective: "Elliott Impulse 1-5 + Correction A-B-C yapısını ve temel dalga kurallarını okumak."
+        tier_required: advance
+        body: |
+          Diyelim ki Selin grafiğine bakıp "burası bir alt-trend mi yoksa
+          büyük trendin düzeltmesi mi?" sorusunu kendine sormakta. Elliott
+          Dalga Teorisi (Ralph Nelson Elliott, 1930'lar) piyasaların
+          psikolojik dalgalar halinde hareket ettiğini söyler — bir trend
+          5 impuls dalga ile yükselir, 3 düzeltme dalgasıyla geriler.
+
+          Boğa örneği:
+
+          Impulse (1-2-3-4-5):
+          • Dalga 1: Erken alıcılar; çoğu hala düşüş eğilimli.
+          • Dalga 2: Dalga 1'in kısmi düzeltmesi (genelde 0.5 - 0.618 Fib).
+          • Dalga 3: En güçlü ve genelde en uzun dalga. Hacim patlar.
+          • Dalga 4: Daha sığ düzeltme (0.382 Fib civarı). Dalga 1'in
+            tepesinin altına asla inmez (kural).
+          • Dalga 5: Son itki. Hacim genelde Dalga 3'ten zayıf;
+            divergence gözlenir.
+
+          Correction (A-B-C):
+          • Dalga A: İlk satış dalgası.
+          • Dalga B: Sıçrama (yanıltıcı boğa).
+          • Dalga C: A'nın 1.0 - 1.618 katı; genelde daha geniş.
+
+          Üç altın kural:
+          1) Dalga 2, Dalga 1'in başlangıcının altına inmez.
+          2) Dalga 3 hiçbir zaman en kısa impulse dalgası değildir.
+          3) Dalga 4, Dalga 1'in tepesi ile çakışmaz (impulse içinde).
+
+          Fibonacci ile bağ:
+          • Dalga 2 düzeltme: 0.382 - 0.618 Fib.
+          • Dalga 3 projeksiyonu: Dalga 1'in 1.618 - 2.618 katı.
+          • Dalga 4 düzeltme: 0.236 - 0.382.
+          • Dalga 5 projeksiyonu: Dalga 1'in 0.618 - 1.0 katı.
+
+          Pratik kullanım:
+          • Dalga sayımı subjektiftir. Aynı grafiğe 3 trader bakar, 3
+            farklı sayım çıkarabilir. Bu nedenle Elliott TEK BAŞINA
+            sinyal verici değildir; confluence içinde kullanılır.
+          • En güvenli kullanım: Dalga 2 dipinde long, Dalga 4 dipinde
+            long (riski Dalga 1 tepesinin altına koy).
+          • Dalga 5 sonrası ABC düzeltme beklenir; agresif uzun
+            pozisyonlara dikkat.
+
+          Disiplin: Elliott teorik bir çerçevedir. AXIOM gibi pratik
+          sistemler Elliott'u "olası senaryo" olarak kullanır; teknik
+          tetikle birleştirir.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC son 6 ay: $40K'dan $73K'a yükseldi. Selin haritada
+              5-dalga impulse görüyor: Dalga 1 $40→52, Dalga 2 düzeltme
+              $52→46, Dalga 3 büyük itki $46→68, Dalga 4 sığ düzeltme
+              $68→61, Dalga 5 son itki $61→73. Şimdi ABC düzeltme
+              beklentisi; risk yönetimi öncelikli.
+          - asset: ABD Hissesi
+            symbol: SPY
+            scenario: |
+              SPY altı haftalık impulse: 1-2-3-4 sayımı net görülüyor.
+              Dalga 4 düzeltme 0.382 Fib'de durdu. Mehmet "5. dalga
+              başlıyor" ihtimaliyle long bakar, ama divergence izini de
+              eş zamanlı izler — bu Dalga 5'in zayıf olabileceği klasik
+              uyarıdır.
+        navigation_link: swell
+        navigation_note: "Elliott, denizin doğal dalga ritmini saymaktır. Beş şişme, üç çekiliş — ama her dalga aynı boyda değil."
+        quiz:
+          question: "Elliott teorisinde Dalga 3 hakkında hangi kural geçerlidir?"
+          options:
+            - text: "Hiçbir zaman üç impulse dalgası (1, 3, 5) içinde en kısa olamaz."
+              correct: true
+              feedback: "Doğru. Bu Elliott'un en güçlü kuralıdır."
+            - text: "Daima Dalga 1'in iki katıdır."
+              correct: false
+              feedback: "Tipik olarak 1.618-2.618 oranı görülür ama 'iki katı' sabit kural değil."
+            - text: "Dalga 3 sayım açısından önemsizdir."
+              correct: false
+              feedback: "Dalga 3 en güçlü impulse dalgasıdır."
+        glossary_refs: [elliott, impulse, correction, fibonacci-confluence]
+
+      - id: M11L3
+        slug: market-profile-tpo
+        title: "Market Profile & TPO — Fiyatın Hafıza Profili"
+        learning_objective: "Market Profile/TPO terimleri (Value Area, POC, Single Print, IB) ve auction teorisi sezgisi."
+        tier_required: advance
+        body: |
+          Diyelim ki Zeynep'in danışmanı CME'de uzun yıllar S&P 500
+          futures takip etmiş. Anlattığı şey "Market Profile" — J. Peter
+          Steidlmayer'in 1980'lerde geliştirdiği, "fiyat hareketini
+          zamanla hizalanmış bir auction (açık artırma) süreci" olarak
+          gören çerçeve.
+
+          Temel kavramlar:
+
+          1) TPO (Time-Price Opportunity)
+             Her 30 dakikada bir harf atanır (A, B, C, ...). Mum
+             ekranı yerine fiyat eksenli "harf yığını" oluşur. Her
+             harf "fiyatın o saatte burayı ziyaret etmesi" demek.
+             Birikim, harflerin bir fiyatta üst üste yığılmasıdır.
+
+          2) Value Area (Değer Bölgesi)
+             Günün TPO'larının %70'ini kapsayan fiyat aralığı.
+             • VAH (Value Area High) → üst sınır
+             • VAL (Value Area Low) → alt sınır
+             "Fiyatın kabul ettiği değer aralığı."
+
+          3) POC (Point of Control)
+             En çok TPO'nun (en uzun harf sırası) olduğu fiyat. Günün
+             "kabul edilen" fiyatı.
+
+          4) Initial Balance (IB)
+             Açılış sonrası ilk iki 30-dakikalık TPO penceresinin
+             aralığı. "İlk dengelenme bölgesi" — günün geri kalanının
+             rotasını sık sık şekillendirir. IB üstüne çıkış (IB high
+             break) trend günü adayıdır.
+
+          5) Single Print
+             Tek harfle (örn. yalnız "D") temsil edilen fiyat seviyesi.
+             "Fiyat oraya sadece kısa süreliğine uğradı" demek; gelecekte
+             fiyat döndüğünde hızlı geçtiği "vacuum" bölge.
+
+          Auction teorisi yorumu:
+          • Fiyat Value Area içinde dolaşıyor → balance/range günü.
+          • Fiyat Value Area dışına çıkıp dönmüyor → trend günü.
+          • Fiyat dünkü POC'a yaklaşıyor → "magnet" etkisi.
+
+          Pratik trade kararları:
+          • Open Drive: Açılış IB dışında, hızla trend → gün boyu trend
+            kovala.
+          • Range Day: IB içinde uzun süre, çift POC oluşumu → fade
+            stratejileri.
+          • Single Print Doldurma: Bir gün önceki single print'lere fiyat
+            geri döndüğünde hızlı geçer → swing senaryoları.
+
+          AXIOM gibi platformlar her 30-dak TPO yerine "Volume Profile"
+          (hacim bazlı) gösterir; mantık benzer (POC, Value Area, LVN).
+          M9L4 ile bu derste birbirini tamamlar.
+        worked_examples:
+          - asset: ABD Hissesi
+            symbol: SPY
+            scenario: |
+              SPY bugün açılış $585, IB high $586, IB low $583.5.
+              Saat 11'de fiyat $587.5 — IB high üzerinde, hacim güçlü.
+              Mehmet "open drive trend günü senaryosu" der; mean-reversion
+              fadelerinden uzak durur, küçük geri çekilmelerde long bakar.
+          - asset: Vadeli
+            symbol: ES
+            scenario: |
+              ES futures dün POC 4845'te. Bugün fiyat 4870'ten 4850'ye
+              çekildi — düne ait POC magnet etkisi gösteriyor. Range
+              günü ihtimali yükseldi; Zeynep IB içinde fade setup'larına
+              hazırlanır.
+        navigation_link: harbor
+        navigation_note: "Market Profile, denizin dünkü liman planını ve fiyatın hangi koordinatları kabul ettiğini gösterir. POC en çok ziyaret edilen yer, single print boş açık deniz."
+        quiz:
+          question: "Value Area nedir?"
+          options:
+            - text: "Günün TPO/hacminin %70'ini kapsayan fiyat aralığı; fiyatın 'kabul ettiği' alan."
+              correct: true
+              feedback: "Doğru. VA, fiyatın değer atfettiği konfor bölgesi."
+            - text: "Günün en yüksek fiyatı."
+              correct: false
+              feedback: "Hayır; VA tek nokta değil, aralık."
+            - text: "Açılış ile kapanış arasındaki fark."
+              correct: false
+              feedback: "Bu mumun gövdesidir, Value Area değil."
+        glossary_refs: [market-profile, value-area, poc, single-print, ib, volume-profile]
+
+      - id: M11L4
+        slug: heikin-ashi-footprint
+        title: "Heikin-Ashi & Footprint Sezgisi — Alternatif Görselleme"
+        learning_objective: "Heikin-Ashi'nin trend filtreleme mantığı + Footprint/Delta sezgisi (alıcı/satıcı baskısı)."
+        tier_required: advance
+        body: |
+          Diyelim ki Burak'a klasik Japon mumları "gürültülü" geliyor;
+          özellikle erken trend tespiti zor. Heikin-Ashi (HA), bu sorunu
+          mum formülünü pürüzsüzleştirerek çözer.
+
+          Heikin-Ashi formülü:
+          • HA-Close = (O + H + L + C) / 4
+          • HA-Open  = (önceki HA-Open + önceki HA-Close) / 2
+          • HA-High  = max(H, HA-Open, HA-Close)
+          • HA-Low   = min(L, HA-Open, HA-Close)
+
+          Etkisi: Mumlar art arda aynı renk olur, küçük dalgalanmalar
+          erir, trend göz alır.
+
+          Klasik HA okuma:
+          • Ardışık fitilsiz HA mumları → güçlü trend (kuvvetli boğa
+            veya kuvvetli ayı).
+          • Küçük gövde + uzun her iki fitil → momentum tükeniyor.
+          • Renk değişimi → trend dönüş adayı (ama HA gecikmeli; tek
+            başına sinyal değil).
+
+          Önemli: HA klasik OHLC'yi gizler. Giriş/çıkış için klasik
+          mumları da yan yana izle; HA trend filtresi olarak kullan.
+
+          Footprint / Delta sezgisi:
+          Footprint mumu klasik mumun içine "aktif alıcı vs aktif satıcı
+          hacmini" gömer. Tek mumun delta'sı = (alıcı vurgu - satıcı vurgu).
+
+          • Pozitif delta + yeşil gövde → bekleniyor; teyit.
+          • Pozitif delta + kırmızı gövde (absorbsiyon) → alıcı bastırıyor
+            ama satıcılar absorbe ediyor; dönüş adayı.
+          • Negatif delta + yeşil gövde → benzer absorbsiyon (satıcı
+            absorbe).
+
+          Footprint verisi çoğu retail platformda yoktur (Sierra Chart,
+          NinjaTrader, TradingView pro). AXIOM klasik hacim + CMF/OBV
+          ile bu sezginin yaklaşık yansımasını gösterir.
+
+          Pratik kullanım:
+          • HA + klasik mum kombosu: Klasik mum giriş tetiği, HA trend
+            filtresi.
+          • Footprint kullanılamıyorsa: Hacim + OBV + CMF ile akış
+            yönünü tahmin et (M9 dersleri).
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC 4-saatlik HA'da 6 ardışık fitilsiz yeşil mum var —
+              güçlü boğa trendi. 7. mumda küçük gövde + uzun üst fitil
+              → momentum tükeniyor. Zeynep "trend hala yukarı ama yorgun"
+              der; agresif yeni long açmaz, mevcudu sıkı stop ile sürer.
+          - asset: ABD Hissesi
+            symbol: AAPL
+            scenario: |
+              AAPL günlük HA: kırmızı serisi başladı (3 mum). Klasik
+              mumlarda boğa kapanışları var ama HA filtresi "trend
+              değişti" diyor. Burak ek alım yapmadan önce klasik mumda
+              alt destek kırılımını izler.
+        navigation_link: compass
+        navigation_note: "Heikin-Ashi, dalgaların ortalama eğilimini gösteren ikinci bir pusuladır. Tek başına yön vermez; ana pusulayla birlikte rotayı kalibre eder."
+        quiz:
+          question: "Heikin-Ashi mumlarının asıl avantajı nedir?"
+          options:
+            - text: "Trend yönünü görsel olarak filtreler; küçük dalgalanmalar erir."
+              correct: true
+              feedback: "Doğru. HA bir trend filtresidir."
+            - text: "Giriş/çıkış için klasik mumdan daha hassastır."
+              correct: false
+              feedback: "Tersi — HA gerçek O/C'yi gizler; klasik mum giriş için daha hassas."
+            - text: "Hacim verisini hesaba katar."
+              correct: false
+              feedback: "HA sadece OHLC dönüşümüdür; hacim eklemez."
+        glossary_refs: [heikin-ashi, footprint, delta, cmf, obv]
+
+# ============================================================================
+# MODÜL 12 — Trader Karar Ağacı (Faz 3 — advance · Sentez)
+# Bağlam → strateji → risk → confluence/veto → tetik → post-mortem.
+# ============================================================================
+  - id: M12
+    slug: karar-agaci
+    title: "Trader Karar Ağacı — Tüm Modüllerin Sentezi"
+    tagline: "Önce çerçeveyi seç, sonra stratejiyi; gürültüyü A+ setup için filtrele."
+    tier_required: advance
+    summary: |
+      Akademinin sentez modülü: rejim okuma (trend mi range mi),
+      strateji seçimi, confluence sayma, veto kuralları, AXIOM TA +
+      on-chain + makro pusulasının birleştirilmesi ve uzun-vadeli
+      süreklilik (hata günlüğü, A+ setup beklemenin sabrı).
+    duration_min: 30
+    lessons:
+
+      - id: M12L1
+        slug: bagiamdan-stratejiye
+        title: "Bağlamdan Stratejiye — Rejim Önce, Strateji Sonra"
+        learning_objective: "Piyasa rejimini (trend / range / volatil) tespit etmek ve buna uygun strateji ailesini seçmek."
+        tier_required: advance
+        body: |
+          Diyelim ki Ayşe haftaya iki sembolde aynı stratejiyi denedi:
+          "0.618 Fib + RSI 30 → long". ETH'de %3 tuttu. SOL'da -%4 yedi.
+          Aynı strateji, farklı sonuç. Sebep tek: SOL trend kırıldı,
+          aşağı yönlü rejimdeydi. Strateji rejimi okumadan uygulanırsa
+          piyangoya döner.
+
+          Üç temel rejim:
+
+          1) Trend Rejimi
+             • Tanı: ADX > 25, SMA20 > SMA50, kapanış SMA50 üstünde.
+             • Stratejiler: trendline takip, pullback long, golden cross,
+               MA bounce, Wyckoff Phase E momentum.
+             • Yapma: mean-reversion long-short, doji fade.
+
+          2) Range Rejimi
+             • Tanı: ADX < 20, SMA20 ≈ SMA50, fiyat son N bar tutar/dipler
+               arasında.
+             • Stratejiler: S/R bounce, mean-reversion (Bollinger %B
+               ekstrem), pivot fade, Wyckoff range içi.
+             • Yapma: kırılım kovalama (yanıltıcı), trend takip.
+
+          3) Volatil/Belirsiz Rejim
+             • Tanı: ATR yüzdesi geniş, ardışık güçlü ters mumlar, makro
+               olay penceresi (FOMC, CPI).
+             • Stratejiler: pozisyon küçültme, sadece A+ setup, intraday
+               yerine swing zaman dilimine geçiş.
+             • Yapma: yüksek kaldıraç, plansız breakout.
+
+          Karar ağacı sırası:
+          1) MTF skorlarını oku (M10L1).
+          2) ADX + yapı testi → rejim seç.
+          3) Rejime uygun strateji ailesi seç.
+          4) Confluence say (≥2 bağımsız sinyal).
+          5) Risk planla (M10L3).
+          6) Tetik bekle.
+          7) Post-mortem (M10L4).
+
+          Disiplin: Rejim değiştiyse strateji değişmeli. "Geçen ay
+          range fade işe yaradı, devam edeyim" → trend başlarsa zarar.
+          Her hafta rejimi yeniden tara.
+
+          AXIOM'un sistematik avantajı:
+          • Hacim/MTF/divergence/range/spring modülleri rejimi otomatik
+            puanlar.
+          • Karar ağacı her hafta rejim raporu üretir; trader stratejisini
+            buna göre günceller.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC haftalık: ADX 31, SMA20 > SMA50, kapanış SMA50 üstünde
+              → trend rejimi. Ayşe "pullback long" ailesinden setup arar:
+              günlük 0.382 Fib + bullish engulfing tetik. Trend rejiminde
+              mean-reversion fade etmez.
+          - asset: ABD Hissesi
+            symbol: AAPL
+            scenario: |
+              AAPL günlük: ADX 17, 30 gündür $185 - $192 sıkışık → range.
+              Mehmet trend takip stratejilerini bekleyişe alır; range
+              içinde fade (alt sınırda long, üst sınırda short veya kısa
+              kapatma) stratejilerine geçer.
+        navigation_link: compass
+        navigation_note: "Bağlam, denizin hava durumudur. Aynı tekne fırtınada farklı, ılık günde farklı yelken kullanır."
+        quiz:
+          question: "Range rejiminde önerilen strateji ailesi hangisidir?"
+          options:
+            - text: "S/R bounce, mean-reversion, pivot fade — kanal içinde."
+              correct: true
+              feedback: "Doğru. Range rejimi için fade aileleri uygun."
+            - text: "Trendline takip ve pullback long."
+              correct: false
+              feedback: "Bunlar trend stratejileri; range'de yanıltır."
+            - text: "Yüksek kaldıraçlı kırılım kovalama."
+              correct: false
+              feedback: "Range içinde kırılım kovalama yanıltıcıdır."
+        glossary_refs: [rejim, trend, range, pusula-sinyali, adx, atr]
+
+      - id: M12L2
+        slug: confluence-ve-veto
+        title: "Confluence & Veto — Kaç Sinyal Yeterli, Kaç Çelişki Ret?"
+        learning_objective: "Bağımsız sinyallerin örtüşmesi (confluence) ve veto kuralları ile setup kalitesini ölçmek."
+        tier_required: advance
+        body: |
+          Diyelim ki Selin önünde bir long setup var: 0.618 Fib + günlük
+          pivot S1 + RSI 35 + bullish engulfing tetik. Dört sinyal aynı
+          fiyatta birleşiyor. Bu confluence — bağımsız çerçevelerden
+          gelen sinyallerin örtüşmesi.
+
+          Confluence puanlama:
+          • Her bağımsız sinyal +1 (S/R / Fibonacci / pivot / indikatör /
+            volume profile / Wyckoff faz).
+          • Aynı aileden iki sinyal "yarım confluence" sayılır (RSI + MACD
+            ikisi de momentum ailesinden → toplam +1.5).
+          • A+ setup için ≥3 bağımsız sinyal (puan ≥3.0).
+
+          Confluence türleri:
+          1) Seviye Confluence: 0.618 Fib + pivot S1 + dünkü VAL aynı
+             fiyatta → ağır seviye.
+          2) Sinyal Confluence: bullish divergence + üst zaman dilimi
+             pullback + hacim teyidi → çoklu konfirmasyon.
+          3) Yapı Confluence: Wyckoff spring + double bottom + neckline
+             oluşumu → aynı hikaye, farklı çerçeveler.
+
+          Veto kuralları:
+          Tek bir kritik karşı sinyal, tüm confluence'i iptal eder.
+
+          Klasik vetolar:
+          ⊘ Üst zaman dilimi yönü zıt (M10L1 disiplin).
+          ⊘ Stop için ATR×1.5 mesafesi mevcut R-multiple'a ≤1:1 risk-ödül
+            veriyor → ekonomi yok.
+          ⊘ Yaklaşan makro olay penceresi (FOMC, CPI 24 saat içinde).
+          ⊘ Sembol özelinde negatif kataliz haberleri (CEO istifası, dava).
+          ⊘ Önceki 5 işlemde 3'ü stop yedi → "soğuma süresi" uygula.
+
+          AXIOM Pusula Sentezi (M12L3'te detay):
+          • TA pusulası: MTF skorları + rejim.
+          • On-chain pusulası: kripto için netflow / whale ratio /
+            funding (M12L3'te).
+          • Makro pusulası: VIX / DXY / piyasa rejimi.
+
+          Üç pusula aynı yönü gösteriyorsa "tam yelken". İkisi pozitif
+          biri nötr ise "ihtiyatlı". Çelişki varsa "demir at".
+
+          Karar diyagramı (sözel):
+          1) Rejim ne?
+          2) Setup hangi strateji ailesi?
+          3) Kaç bağımsız sinyal? (≥3 → A+)
+          4) Veto sinyali var mı? (varsa pas geç)
+          5) Risk-ödül ≥1:2 mi?
+          6) Pre-trade checklist tamam mı?
+          → Hepsi yeşilse → tetik bekle ve uygula.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC günlük long setup: 0.618 Fib ($68K) + pivot S1 ($68.2K)
+              + günlük VAL ($68K) + bullish engulfing (3 bağımsız +
+              tetik) → confluence 4.0. Veto kontrol: Haftalık yön
+              pozitif, FOMC 6 gün uzakta, kataliz yok. Risk-ödül stop
+              $66.5K, TP1 $71K → 1:2 ✓. A+ setup; tetiklenirse uygula.
+          - asset: ABD Hissesi
+            symbol: AAPL
+            scenario: |
+              AAPL setup: RSI 32 + MACD bullish cross (aynı aile = 1.5)
+              + double bottom neckline ($187) + bullish engulfing tetik.
+              Toplam confluence 3.5. Veto: Earnings 2 gün uzakta →
+              VETO ⊘. Mehmet bu setup'ı atlar, earnings sonrası tekrar
+              değerlendirir.
+        navigation_link: compass
+        navigation_note: "Confluence, üç ayrı pusulanın aynı yönü göstermesidir. Veto, fırtına radarının kırmızı yanması — rotayı iptal et."
+        quiz:
+          question: "Veto kuralı setup'a nasıl etki eder?"
+          options:
+            - text: "Confluence yüksek olsa bile tek bir kritik karşı sinyal tüm setup'ı iptal eder."
+              correct: true
+              feedback: "Doğru. Veto disiplin sigortasıdır."
+            - text: "Confluence ≥3 olduğunda veto önemsizdir."
+              correct: false
+              feedback: "Yanlış. Veto her zaman geçerli."
+            - text: "Veto sadece short setup'ları için geçerlidir."
+              correct: false
+              feedback: "Veto yöne bakmaz; her setup için."
+        glossary_refs: [confluence, veto, a-plus-setup, risk-odul]
+
+      - id: M12L3
+        slug: axiom-pusula-sentezi
+        title: "AXIOM Pusula Sentezi — TA + On-Chain + Makro"
+        learning_objective: "Üç pusulayı (TA / on-chain / makro) birleştirerek AXIOM sistemik karar çerçevesini kurmak."
+        tier_required: advance
+        body: |
+          Diyelim ki Mehmet sadece teknik analizle BTC'de long açtı.
+          Setup mükemmeldi. Ama o gece on-chain'de büyük transferler
+          borsalara geldi (whale dağıtımı) ve günün ertesi FOMC açıklaması
+          piyasayı sarstı. -2R. Sorun teknikte değildi; üç pusuladan
+          ikisini görmedi.
+
+          AXIOM'un farkı: Üç bağımsız sinyal sistemini bir potada eritir.
+
+          Pusula 1 — Teknik Analiz (bu Akademi)
+          • MTF skoru
+          • Rejim
+          • Strateji + tetik
+
+          Pusula 2 — On-Chain (kripto için; AXIOM Cockpit modülleri)
+          • Netflow (borsalara giren - çıkan)
+          • Whale Ratio
+          • STH/LTH dağılımları
+          • Funding rate
+          • CVD (Cumulative Volume Delta)
+          • MVRV/SOPR
+
+          Pusula 3 — Makro (AXIOM Makro Sayfası)
+          • VIX (korku endeksi)
+          • DXY (dolar)
+          • Faiz beklentileri
+          • Risk Radar (yaklaşan FOMC/CPI/NFP)
+          • Global Likidite (M2)
+
+          Üç pusula sentezi:
+
+          Tam yelken (long bias):
+          • TA: trend rejimi, MTF +6
+          • On-chain: netflow negatif (çıkış), whale akümülasyon
+          • Makro: VIX < 18, DXY zayıf, takvim sakin
+          → A+ pozisyon büyüklüğü, hedeflere kadar tut.
+
+          İhtiyatlı yelken:
+          • İki pusula pozitif, biri nötr/karışık
+          → Standart risk %, kısmi kar realizasyonu agresifleştir.
+
+          Demir at (rotayı iptal):
+          • Pusulalar çelişiyor
+          • Bir pusula ekstrem negatif (örn. yaklaşan FOMC, panik VIX)
+          → İşlem yok; eldeki pozisyonlar küçült.
+
+          Hisse senedi için on-chain yerine "akış" yaklaşımı:
+          • Insider transactions
+          • Short interest değişimi
+          • Sektör rotasyonu
+          • Earnings momentum
+          (AXIOM Temel Analiz akış modülleri)
+
+          Karar günlüğü formatı:
+          • Pusula 1 skoru: +X
+          • Pusula 2 skoru: +Y
+          • Pusula 3 skoru: +Z
+          • Sentez kararı: tam / ihtiyatlı / demir
+          • Veto var mı?
+
+          Aylık bakış: Hangi pusulalar tutarlı kazandırıyor? Hangi
+          rejimde hangi pusula daha güçlü? Bu meta-anlayış uzun vadeli
+          edge'i besler.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              BTC pazartesi sabah pusula taraması:
+              • TA: Haftalık +2, günlük +3, 4-saat +1 → toplam +6 trend
+                rejimi.
+              • On-chain: Netflow -50K BTC (çıkış), whale ratio düşük,
+                funding nötr → pozitif.
+              • Makro: VIX 14, DXY zayıf, takvim sakin → pozitif.
+              Sentez: TAM YELKEN. Mehmet günlük setup'a güvenle girer,
+              full risk %1 uygular.
+          - asset: ABD Hissesi
+            symbol: AAPL
+            scenario: |
+              AAPL setup günü: TA +4 (sağlam), akış: insider satış arttı
+              + sektör rotasyonu olumsuz, makro: ABD CPI 36 saat sonra.
+              Sentez: çelişki. Pusula 1 pozitif, 2 negatif, 3 belirsiz.
+              Demir at — Selin bu hafta long pas geçer.
+        navigation_link: compass
+        navigation_note: "AXIOM pusulası üç ayrı kompasın çakıştığı görünmez merkezdir. Üçü hizalı, rota nettir; çelişki, sis."
+        quiz:
+          question: "AXIOM Üç Pusula çerçevesinde 'tam yelken' kararı için ne gerekir?"
+          options:
+            - text: "TA + On-Chain + Makro pusulalarının üçü de pozitif yönü gösterir; veto yok."
+              correct: true
+              feedback: "Doğru. Üçlü hizalanma sentezin altın standardı."
+            - text: "Sadece TA pusulası yeterlidir."
+              correct: false
+              feedback: "Tek pusulayla karar AXIOM disiplininin tersidir."
+            - text: "İki pusula çelişiyorsa risk arttırılır."
+              correct: false
+              feedback: "Çelişkide doğru cevap pozisyon küçültmek."
+        glossary_refs: [pusula-sinyali, mtf, on-chain, makro, veto]
+
+      - id: M12L4
+        slug: surdurulebilirlik-ve-hata-gunlugu
+        title: "Süreklilik — Hata Günlüğü, Sabır, Edge'i Koruma"
+        learning_objective: "Uzun vadeli trader olarak A+ setup'ı beklemenin sabrı, hata günlüğü, drawdown yönetimi."
+        tier_required: advance
+        body: |
+          Diyelim ki Zeynep'in iki yıllık trading özet raporu:
+          • Toplam işlem: 380
+          • Hit rate: %52
+          • Avg R/işlem: +0.42R
+          • En kötü 50 işlemin ortak özelliği: pre-trade checklist
+            satırlarının yarısı boş.
+
+          Bu basit veri tüm hikayeyi anlatır: Zeynep planlamadan
+          girdiği işlemlerde para kaybetti; planladıklarında kazandı.
+          Edge stratejide değil, "kurala uyma oranında".
+
+          Süreklilik üçlüsü:
+
+          1) Hata Günlüğü
+             Her zarar işlemini iki kategoride sınıflandır:
+             • Tip A — Setup hatası: Strateji yanlıştı; piyasa tahmin
+               edilmeyecek şekilde davrandı. Bu beklenen kayıp, R
+               içinde.
+             • Tip B — Yürütme hatası: Setup doğruydu; ben kurala
+               uymadım (erken çıkış, stop kaldırma, plan dışı pozisyon
+               büyütme).
+
+             Tip A normal. Tip B kovalanmalı — aynı tip B hatasının
+             iki kere tekrarı disiplin alarm.
+
+          2) Sabır (A+ Setup Bekleme)
+             Her gün setup var mı? Hayır.
+             Her hafta A+ var mı? Çoğu zaman 1-3.
+             A+ setup yoksa, oturup beklemek kazanan davranış.
+
+             Yaygın hata: "İşlem yapmadığım hafta para kaybetmiş gibi
+             hissediyorum" → FOMO → C-tier setup'a giriş → zarar.
+
+             Çözüm: "Bekleme de bir karar" mantrası. Boş hafta = sermaye
+             korundu.
+
+          3) Drawdown Yönetimi
+             Ardışık kayıplar normaldir. %52 hit-rate bile 4 art arda
+             zarara matematiksel olarak izin verir (~%6 olasılık).
+
+             Drawdown protokol:
+             • -3R ardışık kayıp → risk %'sini yarıya düşür (%1 → %0.5).
+             • -6R toplam haftalık → o haftayı kapat, sadece izle.
+             • -10R toplam aylık → full pause. Hata günlüğü incelemesi.
+               Sistemde değişiklik yapmadan yeniden başlama.
+
+          Uzun vadeli edge formülü:
+          Net R = (Hit rate × Avg win R) - ((1 - Hit rate) × Avg loss R)
+
+          Örnek: %50 hit, +1.5R avg win, -1R avg loss
+          → Net = 0.5×1.5 - 0.5×1 = +0.25R / işlem
+          100 işlemde +25R; %1 risk ile +25% hesap (compounding hariç).
+
+          AXIOM bu yolda yardımcıdır: pre-trade checklist + post-mortem
+          + R-multiple günlük + üç pusula sentezi. Trader'a kalan tek
+          şey: "kurala uymak". Bu zor, ama öğretilebilir.
+
+          Akademinin sonu:
+          Sen artık dilini biliyorsun. Pusulayı kalibre ettin. Haritada
+          çakışan seviyeleri görüyorsun. Sıçramaları, dönüşleri, akümulasyonları
+          tanıyorsun. Risk yönetimini disipline ettin. Karar ağacını kurdun.
+
+          Bundan sonra geri kalan: piyasanın bir günü daha. Ve sabır.
+        worked_examples:
+          - asset: Kripto
+            symbol: BTC
+            scenario: |
+              Zeynep son 3 hafta hata günlüğüne baktı: 12 işlemden 7'si
+              kazanç. 5 zararın 3'ü tip B (FOMO girişi). Karar: bu ay
+              sadece A+ setup'a izin ver, FOMO çıkışını sabit "TP1'e
+              ulaşmadan elle kapatma yok" kuralıyla bağla. Bir sonraki
+              30 günde tip B sıfıra düştü.
+          - asset: ABD Hissesi
+            symbol: AAPL
+            scenario: |
+              Mehmet earnings sezonunda 3 ardışık -1R yedi (drawdown).
+              Protokol gereği risk %1 → %0.5. Bir hafta sonra A+ setup
+              geldi; küçük riskle girdi, +2.2R çıktı. Drawdown protokol
+              hesabı ruin'den korudu.
+        navigation_link: chart
+        navigation_note: "Süreklilik, denizci olmanın asıl sınavıdır. Tek bir fırtınadan değil, bin günden geriye dönüp aynı yerde durabilmektir."
+        quiz:
+          question: "Drawdown sürecinde önerilen ilk protokol nedir?"
+          options:
+            - text: "-3R ardışık kayıpta risk %'sini yarıya düşür ve A+ setup beklemeye odaklan."
+              correct: true
+              feedback: "Doğru. Drawdown'da risk küçültmek standart koruma."
+            - text: "Kayıpları telafi etmek için risk %'sini iki katına çıkar."
+              correct: false
+              feedback: "Bu martingale yaklaşımı uzun vadeli ruin sebebi."
+            - text: "Stratejiyi tamamen değiştir."
+              correct: false
+              feedback: "Aceleci sistem değişikliği veri-azlığında karar; önce hata günlüğü."
+        glossary_refs: [hata-gunlugu, sabir, drawdown, r-multiple, a-plus-setup, edge]
