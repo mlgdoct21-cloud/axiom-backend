@@ -813,7 +813,16 @@ async def batch_analyze_loop() -> None:
       - Consecutive error tracking: ardışık N hata sonrası exponential backoff
         (60s → 120s → 240s max) — DB down / Gemini down gibi durumlarda.
       - pipeline_health global dict güncellenir (monitoring için).
+
+    Lean v3 kapı: AXIOM_NEWS_BATCH_ANALYZE_ENABLED=false ile loop hiç açılmaz.
+    Default true (Telegram broadcast'lar telegram_hook'a bağımlı). Kapatırsan
+    broadcast'lar düz başlık + link olur; dashboard tarafında GET /news/{id}
+    lazy-fill devreye girer.
     """
+    if os.getenv("AXIOM_NEWS_BATCH_ANALYZE_ENABLED", "true").strip().lower() not in ("1", "true", "yes"):
+        logger.info("🟡 BATCH ANALYZE LOOP devre dışı (AXIOM_NEWS_BATCH_ANALYZE_ENABLED=false) — lazy on-demand mode")
+        return
+
     logger.info(
         f"🟢 BATCH ANALYZE LOOP başlatıldı (her {BATCH_ANALYZE_INTERVAL_SEC}s, "
         f"{BATCH_SIZE} haber/cycle)"

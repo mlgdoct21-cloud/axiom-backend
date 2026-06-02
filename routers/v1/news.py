@@ -370,10 +370,15 @@ async def filter_news(
 )
 async def get_news_by_id(
     news_id: int,
-    
+
     db: AsyncSession = Depends(get_db)
 ):
-    """Get specific news item by ID"""
+    """Get specific news item by ID — lazy AI-fill if missing.
+
+    Lean v3: crawler ham haber DB'ye yazar; AI özet+yorum kullanıcı haberi
+    açtığında üretilir + DB'ye cache'lenir. İkinci açılışta Gemini çağrısı
+    YOK. Batch loop hâlâ açıksa zaten dolu gelir, no-op.
+    """
     try:
         news = await NewsService.get_news_by_id(db, news_id)
 
@@ -382,6 +387,38 @@ async def get_news_by_id(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="News item not found"
             )
+
+        # Lazy fill: dashboard_summary VEYA axiom_analysis eksikse on-demand üret
+        needs_fill = not (news.dashboard_summary and news.axiom_analysis)
+        if needs_fill:
+            try:
+                from services.ai_service import generate_summary
+                result = await generate_summary(
+                    news_title=news.original_title,
+                    news_link=news.original_link,
+                )
+                tg_hook = (result or {}).get("telegram_hook")
+                dash = (result or {}).get("dashboard_summary")
+                axiom = (result or {}).get("axiom_analysis")
+                if dash or axiom or tg_hook:
+                    from sqlalchemy import update
+                    await db.execute(
+                        update(NewsItem)
+                        .where(NewsItem.id == news_id)
+                        .values(
+                            telegram_hook=tg_hook or news.telegram_hook,
+                            dashboard_summary=dash or news.dashboard_summary,
+                            axiom_analysis=axiom or news.axiom_analysis,
+                            ai_summary=dash or news.ai_summary,
+                            analyzed=True,
+                        )
+                    )
+                    await db.commit()
+                    # Re-fetch enriched row
+                    news = await NewsService.get_news_by_id(db, news_id)
+            except Exception as fill_err:
+                # Lazy-fill başarısız olursa ham haberi yine de döndür
+                logger.warning(f"Lazy AI fill failed for news #{news_id}: {fill_err}")
 
         return NewsResponse.from_orm(news)
     except HTTPException:
