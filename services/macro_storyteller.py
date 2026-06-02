@@ -52,6 +52,10 @@ _HTTP_TIMEOUT = httpx.Timeout(30.0, connect=8.0)
 
 Tier = Literal["premium", "advance"]
 
+
+def _is_enabled() -> bool:
+    return os.getenv("AXIOM_MACRO_STORYTELLER_ENABLED", "").strip().lower() in ("1", "true", "yes")
+
 # BLS CPI relative importance.
 # Kaynak: BLS Table 1 (https://www.bls.gov/cpi/tables/relative-importance/),
 # Dec 2024 reference (2025 yılı boyunca geçerli — BLS yıllık Şubat'ta revize eder).
@@ -2753,6 +2757,10 @@ async def generate_story(
     Idempotent unless `force=True`. Returns StoryResult with diagnostics.
     """
     result = StoryResult(event_id=event_id, tier=tier)
+
+    if not _is_enabled():
+        result.rejection_reason = "macro_storyteller_disabled"
+        return result
 
     if tier not in ("premium", "advance"):
         result.rejection_reason = f"unknown tier: {tier}"

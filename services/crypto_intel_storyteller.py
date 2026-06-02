@@ -58,6 +58,10 @@ _WORD_TARGETS = {
 }
 
 
+def _is_enabled() -> bool:
+    return os.getenv("AXIOM_CRYPTO_INTEL_STORYTELLER_ENABLED", "").strip().lower() in ("1", "true", "yes")
+
+
 # ── Action Box (deterministic — kural tabanlı) ───────────────────────────────
 
 def _action_box_overview(altseason: dict) -> List[Dict[str, str]]:
@@ -396,6 +400,10 @@ async def _generate_one(tab: Tab, tier: Tier, snapshot: dict) -> bool:
 async def refresh_all_intel_stories() -> dict:
     """Scheduler hook — 3 tab × 2 tier = 6 story üret. Snapshot bir kez çekilir,
     her tier için ayrı Gemini call (Premium kısa, Advance uzun)."""
+    if not _is_enabled():
+        logger.info("Crypto Intel Storyteller disabled (AXIOM_CRYPTO_INTEL_STORYTELLER_ENABLED=false), skip")
+        return {"status": "disabled"}
+
     from services.cryptoquant_market import (
         get_altseason_score,
         get_stablecoin_pulse,

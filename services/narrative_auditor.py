@@ -41,6 +41,10 @@ GEMINI_URL = (
 _HTTP_TIMEOUT = httpx.Timeout(30.0, connect=5.0)
 
 
+def _is_enabled() -> bool:
+    return os.getenv("AXIOM_NARRATIVE_AUDITOR_ENABLED", "").strip().lower() in ("1", "true", "yes")
+
+
 # Audit'a giren metriklerin contract bilgisini sıkıştır.
 def _build_relevant_contracts(present_metrics: list[str]) -> dict:
     out = {}
@@ -163,6 +167,10 @@ async def audit_narrative(
       if not result["ok"] and len(result["issues"]) > 0:
           # storyteller'a issues feed back, retry once
     """
+    if not _is_enabled():
+        # Auditor kapalı → fail-open (storyteller normal akışına devam etsin)
+        return {"ok": True, "issues": [], "_meta": "auditor_disabled"}
+
     narrative_text = "\n\n".join(
         [headline, *paragraphs, footer]
     )

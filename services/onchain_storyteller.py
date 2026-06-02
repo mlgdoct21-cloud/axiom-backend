@@ -45,6 +45,10 @@ _CACHE_TTL = timedelta(hours=12)
 _SUPPORTED = ("BTC", "ETH", "XRP")
 
 
+def _is_enabled() -> bool:
+    return os.getenv("AXIOM_ONCHAIN_STORYTELLER_ENABLED", "").strip().lower() in ("1", "true", "yes")
+
+
 # ── Snapshot → LLM context ────────────────────────────────────────────────
 
 _WEEKDAY_TR = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
@@ -910,6 +914,8 @@ async def get_onchain_story(symbol: str = "BTC", *, force: bool = False) -> dict
             "symbol": sym,
             "supported": list(_SUPPORTED),
         }
+    if not _is_enabled():
+        return {"error": "storyteller_disabled", "symbol": sym}
     if not _is_configured():
         return {"error": "cryptoquant_not_configured", "symbol": sym}
 

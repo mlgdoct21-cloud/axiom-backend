@@ -73,6 +73,24 @@ async def lifespan(app: FastAPI):
     if local_dev:
         logger.warning("AXIOM_LOCAL_DEV=1 — tüm background scheduler/bot/crawler görevleri atlandı.")
 
+    # Lean v3 maliyet kapıları — Gemini-tüketen AI ajanlarının her biri ayrı
+    # env flag arkasında. Default kapalı (cep yakmasın). Açmak için Railway'de:
+    #   AXIOM_ONCHAIN_STORYTELLER_ENABLED=true
+    #   AXIOM_CRYPTO_INTEL_STORYTELLER_ENABLED=true
+    #   AXIOM_NARRATIVE_AUDITOR_ENABLED=true
+    #   AXIOM_MACRO_STORYTELLER_ENABLED=true
+    # Guard'lar modüllerin kendi entry fonksiyonlarında — supervisor'lar çalışmaya
+    # devam eder (veri toplama, alert sweep), sadece Gemini call'ı skip'lenir.
+    def _flag(k: str) -> str:
+        return "ON" if os.getenv(k, "").strip().lower() in ("1", "true", "yes") else "off"
+    logger.info(
+        "AI agent gates → "
+        f"onchain_storyteller={_flag('AXIOM_ONCHAIN_STORYTELLER_ENABLED')}, "
+        f"crypto_intel_storyteller={_flag('AXIOM_CRYPTO_INTEL_STORYTELLER_ENABLED')}, "
+        f"narrative_auditor={_flag('AXIOM_NARRATIVE_AUDITOR_ENABLED')}, "
+        f"macro_storyteller={_flag('AXIOM_MACRO_STORYTELLER_ENABLED')}"
+    )
+
     # Schema guard — idempotent ALTER TABLE to ensure pipeline columns exist.
     # Must run BEFORE crawler/bot so they can write to new columns without errors.
     try:
