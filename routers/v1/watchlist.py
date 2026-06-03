@@ -265,6 +265,21 @@ async def refresh_watchlist_item(
     return {"ok": True, "symbol": sym, "category": category}
 
 
+@router.get("/daily-brief")
+@limiter.limit("10/hour")
+async def watchlist_daily_brief(
+    request: Request,
+    refresh: int = Query(0, ge=0, le=1, description="1: cache atla"),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """AI Daily Brief — watchlist sembollerin için 3-5 satır 'bugün dikkat' özeti.
+
+    6 saat in-memory cache. Boş watchlist → items: [].
+    """
+    from services.watchlist_brief import get_daily_brief
+    return await get_daily_brief(user.id, force_refresh=bool(refresh))
+
+
 @router.get("/diffs")
 async def list_diffs(
     since: Optional[str] = Query(None, description="ISO datetime — bu tarihten sonraki diff'ler"),
