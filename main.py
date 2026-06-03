@@ -81,6 +81,14 @@ async def lifespan(app: FastAPI):
     #   AXIOM_MACRO_STORYTELLER_ENABLED=true
     # Guard'lar modüllerin kendi entry fonksiyonlarında — supervisor'lar çalışmaya
     # devam eder (veri toplama, alert sweep), sadece Gemini call'ı skip'lenir.
+    #
+    # Lean v3 Faz 3 — kişisel kullanım modu:
+    #   AXIOM_TELEGRAM_BOT_ENABLED=true        (incoming bot listener)
+    #   AXIOM_TELEGRAM_BROADCAST_ENABLED=true  (outgoing pushes; telegram_bot.py)
+    #   AXIOM_CORPORATE_SYNTH_ENABLED=true     (haftalık Pzt sentez Gemini)
+    #   AXIOM_NEWS_BATCH_ANALYZE_ENABLED=true  (crawler.py içinde, lazy fallback)
+    # Hepsinin default OFF. Dashboard kişisel araç olarak kullanılırken Telegram
+    # broadcast yığını boşa Gemini yakmasın.
     def _flag(k: str) -> str:
         return "ON" if os.getenv(k, "").strip().lower() in ("1", "true", "yes") else "off"
     logger.info(
@@ -90,6 +98,16 @@ async def lifespan(app: FastAPI):
         f"narrative_auditor={_flag('AXIOM_NARRATIVE_AUDITOR_ENABLED')}, "
         f"macro_storyteller={_flag('AXIOM_MACRO_STORYTELLER_ENABLED')}"
     )
+    logger.info(
+        "Lean v3 Faz 3 gates → "
+        f"telegram_bot={_flag('AXIOM_TELEGRAM_BOT_ENABLED')}, "
+        f"telegram_broadcast={_flag('AXIOM_TELEGRAM_BROADCAST_ENABLED')}, "
+        f"corporate_synth={_flag('AXIOM_CORPORATE_SYNTH_ENABLED')}, "
+        f"news_batch_analyze={_flag('AXIOM_NEWS_BATCH_ANALYZE_ENABLED')}"
+    )
+
+    def _gate_on(k: str) -> bool:
+        return os.getenv(k, "").strip().lower() in ("1", "true", "yes")
 
     # Schema guard — idempotent ALTER TABLE to ensure pipeline columns exist.
     # Must run BEFORE crawler/bot so they can write to new columns without errors.
@@ -99,12 +117,17 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Schema guard startup hatası (uygulama yine de başlıyor): {e}")
 
     # Start Telegram bot in background within a supervisor
-    if not local_dev:
+    # AXIOM_TELEGRAM_BOT_ENABLED default OFF (Lean v3 Faz 3). Açmak için
+    # Railway'de true yap. Outgoing push'lar ayrıca telegram_bot.py içinde
+    # AXIOM_TELEGRAM_BROADCAST_ENABLED ile gate'li — birlikte kullan.
+    if not local_dev and _gate_on("AXIOM_TELEGRAM_BOT_ENABLED"):
         try:
             bot_task = asyncio.create_task(bot_supervisor())
             logger.info("Telegram bot supervisor started")
         except Exception as e:
             logger.error(f"Failed to start bot supervisor: {e}")
+    elif not local_dev:
+        logger.info("🟡 Telegram bot supervisor devre dışı (AXIOM_TELEGRAM_BOT_ENABLED=false)")
 
     # Start RSS crawler + broadcaster in background
     if not local_dev:
@@ -155,15 +178,19 @@ async def lifespan(app: FastAPI):
             logger.error(f"Failed to start CryptoQuant scheduler: {e}")
 
     # Kurumsal Sentez: poll+accumulation (3h) + haftalık Pzt 08:30 TR
-    # sentez. Broadcast kill-switch CORPORATE_SYNTH_BROADCAST_ENABLED
-    # default OFF — açılana kadar yalnız DB'ye yazar (kullanıcıya spam yok).
+    # sentez. AXIOM_CORPORATE_SYNTH_ENABLED default OFF (Lean v3 Faz 3) —
+    # yayın yokken haftalık Gemini call'ı boşa cep yakmasın. Açmak için
+    # Railway'de true yap. Broadcast ayrıca CORPORATE_SYNTH_BROADCAST_ENABLED
+    # + AXIOM_TELEGRAM_BROADCAST_ENABLED ile gate'li.
     corporate_task = None
-    if not local_dev:
+    if not local_dev and _gate_on("AXIOM_CORPORATE_SYNTH_ENABLED"):
         try:
             corporate_task = asyncio.create_task(corporate_supervisor())
             logger.info("Corporate synthesis scheduler started")
         except Exception as e:
             logger.error(f"Failed to start corporate scheduler: {e}")
+    elif not local_dev:
+        logger.info("🟡 Corporate synthesis scheduler devre dışı (AXIOM_CORPORATE_SYNTH_ENABLED=false)")
 
     # BIST TL UFRS bilanço haftalık scraper (isyatirimhisse).
     # İlk run startup'tan 5dk sonra, sonra 7 günde bir BIST_SYMBOLS yenilenir.

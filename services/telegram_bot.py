@@ -21,6 +21,16 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 logger = get_logger("telegram_bot")
 
+
+# Lean v3 Faz 3 outgoing kill-switch — kişisel kullanım modu. Yayın yokken
+# tüm dış Telegram push'ları (crawler urgent/digest, alerts, corp synth,
+# macro, magic-link reply) sessizce skip'lenir. Bot listener'ı ayrıca
+# main.py'da AXIOM_TELEGRAM_BOT_ENABLED ile gate'li. İkisini birlikte aç:
+#   AXIOM_TELEGRAM_BROADCAST_ENABLED=true
+#   AXIOM_TELEGRAM_BOT_ENABLED=true
+def _outgoing_enabled() -> bool:
+    return os.getenv("AXIOM_TELEGRAM_BROADCAST_ENABLED", "").strip().lower() in ("1", "true", "yes")
+
 AVAILABLE_TAGS = ["BTC", "Altın", "BIST", "Dolar", "Faiz", "Fed", "Euro", "Petrol", "Kripto", "Hisse"]
 
 # ── Rate limiting: kullanıcı başına komut cooldown'u ───────────────────────────
@@ -61,6 +71,8 @@ def send_telegram_message(chat_id, text, disable_web_page_preview: bool = False)
     edilmemeli (örn. tek-kullanımlık /auth/telegram?token=... gibi linkler;
     önizleme tarayıcıdan önce token'ı tüketir → kullanıcı tıkladığında 401).
     """
+    if not _outgoing_enabled():
+        return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": chat_id,
@@ -77,6 +89,8 @@ def send_telegram_message(chat_id, text, disable_web_page_preview: bool = False)
 
 def send_telegram_message_get_id(chat_id, text) -> Optional[int]:
     """HTML formatında mesaj gönderir, message_id döner (edit için)."""
+    if not _outgoing_enabled():
+        return None
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": chat_id,
@@ -96,6 +110,8 @@ def send_telegram_message_get_id(chat_id, text) -> Optional[int]:
 
 def send_message_with_keyboard(chat_id, text, keyboard):
     """Inline keyboard ekli mesaj gönderir."""
+    if not _outgoing_enabled():
+        return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": chat_id,
@@ -114,6 +130,8 @@ def send_telegram_photo(chat_id, photo_bytes: bytes, caption: str = "") -> bool:
     """Upload a PNG (in memory) via multipart sendPhoto, optional HTML caption.
     Returns True on 200, False otherwise — callers fall back to a text message.
     """
+    if not _outgoing_enabled():
+        return False
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
     files = {"photo": ("chart.png", photo_bytes, "image/png")}
     data = {"chat_id": str(chat_id), "parse_mode": "HTML"}
