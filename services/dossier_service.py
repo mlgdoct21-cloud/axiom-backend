@@ -402,34 +402,45 @@ def _call_gemini(prompt: str) -> tuple[Optional[dict], Optional[str]]:
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.2,
-            # 2026-06-03: 1500→3000. Dossier prompt çok uzun (TA+Temel+Haber+Makro
-            # snapshot'ları + verdict+thesis+key_drivers+risks+trigger+stop+targets
-            # +horizon+confidence). 1500 token'da JSON ortasında kesiliyordu
-            # (AVAX testi: thesis "... ve 8.103" kesik). Mehmet UX raporu.
-            "maxOutputTokens": 3000,
+            # 2026-06-03 (2): 3000 hâlâ yetmedi (AVAX testi: thesis "balinaların
+            # borsalardan 35 mi..." ortada kesilmiş, parse fail). 8192 yapıldı —
+            # gemini-2.5-flash üst sınırı. Cevap kısaysa zaten az kullanır, üst
+            # limit. ÖNEMLİ: finishReason='MAX_TOKENS' kontrolü eklendi → log'a
+            # yazılır ki kesim tespit edilebilsin.
+            "maxOutputTokens": 8192,
             "responseMimeType": "application/json",
         },
     }
     try:
         r = requests.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=GEMINI_TIMEOUT)
         if r.status_code != 200:
-            return None, f"HTTP {r.status_code}: {r.text[:200]}"
+            return None, f"HTTP {r.status_code}: {r.text[:300]}"
         data = r.json()
         candidates = data.get("candidates", [])
         if not candidates:
-            return None, "no candidates"
-        txt = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+            return None, f"no candidates (response: {str(data)[:300]})"
+        cand = candidates[0]
+        finish_reason = cand.get("finishReason", "UNKNOWN")
+        usage = data.get("usageMetadata", {})
+        out_tokens = usage.get("candidatesTokenCount", 0)
+        txt = cand.get("content", {}).get("parts", [{}])[0].get("text", "").strip()
         if not txt:
-            return None, "empty text"
+            return None, f"empty text (finishReason={finish_reason}, outTokens={out_tokens})"
         # JSON parse
         try:
             return json.loads(txt), None
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as je:
             # Bazen markdown ```json ... ``` ile sarılı gelir
             m = re.search(r"\{.*\}", txt, re.DOTALL)
             if m:
-                return json.loads(m.group(0)), None
-            return None, f"json parse failed: {txt[:200]}"
+                try:
+                    return json.loads(m.group(0)), None
+                except json.JSONDecodeError:
+                    pass
+            # Hata detayı arttırıldı: finishReason + tokenCount + truncated txt
+            tail_hint = "" if finish_reason != "MAX_TOKENS" else " [KESİLDİ: maxTokens]"
+            logger.warning(f"Dossier JSON parse fail (finish={finish_reason}, outTokens={out_tokens}): {je}")
+            return None, f"json parse failed (finish={finish_reason}, outTokens={out_tokens}){tail_hint}: {txt[:500]}"
     except Exception as e:
         return None, f"call error: {e}"
 
