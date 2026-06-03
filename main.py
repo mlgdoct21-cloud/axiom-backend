@@ -19,6 +19,7 @@ from services.coinglass_scheduler import coinglass_scraper_supervisor
 from services.macro_sources.reliability_probe import reliability_probe_supervisor
 from services.cryptoquant_scheduler import cryptoquant_supervisor
 from services.corporate_scheduler import corporate_supervisor
+from services.watchlist_supervisor import watchlist_supervisor
 from services.bist_financials_service import bist_financials_loop
 from core.logger import get_logger
 from core.schema_guard import ensure_schema
@@ -202,10 +203,22 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Failed to start BIST financials scheduler: {e}")
 
+    # Watchlist supervisor — kişisel takip + dossier diff broadcast.
+    # AXIOM_WATCHLIST_SUPERVISOR_ENABLED default OFF. Açmak için Railway'de true.
+    # Kategoriye göre kadans: long_term haftalık, swing günlük + 4-saatlik trigger
+    # yakınlık taraması. Plan B akıllı diff (services/watchlist_diff.py).
+    watchlist_task = None
+    if not local_dev:
+        try:
+            watchlist_task = asyncio.create_task(watchlist_supervisor())
+            logger.info("Watchlist supervisor scheduled")
+        except Exception as e:
+            logger.error(f"Failed to start watchlist supervisor: {e}")
+
     yield
 
     logger.info("Application shutdown")
-    for task in [bot_task, crawler_task, etf_scraper_task, coinglass_task, macro_probe_task, cryptoquant_task, corporate_task, bist_fin_task]:
+    for task in [bot_task, crawler_task, etf_scraper_task, coinglass_task, macro_probe_task, cryptoquant_task, corporate_task, bist_fin_task, watchlist_task]:
         if task:
             task.cancel()
             try:

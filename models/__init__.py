@@ -9,3 +9,4 @@ from .etf_flow_cache import EtfFlowCache
 from .academy import UserAcademyProgress
 from .bist_financials import BistFinancial
 from .trade_dossier import TradeDossier
+from .watchlist import WatchlistItem, DossierDiff

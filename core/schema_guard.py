@@ -512,6 +512,59 @@ _POSTGRES_GUARDS = [
         "ix_trade_dossiers_created_at",
         "CREATE INDEX IF NOT EXISTS ix_trade_dossiers_created_at ON trade_dossiers(created_at)",
     ),
+    # Watchlist + Dossier Diffs — kişisel takip + değişim feed'i
+    (
+        "watchlist_items table",
+        """CREATE TABLE IF NOT EXISTS watchlist_items (
+            id BIGSERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            symbol VARCHAR(16) NOT NULL,
+            category VARCHAR(16) NOT NULL,
+            avg_cost DOUBLE PRECISION,
+            qty DOUBLE PRECISION,
+            notes TEXT,
+            last_dossier_at TIMESTAMPTZ,
+            last_trigger_check_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT uq_watchlist_user_symbol UNIQUE (user_id, symbol)
+        )""",
+    ),
+    (
+        "ix_watchlist_user",
+        "CREATE INDEX IF NOT EXISTS ix_watchlist_user ON watchlist_items(user_id)",
+    ),
+    (
+        "ix_watchlist_category",
+        "CREATE INDEX IF NOT EXISTS ix_watchlist_category ON watchlist_items(category)",
+    ),
+    (
+        "dossier_diffs table",
+        """CREATE TABLE IF NOT EXISTS dossier_diffs (
+            id BIGSERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            symbol VARCHAR(16) NOT NULL,
+            prev_snapshot_id BIGINT,
+            curr_snapshot_id BIGINT NOT NULL,
+            diff_type VARCHAR(32) NOT NULL,
+            severity VARCHAR(8) NOT NULL,
+            summary TEXT NOT NULL,
+            details TEXT,
+            sent_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )""",
+    ),
+    (
+        "ix_dossier_diffs_user",
+        "CREATE INDEX IF NOT EXISTS ix_dossier_diffs_user ON dossier_diffs(user_id)",
+    ),
+    (
+        "ix_dossier_diffs_symbol",
+        "CREATE INDEX IF NOT EXISTS ix_dossier_diffs_symbol ON dossier_diffs(symbol)",
+    ),
+    (
+        "ix_dossier_diffs_created_at",
+        "CREATE INDEX IF NOT EXISTS ix_dossier_diffs_created_at ON dossier_diffs(created_at)",
+    ),
 ]
 
 

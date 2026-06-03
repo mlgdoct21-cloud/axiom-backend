@@ -24,6 +24,7 @@ from .academy import router as academy_router
 from .cockpit import router as cockpit_router
 from .bist import router as bist_router
 from .dossier import router as dossier_router
+from .watchlist import router as watchlist_router
 
 router = APIRouter(prefix="/api/v1", tags=["v1"])
 
@@ -51,3 +52,4 @@ router.include_router(academy_router, tags=["academy"])
 router.include_router(cockpit_router, tags=["cockpit"])
 router.include_router(bist_router, tags=["bist"])
 router.include_router(dossier_router, tags=["dossier"])
+router.include_router(watchlist_router, tags=["watchlist"])
