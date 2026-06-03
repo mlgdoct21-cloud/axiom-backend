@@ -8,9 +8,13 @@ POST   /watchlist/{symbol}/refresh → ANINDA dossier yenile + diff hesapla
 GET    /watchlist/diffs      → kullanıcının son diff'leri (since=ISO opsiyonel)
 
 Auth: get_current_user zorunlu (kişisel araç).
-"""
-from __future__ import annotations
 
+NOT: `from __future__ import annotations` BİLEREK YOK. Pydantic v2 + FastAPI
+body model parametrelerinde forward ref evaluation çöker
+(PydanticUndefinedAnnotation: name 'WatchlistCreate' is not defined).
+Diğer dosyalar (services/*) bu kısıtlamaya tabi değil çünkü FastAPI body
+model decorator zinciri yok.
+"""
 from datetime import datetime, timezone
 from typing import Optional, Literal
 
