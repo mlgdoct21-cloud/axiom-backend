@@ -60,7 +60,14 @@ def generate_summary_sync(news_title: str, news_link: str, company_context: dict
         "contents": [{"parts": [{"text": prompt_text}]}],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 1500,
+            # 2026-06-03: 1500→3000. dashboard_summary 180-260 kelime TAM 3 paragraf
+            # + telegram_hook 120-180 kel + axiom_analysis 60-90 kel = ~360-530 kel
+            # ≈ 700-1100 token. 1500 prompt overhead'le birlikte cevap kesiliyordu
+            # (modal boş kalıyordu, retry zinciri 90sn+ sürüyordu).
+            "maxOutputTokens": 3000,
+            # JSON output zorlaması — Gemini bazen düz metin döndürüyordu, regex
+            # parse fail ediyordu (`No JSON object found`).
+            "responseMimeType": "application/json",
         }
     }
 
@@ -68,12 +75,14 @@ def generate_summary_sync(news_title: str, news_link: str, company_context: dict
     MODEL = "gemini-2.5-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={GEMINI_API_KEY}"
 
-    for attempt in range(5):  # 5 deneme
+    # 2026-06-03: retry zincirini 5→2 indirdik. Worst case ~225sn → ~45sn.
+    # Lazy fill kullanıcı modal'ında bekletir; uzun retry UX'i öldürüyordu.
+    for attempt in range(2):
         try:
             response = requests.post(url, json=payload, headers=headers, timeout=20)
 
             if response.status_code in (503, 429):
-                wait = [5, 10, 20, 30, 60][attempt]
+                wait = [5, 10][attempt]
                 logger.warning(f"[Attempt {attempt+1}] HTTP {response.status_code} - {wait}s bekleniyor...")
                 time.sleep(wait)
                 continue
