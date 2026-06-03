@@ -402,7 +402,11 @@ def _call_gemini(prompt: str) -> tuple[Optional[dict], Optional[str]]:
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 1500,
+            # 2026-06-03: 1500→3000. Dossier prompt çok uzun (TA+Temel+Haber+Makro
+            # snapshot'ları + verdict+thesis+key_drivers+risks+trigger+stop+targets
+            # +horizon+confidence). 1500 token'da JSON ortasında kesiliyordu
+            # (AVAX testi: thesis "... ve 8.103" kesik). Mehmet UX raporu.
+            "maxOutputTokens": 3000,
             "responseMimeType": "application/json",
         },
     }
