@@ -41,6 +41,7 @@ async def get_news_feed(
     before_id: Optional[int] = None,
     only_analyzed: bool = False,
     max_age_h: Optional[int] = None,
+    symbol: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -50,8 +51,10 @@ async def get_news_feed(
     - **before_id**: Cursor — bu ID'den eskisini getir (infinite scroll)
     - **only_analyzed**: True ise sadece analizi bitmişler (eski davranış)
     - **max_age_h**: Yaş kesimi saati (varsayılan AXIOM_FEED_MAX_AGE_H env = 2h).
-      Bu saatten eski haberler gösterilmez. 0 ile tamamen kapatılır
-      (geriye dönük arama/analiz için).
+      Bu saatten eski haberler gösterilmez. 0 ile tamamen kapatılır.
+    - **symbol**: Verilirse SADECE bu sembolle ilgili haberler. Eşleşme:
+      news_items.symbol = X VEYA original_title ICONTAINS X. Sembol filter
+      varsa default age cutoff 24 saat (sembol az hareketli olabilir).
 
     MİMARİ NOTU:
     - DB'ye tüm haberleri yazıyoruz (geriye dönük analiz için gerekli)
@@ -65,9 +68,16 @@ async def get_news_feed(
     if limit > 100:
         limit = 100
 
-    # Age cutoff: env varsayılanı > query param > None (kapalı)
-    default_age_h = int(os.getenv("AXIOM_FEED_MAX_AGE_H", "2"))
-    effective_age_h = max_age_h if max_age_h is not None else default_age_h
+    # Age cutoff:
+    #  - symbol verilmişse default 24h (sembol bazlı geçmiş takip)
+    #  - aksi halde AXIOM_FEED_MAX_AGE_H env (default 2h)
+    #  - max_age_h query param her ikisini de override eder
+    if max_age_h is not None:
+        effective_age_h = max_age_h
+    elif symbol:
+        effective_age_h = 24
+    else:
+        effective_age_h = int(os.getenv("AXIOM_FEED_MAX_AGE_H", "2"))
 
     stmt = select(NewsItem)
     if only_analyzed:
@@ -77,6 +87,16 @@ async def get_news_feed(
     if effective_age_h > 0:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=effective_age_h)
         stmt = stmt.where(NewsItem.created_at >= cutoff)
+    if symbol:
+        sym = symbol.upper().strip()
+        # symbol kolonu exact OR original_title ICONTAINS (case insensitive)
+        from sqlalchemy import or_, func as sqlfunc
+        stmt = stmt.where(
+            or_(
+                sqlfunc.upper(NewsItem.symbol) == sym,
+                NewsItem.original_title.ilike(f"%{sym}%"),
+            )
+        )
     stmt = stmt.order_by(NewsItem.id.desc()).limit(limit)
 
     try:
