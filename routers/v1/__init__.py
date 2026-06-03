@@ -23,6 +23,7 @@ from .corporate_public import router as corporate_public_router
 from .academy import router as academy_router
 from .cockpit import router as cockpit_router
 from .bist import router as bist_router
+from .dossier import router as dossier_router
 
 router = APIRouter(prefix="/api/v1", tags=["v1"])
 
@@ -49,3 +50,4 @@ router.include_router(feature_quota_router, tags=["feature-quota"])
 router.include_router(academy_router, tags=["academy"])
 router.include_router(cockpit_router, tags=["cockpit"])
 router.include_router(bist_router, tags=["bist"])
+router.include_router(dossier_router, tags=["dossier"])

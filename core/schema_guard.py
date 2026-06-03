@@ -491,6 +491,27 @@ _POSTGRES_GUARDS = [
         "ix_bist_fin_symbol_period",
         "CREATE INDEX IF NOT EXISTS ix_bist_fin_symbol_period ON bist_financials(symbol, period)",
     ),
+    # Trade Dossier — Lean v3 Faz 3 sembol-bazlı sentez cache
+    (
+        "trade_dossiers table",
+        """CREATE TABLE IF NOT EXISTS trade_dossiers (
+            id BIGSERIAL PRIMARY KEY,
+            symbol VARCHAR(16) NOT NULL,
+            symbol_type VARCHAR(8) NOT NULL,
+            payload JSONB NOT NULL,
+            model_used VARCHAR(32) NOT NULL DEFAULT 'gemini-2.5-flash',
+            error TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )""",
+    ),
+    (
+        "ix_trade_dossiers_symbol",
+        "CREATE INDEX IF NOT EXISTS ix_trade_dossiers_symbol ON trade_dossiers(symbol)",
+    ),
+    (
+        "ix_trade_dossiers_created_at",
+        "CREATE INDEX IF NOT EXISTS ix_trade_dossiers_created_at ON trade_dossiers(created_at)",
+    ),
 ]
 
 
